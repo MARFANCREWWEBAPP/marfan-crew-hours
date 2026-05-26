@@ -1,2 +1,17 @@
 
-*{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,Helvetica,sans-serif;background:#f3f4f6;color:#111}button{border:0;border-radius:12px;background:#111;color:#fff;padding:11px 14px;font-weight:700;cursor:pointer;margin:3px}.secondary{background:#e5e7eb;color:#111}.ok{background:#16a34a}.login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}.login-card{width:100%;max-width:520px;background:#fff;border-radius:28px;padding:32px;box-shadow:0 22px 70px rgba(0,0,0,.16)}.logo-text{font-size:30px;font-weight:950;text-align:center;letter-spacing:.08em}.sub{text-align:center;color:#6b7280}.hint{text-align:center;background:#f9fafb;border:1px solid #e5e7eb;border-radius:16px;padding:10px;margin:12px 0}.card{background:#fff;border-radius:22px;padding:18px;margin:14px 0;box-shadow:0 8px 28px rgba(0,0,0,.06)}input,select,textarea{width:100%;border:1px solid #d1d5db;border-radius:12px;padding:12px;margin:4px 0;background:#fff}.layout{display:grid;grid-template-columns:260px 1fr;min-height:100vh}aside{background:#050505;color:#fff;padding:22px;position:sticky;top:0;height:100vh}aside .logo-text{font-size:22px;color:#fff}nav{display:grid;gap:8px;margin:24px 0}nav button{width:100%;text-align:left;background:transparent;color:#fff;border:1px solid rgba(255,255,255,.12)}nav button.active{background:#fff;color:#111}main{padding:28px}.top{display:flex;justify-content:space-between;align-items:center}.badge{display:inline-block;background:#eef2ff;color:#3730a3;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800}.muted{color:#6b7280}.small{font-size:12px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}.kpi{font-size:30px;font-weight:950}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #e5e7eb;padding:10px;text-align:left;vertical-align:top}@media(max-width:800px){.layout{grid-template-columns:1fr}aside{height:auto;position:relative}main{padding:14px}}
+body{
+background:#111;
+color:white;
+font-family:Arial;
+display:flex;
+justify-content:center;
+align-items:center;
+height:100vh;
+margin:0;
+}
+.login-card{
+background:#1d1d1d;
+padding:40px;
+border-radius:20px;
+text-align:center;
+}
