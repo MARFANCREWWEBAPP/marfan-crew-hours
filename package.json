@@ -1,12 +1,18 @@
-
 {
   "name": "marfan-crew-hours",
-  "version": "48.2.5",
+  "version": "46.0.0",
+  "description": "Marfan Crew Hours V46 - todos los PDFs A4 vertical",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^9.6.0",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
