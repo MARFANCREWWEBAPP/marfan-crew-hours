@@ -734,3 +734,66 @@ button.warn{background:#f59e0b;color:#111}
   gap:12px;
   flex-wrap:wrap;
 }
+
+
+/* V55.8 Operarios Redesign Pro */
+.operator-toolbar-v558{
+  display:flex;
+  justify-content:space-between;
+  gap:14px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+.operator-modal-v558{
+  max-width:1120px !important;
+}
+.operator-form-v558{
+  display:grid;
+  gap:16px;
+}
+.operator-block-v558{
+  background:#f8fafc;
+  border:1px solid #e5e7eb;
+  border-radius:18px;
+  padding:16px;
+}
+.operator-block-v558 h4{
+  margin:0 0 12px 0;
+  font-size:15px;
+  font-weight:950;
+  letter-spacing:.01em;
+}
+.operator-checks-v558{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
+  gap:10px;
+}
+.operator-check-v558{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:14px;
+  padding:12px;
+  font-weight:850;
+}
+.operator-check-v558 input{
+  width:auto !important;
+}
+.operator-card-v558{
+  display:flex;
+  gap:12px;
+  align-items:center;
+}
+.operator-small-v558{
+  color:#667085;
+  font-size:12px;
+}
+.operator-action-row-v558{
+  display:flex;
+  justify-content:flex-end;
+  gap:10px;
+  flex-wrap:wrap;
+  padding-top:8px;
+}

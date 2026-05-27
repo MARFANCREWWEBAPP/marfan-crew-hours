@@ -3134,7 +3134,7 @@ function v552CreateBackupObject() {
   const backup = {
     meta: {
       app: 'Marfan Crew Hours',
-      version: '55.7.0',
+      version: '55.8.0',
       exported_at: new Date().toISOString(),
       data_dir: V552_DATA_DIR,
       backup_dir: V552_BACKUP_DIR,
@@ -3511,6 +3511,47 @@ app.get('/auth/google/callback-v557', async (req,res)=>{
   } catch(e) {
     console.error('callback-v557', e);
     res.status(500).send('Error conectando Google Calendar: '+e.message);
+  }
+});
+
+
+// ---------- V55.8 OPERARIOS REDESIGN PRO ----------
+function v558EnsureOperatorProColumns() {
+  try {
+    addColumn('users', 'bank_name TEXT DEFAULT ""');
+    addColumn('users', 'pants_size TEXT DEFAULT ""');
+    addColumn('users', 'epis_delivered INTEGER DEFAULT 0');
+    addColumn('users', 'prl_completed INTEGER DEFAULT 0');
+    addColumn('users', 'vehicle_licenses TEXT DEFAULT ""');
+    addColumn('users', 'full_address TEXT DEFAULT ""');
+  } catch(e) {}
+}
+v558EnsureOperatorProColumns();
+
+app.post('/api/users/:id/document-from-operator-form', requireAdmin, (req,res)=>{
+  try {
+    const id = Number(req.params.id);
+    const b = req.body || {};
+    let fileUrl = '';
+    if (typeof v53SaveBase64File === 'function' && b.dataUrl) {
+      fileUrl = v53SaveBase64File(b.dataUrl, b.file_name || b.title || 'documento-operario');
+    }
+    const info = db.prepare(`
+      INSERT INTO worker_documents
+      (user_id,doc_type,title,file_url,issue_date,expiry_date,notes)
+      VALUES (?,?,?,?,?,?,?)
+    `).run(
+      id,
+      b.doc_type || 'PRL',
+      b.title || 'Documento seguridad / PRL',
+      fileUrl,
+      b.issue_date || '',
+      b.expiry_date || '',
+      b.notes || ''
+    );
+    res.json({ok:true,id:info.lastInsertRowid,file_url:fileUrl});
+  } catch(e) {
+    res.status(500).json({error:e.message});
   }
 });
 

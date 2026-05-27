@@ -2993,3 +2993,265 @@ viewCalendar = async function(){
 
   $('#content').innerHTML = '<div class="card"><h3>Calendario</h3><p>No se pudo cargar la vista calendario.</p></div>';
 };
+
+
+// ---------- V55.8 OPERARIOS REDESIGN PRO FRONTEND ----------
+async function viewUsers(){
+  const users = await api('/api/users');
+
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="operator-toolbar-v558">
+        <div>
+          <h3>Operarios</h3>
+          <p class="muted">Gestión de personal, documentos, EPIs, PRL, tallas y carpeta individual.</p>
+        </div>
+        <button onclick="openCreateOperatorV558()">+ Crear operario</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Operario</th>
+            <th>Contacto</th>
+            <th>Perfil laboral</th>
+            <th>EPIs / PRL</th>
+            <th>Estado</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${users.filter(u=>u.role!=='admin').map(u=>`
+            <tr>
+              <td>
+                <div class="operator-card-v558">
+                  ${operatorAvatarV555(u)}
+                  <div>
+                    <b>${operatorDisplayNameV555(u)}</b><br>
+                    <span class="operator-small-v558">DNI: ${esc(u.dni||'—')}</span>
+                  </div>
+                </div>
+              </td>
+              <td>
+                ${esc(u.phone||'—')}<br>
+                <span class="muted">${esc(u.email||'')}</span>
+              </td>
+              <td>
+                ${esc(u.services||u.role||'—')}<br>
+                <span class="muted">${esc(u.vehicle_licenses||u.license_type||'')}</span>
+              </td>
+              <td>
+                ${Number(u.epis_delivered)?'<span class="status-badge status-ok">EPIs</span>':'<span class="status-badge status-warn">Sin EPIs</span>'}
+                ${Number(u.prl_completed)?'<span class="status-badge status-ok">PRL</span>':'<span class="status-badge status-warn">Sin PRL</span>'}
+              </td>
+              <td>
+                ${Number(u.active)===0 || String(u.availability||'').toLowerCase()==='suspendido'
+                  ? '<span class="status-badge status-bad">Suspendido</span>'
+                  : '<span class="status-badge status-ok">Activo</span>'}
+              </td>
+              <td>
+                <button onclick="openOperatorFolderV555(${u.id})">Carpeta</button>
+                ${Number(u.active)===0 || String(u.availability||'').toLowerCase()==='suspendido'
+                  ? `<button class="ok" onclick="suspendUserV531(${u.id},0)">Reactivar</button>`
+                  : `<button class="secondary" onclick="suspendUserV531(${u.id},1)">Suspender</button>`}
+                <button class="danger" onclick="deleteUserV531(${u.id}, '${esc((u.first_name||'Operario')).replace(/'/g, "\\'")}')">Borrar</button>
+              </td>
+            </tr>
+          `).join('') || '<tr><td colspan="6">Sin operarios.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function openCreateOperatorV558(){
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal operator-modal-v558">
+        <div class="modal-head">
+          <h2>Crear operario</h2>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+
+        <form id="operatorFormV558" class="operator-form-v558">
+
+          <div class="operator-block-v558">
+            <h4>Datos principales</h4>
+            <div class="grid">
+              <input class="field" name="first_name" placeholder="Nombre" required>
+              <input class="field" name="last_name" placeholder="Apellidos" required>
+              <input class="field" name="nickname" placeholder="Apodo / mote">
+              <input class="field" name="dni" placeholder="DNI / NIE">
+              <input class="field" name="birth_date" type="date" title="Fecha de nacimiento">
+              <input class="field" name="phone" placeholder="Teléfono">
+              <input class="field" name="email" placeholder="Email">
+              <input class="field" name="full_address" placeholder="Dirección completa" style="grid-column:1/-1">
+              <input class="field" id="operatorPhotoV558" type="file" accept="image/*" title="Fotografía">
+            </div>
+          </div>
+
+          <div class="operator-block-v558">
+            <h4>Datos bancarios</h4>
+            <div class="grid">
+              <input class="field" name="bank_name" placeholder="Nombre del banco">
+              <input class="field" name="iban" placeholder="Número de cuenta / IBAN">
+            </div>
+          </div>
+
+          <div class="operator-block-v558">
+            <h4>Perfil laboral</h4>
+            <div class="grid">
+              <select class="field" name="role">
+                <option value="operario">Operario</option>
+                <option value="jefe">Jefe de equipo</option>
+              </select>
+              <input class="field" name="services" placeholder="Cargo / servicios principales">
+              <input class="field" name="skills" placeholder="Skills / especialidades">
+              <input class="field" name="vehicle_licenses" placeholder="Carnets: coche, camión, carretilla, plataforma...">
+              <input class="field" name="vehicle" placeholder="Vehículo propio / matrícula">
+              <select class="field" name="availability">
+                <option value="disponible">Disponible</option>
+                <option value="parcial">Parcial</option>
+                <option value="no_disponible">No disponible</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="operator-block-v558">
+            <h4>Contacto de emergencia</h4>
+            <div class="grid">
+              <input class="field" name="emergency_contact" placeholder="Contacto de emergencia">
+              <input class="field" name="emergency_phone" placeholder="Teléfono de emergencia">
+            </div>
+          </div>
+
+          <div class="operator-block-v558">
+            <h4>Tallas</h4>
+            <div class="grid">
+              <input class="field" name="shirt_size" placeholder="Talla camiseta">
+              <input class="field" name="pants_size" placeholder="Talla pantalón">
+              <input class="field" name="shoe_size" placeholder="Talla zapatos">
+            </div>
+          </div>
+
+          <div class="operator-block-v558">
+            <h4>EPIs y Prevención de Riesgos Laborales</h4>
+            <div class="operator-checks-v558">
+              <label class="operator-check-v558">
+                <input type="checkbox" name="epis_delivered" value="1">
+                EPIs entregados
+              </label>
+              <label class="operator-check-v558">
+                <input type="checkbox" name="prl_completed" value="1">
+                Tiene riesgos laborales / PRL
+              </label>
+            </div>
+            <br>
+            <div class="grid">
+              <select class="field" name="doc_type">
+                <option value="PRL">PRL / Riesgos laborales</option>
+                <option value="EPIs">Entrega EPIs</option>
+                <option value="DNI/NIE">DNI/NIE</option>
+                <option value="Carretilla">Carretilla</option>
+                <option value="Plataforma">Plataforma elevadora</option>
+                <option value="Carnet">Carnet vehículo/camión</option>
+                <option value="Otros">Otros</option>
+              </select>
+              <input class="field" name="doc_title" placeholder="Título del documento">
+              <input class="field" name="doc_expiry_date" type="date" title="Fecha validez / caducidad">
+              <input class="field" id="operatorDocV558" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx">
+            </div>
+            <p class="muted">El documento se subirá automáticamente a la carpeta personal del operario.</p>
+          </div>
+
+          <div class="operator-block-v558">
+            <h4>Costes internos</h4>
+            <div class="grid">
+              <input class="field" name="internal_hour_cost" type="number" step="0.01" placeholder="Coste interno hora">
+              <input class="field" name="internal_night_cost" type="number" step="0.01" placeholder="Coste interno nocturno">
+            </div>
+          </div>
+
+          <div class="operator-block-v558">
+            <h4>Notas internas</h4>
+            <textarea class="field" name="notes" placeholder="Notas internas"></textarea>
+          </div>
+
+          <div class="operator-action-row-v558">
+            <button type="button" class="secondary" onclick="closeWizard()">Cancelar</button>
+            <button>Guardar operario</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  $('#operatorFormV558').onsubmit = async e => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+
+    const payload = {
+      first_name: fd.get('first_name') || '',
+      last_name: fd.get('last_name') || '',
+      nickname: fd.get('nickname') || '',
+      dni: fd.get('dni') || '',
+      birth_date: fd.get('birth_date') || '',
+      phone: fd.get('phone') || '',
+      email: fd.get('email') || '',
+      full_address: fd.get('full_address') || '',
+      address: fd.get('full_address') || '',
+      bank_name: fd.get('bank_name') || '',
+      iban: fd.get('iban') || '',
+      role: fd.get('role') || 'operario',
+      services: fd.get('services') || '',
+      skills: fd.get('skills') || '',
+      vehicle_licenses: fd.get('vehicle_licenses') || '',
+      license_type: fd.get('vehicle_licenses') || '',
+      vehicle: fd.get('vehicle') || '',
+      availability: fd.get('availability') || 'disponible',
+      emergency_contact: fd.get('emergency_contact') || '',
+      emergency_phone: fd.get('emergency_phone') || '',
+      shirt_size: fd.get('shirt_size') || '',
+      pants_size: fd.get('pants_size') || '',
+      shoe_size: fd.get('shoe_size') || '',
+      epis_delivered: fd.get('epis_delivered') ? 1 : 0,
+      prl_completed: fd.get('prl_completed') ? 1 : 0,
+      internal_hour_cost: fd.get('internal_hour_cost') || 0,
+      internal_night_cost: fd.get('internal_night_cost') || 0,
+      notes: fd.get('notes') || '',
+      active: 1
+    };
+
+    const created = await api('/api/users',{method:'POST',body:JSON.stringify(payload)});
+    const userId = created.id || created.user_id || created.lastInsertRowid;
+
+    const photo = $('#operatorPhotoV558').files[0];
+    if(photo && userId){
+      const dataUrl = await resizeImageV555(photo);
+      await api('/api/users/'+userId+'/photo',{method:'POST',body:JSON.stringify({dataUrl})});
+    }
+
+    const doc = $('#operatorDocV558').files[0];
+    if(doc && userId){
+      const dataUrl = await fileToDataUrl(doc);
+      await api('/api/users/'+userId+'/document-from-operator-form',{
+        method:'POST',
+        body:JSON.stringify({
+          dataUrl,
+          file_name:doc.name,
+          doc_type:fd.get('doc_type') || 'PRL',
+          title:fd.get('doc_title') || doc.name,
+          expiry_date:fd.get('doc_expiry_date') || '',
+          notes:'Subido desde creación de operario'
+        })
+      });
+    }
+
+    if(typeof v534Toast==='function') v534Toast('Operario creado correctamente');
+    else alert('Operario creado correctamente');
+    closeWizard();
+    viewUsers();
+  };
+}

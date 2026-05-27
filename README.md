@@ -297,3 +297,34 @@ El calendario seguirá mostrando el estado:
 - Google MARFAN conectado automáticamente
 - OAuth pendiente
 - Faltan variables Railway
+
+
+# V55.8 Operarios Redesign Pro
+
+## Rediseño menú Operarios
+- Crear operario pasa a ventana modal/submenú.
+- Datos principales:
+  - Nombre
+  - Apellidos
+  - Apodo/mote
+  - DNI
+  - Fecha nacimiento
+  - Teléfono
+  - Email
+  - Dirección completa
+- Banco:
+  - Nombre del banco
+  - IBAN
+- Perfil laboral:
+  - Carnets vehículo/camión/carretilla/plataforma
+- Emergencia:
+  - Contacto
+  - Teléfono
+- Tallas:
+  - Camiseta
+  - Pantalón
+  - Zapatos
+- EPIs entregados.
+- PRL/Riesgos laborales.
+- Carga directa de documentos a carpeta personal.
+- Notas internas.

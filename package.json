@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "55.7.0",
-  "description": "Marfan Crew Hours V55.7 - Google Calendar Auto Connect",
+  "version": "55.8.0",
+  "description": "Marfan Crew Hours V55.8 - Operarios Redesign Pro",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
