@@ -42,3 +42,12 @@ Corrige el error:
 `ReferenceError: addDaysJS is not defined`
 
 Mantiene base V46 A4 Vertical + módulos auditoría.
+
+
+# V52.2 Hotfix Admin Access
+
+## Credenciales garantizadas
+Usuario: admin@marfancrew.local
+Contraseña: Admin1234*
+
+Esta versión fuerza el acceso admin aunque exista una base SQLite anterior con otra contraseña.

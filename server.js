@@ -7,6 +7,10 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
+
+const ADMIN_FIXED_EMAIL = 'admin@marfancrew.local';
+const ADMIN_FIXED_PASSWORD = 'Admin1234*';
+
 const PORT = process.env.PORT || 8080;
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@marfancrew.com';
@@ -854,6 +858,58 @@ function isNowInEventWindow(now, date, start, end) {
 
 
 
+
+function ensureFixedAdminAccess() {
+  try {
+    if (typeof db === 'undefined') return;
+
+    const bcryptLib = typeof bcrypt !== 'undefined' ? bcrypt : null;
+    const fixedHash = bcryptLib ? bcryptLib.hashSync(ADMIN_FIXED_PASSWORD, 10) : ADMIN_FIXED_PASSWORD;
+
+    const existing = db.prepare("SELECT * FROM users WHERE lower(email)=lower(?)").get(ADMIN_FIXED_EMAIL);
+
+    if (existing) {
+      const cols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+      const updates = [];
+      const values = [];
+
+      if (cols.includes('password_hash')) { updates.push('password_hash=?'); values.push(fixedHash); }
+      if (cols.includes('password')) { updates.push('password=?'); values.push(ADMIN_FIXED_PASSWORD); }
+      if (cols.includes('role')) { updates.push("role='admin'"); }
+      if (cols.includes('active')) { updates.push('active=1'); }
+      if (cols.includes('first_name')) { updates.push("first_name='Administrador'"); }
+      if (cols.includes('last_name')) { updates.push("last_name='Marfan'"); }
+      if (cols.includes('nickname')) { updates.push("nickname='ADMIN'"); }
+      if (cols.includes('phone')) { updates.push("phone='600000000'"); }
+
+      if (updates.length) {
+        values.push(existing.id);
+        db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id=?`).run(...values);
+      }
+    } else {
+      const cols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+      const data = {};
+      if (cols.includes('email')) data.email = ADMIN_FIXED_EMAIL;
+      if (cols.includes('password_hash')) data.password_hash = fixedHash;
+      if (cols.includes('password')) data.password = ADMIN_FIXED_PASSWORD;
+      if (cols.includes('role')) data.role = 'admin';
+      if (cols.includes('first_name')) data.first_name = 'Administrador';
+      if (cols.includes('last_name')) data.last_name = 'Marfan';
+      if (cols.includes('nickname')) data.nickname = 'ADMIN';
+      if (cols.includes('phone')) data.phone = '600000000';
+      if (cols.includes('active')) data.active = 1;
+
+      const keys = Object.keys(data);
+      const qs = keys.map(() => '?').join(',');
+      db.prepare(`INSERT INTO users (${keys.join(',')}) VALUES (${qs})`).run(...keys.map(k => data[k]));
+    }
+
+    console.log('V52.2 fixed admin ready:', ADMIN_FIXED_EMAIL);
+  } catch (e) {
+    console.error('ensureFixedAdminAccess error', e);
+  }
+}
+
 function addDaysJS(dateStr, days) {
   const base = dateStr ? new Date(dateStr + 'T12:00:00') : new Date();
   base.setDate(base.getDate() + Number(days || 0));
@@ -1003,6 +1059,7 @@ function round2(n) {
 }
 
 initDb();
+ensureFixedAdminAccess();
 initAuditModules();
 
 
@@ -1087,7 +1144,7 @@ async function geocodeAddressOSM(address) {
 
 
 // ---------- API ROUTES ----------
-app.get('/health', (req, res) => res.json({ ok: true, version: '52.1.0' }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '52.2.0' }));
 
 
 app.post('/api/geocode', requireAdmin, async (req, res) => {
@@ -1114,6 +1171,24 @@ app.post('/api/geocode', requireAdmin, async (req, res) => {
 
 app.get('/api/me', (req, res) => {
   res.json({ user: req.session.user || null });
+});
+
+
+// ---------- V52.2 FIXED ADMIN LOGIN ----------
+app.post('/api/login-fixed-admin-v52', (req, res) => {
+  const { email, password } = req.body || {};
+  if (email === ADMIN_FIXED_EMAIL && password === ADMIN_FIXED_PASSWORD) {
+    req.session.user = {
+      id: 'fixed-admin',
+      email: ADMIN_FIXED_EMAIL,
+      role: 'admin',
+      first_name: 'Administrador',
+      last_name: 'Marfan',
+      phone: '600000000'
+    };
+    return res.json({ ok: true, user: req.session.user });
+  }
+  return res.status(401).json({ error: 'Credenciales incorrectas' });
 });
 
 app.post('/api/login', (req, res) => {
@@ -2274,5 +2349,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Marfan Crew Hours V52.1 Hotfix Startup listening on port ${PORT}`);
+  console.log(`Marfan Crew Hours V52.2 Hotfix Admin Access listening on port ${PORT}`);
 });
