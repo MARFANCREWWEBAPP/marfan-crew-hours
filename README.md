@@ -401,3 +401,17 @@ Mantiene el informe perfecto de V56.2 y añade selector de tipo:
 - Documentación del personal.
 
 Todos en formato A4 vertical.
+
+
+# V56.5 Calendar Sync Hard Fix
+
+## Importante
+No modifica el modal de crear evento, que se mantiene igual que V56.3/V56.4.
+
+## Corrige
+- Botón Forzar sincronización visible.
+- Diagnóstico antes de sincronizar.
+- Lee Google MARFAN.
+- Guarda eventos de Google en la base local.
+- El calendario se alimenta de la base local después de sincronizar.
+- Popup con resultados reales.

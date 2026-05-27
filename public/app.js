@@ -4094,3 +4094,144 @@ function renderDocumentsReportV564(r){
     </table>
   `);
 }
+
+
+// ---------- V56.5 CALENDAR SYNC HARD FIX FRONTEND ----------
+async function forceSyncGoogleV565(){
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal sync-modal-v563">
+        <div class="modal-head">
+          <h2>Forzar sincronización Google MARFAN</h2>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+        <div class="sync-hard-v565">
+          <b>1/2 Diagnosticando conexión…</b><br>
+          Comprobando token, calendario MARFAN y permisos.
+        </div>
+      </div>
+    </div>
+  `;
+
+  try{
+    const diag = await api('/api/google/sync-diagnose-v565');
+    if(!diag.ok){
+      $('#modalRoot').innerHTML = `
+        <div class="modal-back">
+          <div class="modal sync-modal-v563">
+            <div class="modal-head">
+              <h2>Error de diagnóstico</h2>
+              <button class="secondary" onclick="closeWizard()">Cerrar</button>
+            </div>
+            <div class="sync-hard-v565 bad">
+              <b>No se puede sincronizar.</b><br>
+              ${esc(diag.error || 'Error desconocido')}
+              <pre>${esc(JSON.stringify(diag,null,2))}</pre>
+            </div>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    $('#modalRoot').innerHTML = `
+      <div class="modal-back">
+        <div class="modal sync-modal-v563">
+          <div class="modal-head">
+            <h2>Sincronizando Google MARFAN</h2>
+            <button class="secondary" onclick="closeWizard()">Cerrar</button>
+          </div>
+          <div class="sync-hard-v565 ok">
+            <b>Calendario encontrado:</b> ${esc((diag.calendar||{}).summary||'MARFAN')}<br>
+            <b>Permiso:</b> ${esc((diag.calendar||{}).accessRole||'')}<br>
+            <b>2/2 Leyendo y guardando eventos…</b>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const r = await api('/api/google/force-sync-v565',{method:'POST'});
+
+    $('#modalRoot').innerHTML = `
+      <div class="modal-back">
+        <div class="modal sync-modal-v563">
+          <div class="modal-head">
+            <h2>Sincronización completada ✅</h2>
+            <button class="secondary" onclick="closeWizard();viewCalendar()">Cerrar</button>
+          </div>
+          <div class="sync-hard-v565 ok">
+            <b>Calendario:</b> ${esc((r.calendar||{}).summary||'MARFAN')}<br>
+            <b>Eventos leídos:</b> ${r.read}<br>
+            <b>Creados:</b> ${r.created}<br>
+            <b>Actualizados:</b> ${r.updated}<br>
+            <b>Errores:</b> ${r.errors}
+          </div>
+          ${r.errors ? `<div class="sync-hard-v565 bad"><pre>${esc(JSON.stringify(r.results.filter(x=>x.action==='error'),null,2))}</pre></div>` : ''}
+          <button onclick="closeWizard();viewCalendar()">Ver calendario actualizado</button>
+        </div>
+      </div>
+    `;
+  }catch(e){
+    $('#modalRoot').innerHTML = `
+      <div class="modal-back">
+        <div class="modal sync-modal-v563">
+          <div class="modal-head">
+            <h2>Error sincronizando</h2>
+            <button class="secondary" onclick="closeWizard()">Cerrar</button>
+          </div>
+          <div class="sync-hard-v565 bad">
+            ${esc(e.message)}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+}
+
+async function viewCalendar(){
+  const localEvents = await api('/api/events');
+  const googleStatus = await api('/api/google/status-v557').catch(()=>({configured:false,connected:false,target_calendar_name:'MARFAN'}));
+
+  const events = localEvents.map(e=>({...e,source:e.operational_status==='google_marfan'?'google':'local'}));
+  const body = v55CalView==='week' ? v55RenderWeekAuto(events) : v55CalView==='day' ? v55RenderDayAuto(events) : v55RenderMonthAuto(events);
+
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div>
+          <h3>Calendario eventos · MARFAN</h3>
+          <p class="v52-sub">Pulsa “Forzar sincronización” para traer los eventos reales de Google MARFAN a la app.</p>
+        </div>
+        <div class="v55-google-panel">
+          ${googleStatus.connected
+            ? `<span class="status-badge status-ok">Google conectado</span>`
+            : `<span class="status-badge status-warn">Google no conectado</span><button onclick="v559OpenGooglePopup()">Conectar Google</button>`}
+          <button onclick="forceSyncGoogleV565()">Forzar sincronización</button>
+          <button class="secondary" onclick="viewCalendar()">Actualizar vista</button>
+        </div>
+      </div>
+      <div class="google-sync-debug-v561 ok">
+        Vista local actual: ${events.length} eventos cargados. Google se sincroniza con botón para evitar fallos silenciosos.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div class="actions">
+          <button onclick="openCreateEventV559()">+ Crear evento</button>
+          <button class="secondary" onclick="v55MoveCalendar(-1)">← Anterior</button>
+          <button onclick="v55CalDate=new Date();viewCalendar()">Hoy</button>
+          <button class="secondary" onclick="v55MoveCalendar(1)">Siguiente →</button>
+        </div>
+        <h2 style="text-transform:capitalize">${v55CalendarTitle()}</h2>
+        <div class="v55-view-tabs">
+          <button class="${v55CalView==='month'?'active':''}" onclick="v55SetView('month')">Mes</button>
+          <button class="${v55CalView==='week'?'active':''}" onclick="v55SetView('week')">Semana</button>
+          <button class="${v55CalView==='day'?'active':''}" onclick="v55SetView('day')">Día</button>
+        </div>
+      </div>
+      <br>
+      ${body}
+    </div>
+  `;
+}

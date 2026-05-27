@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "56.4.0",
-  "description": "Marfan Crew Hours V56.4 - Informes PDF Multi-Tipo",
+  "version": "56.5.0",
+  "description": "Marfan Crew Hours V56.5 - Calendar Sync Hard Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
