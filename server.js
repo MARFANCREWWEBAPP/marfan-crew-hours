@@ -1188,7 +1188,7 @@ async function geocodeAddressOSM(address) {
 
 
 // ---------- API ROUTES ----------
-app.get('/health', (req, res) => res.json({ ok: true, version: '53.0.0' }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '53.1.0' }));
 
 
 app.post('/api/geocode', requireAdmin, async (req, res) => {
@@ -2431,6 +2431,154 @@ app.get('/api/pdf-template/:type/:id', requireAuth, (req, res) => {
   });
 });
 
+
+// ---------- V53.1 DELETE / SUSPEND / BACKUP ROUTES ----------
+
+// Borrado seguro de eventos + datos relacionados
+app.delete('/api/events/:id', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    db.prepare('DELETE FROM assignments WHERE event_id=?').run(id);
+  } catch(e) {}
+  try {
+    db.prepare('DELETE FROM time_logs WHERE event_id=?').run(id);
+  } catch(e) {}
+  try {
+    db.prepare('DELETE FROM production_tasks WHERE event_id=?').run(id);
+  } catch(e) {}
+  try {
+    db.prepare('DELETE FROM production_incidents WHERE event_id=?').run(id);
+  } catch(e) {}
+  try {
+    db.prepare('DELETE FROM event_delivery_notes WHERE event_id=?').run(id);
+  } catch(e) {}
+  try {
+    db.prepare('DELETE FROM delivery_notes WHERE event_id=?').run(id);
+  } catch(e) {}
+  const info = db.prepare('DELETE FROM events WHERE id=?').run(id);
+  res.json({ ok:true, deleted: info.changes || 0 });
+});
+
+// Suspender / reactivar operario
+app.put('/api/users/:id/suspend', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const suspended = req.body && req.body.suspended !== undefined ? Number(req.body.suspended ? 1 : 0) : 1;
+
+  const cols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+  if (cols.includes('active')) {
+    db.prepare('UPDATE users SET active=? WHERE id=?').run(suspended ? 0 : 1, id);
+  }
+
+  if (cols.includes('availability')) {
+    db.prepare('UPDATE users SET availability=? WHERE id=?').run(suspended ? 'suspendido' : 'disponible', id);
+  }
+
+  res.json({ ok:true, id, suspended: !!suspended });
+});
+
+// Borrar operario + desasignar
+app.delete('/api/users/:id', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  try { db.prepare('DELETE FROM assignments WHERE user_id=?').run(id); } catch(e) {}
+  try { db.prepare('DELETE FROM time_logs WHERE user_id=?').run(id); } catch(e) {}
+  try { db.prepare('DELETE FROM worker_documents WHERE user_id=?').run(id); } catch(e) {}
+  const info = db.prepare('DELETE FROM users WHERE id=?').run(id);
+  res.json({ ok:true, deleted: info.changes || 0 });
+});
+
+// Login por teléfono bloquea suspendidos / inactive
+app.post('/api/login-phone-v531', (req, res) => {
+  try {
+    const raw = String((req.body || {}).phone || '');
+    const phone = raw.replace(/\D/g, '').slice(-9);
+    if (!phone) return res.status(400).json({ error:'Teléfono requerido' });
+
+    const users = db.prepare("SELECT * FROM users WHERE role!='admin'").all();
+    const user = users.find(u => String(u.phone || '').replace(/\D/g,'').slice(-9) === phone);
+
+    if (!user) return res.status(401).json({ error:'Teléfono no encontrado' });
+    if (Number(user.active) === 0 || String(user.availability || '').toLowerCase() === 'suspendido') {
+      return res.status(403).json({ error:'Usuario suspendido. Contacta con oficina.' });
+    }
+
+    req.session.user = {
+      id:user.id,
+      email:user.email,
+      role:user.role,
+      first_name:user.first_name,
+      last_name:user.last_name,
+      phone:user.phone
+    };
+    res.json({ ok:true, user:req.session.user });
+  } catch(e) {
+    console.error('login-phone-v531', e);
+    res.status(500).json({ error:'Error login teléfono' });
+  }
+});
+
+// Copia de seguridad completa
+app.get('/api/backup/export', requireAdmin, (req, res) => {
+  const backup = {
+    meta: {
+      app:'Marfan Crew Hours',
+      version:'53.1.0',
+      exported_at:new Date().toISOString()
+    },
+    tables: {}
+  };
+
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(t => t.name);
+  for (const t of tables) {
+    try {
+      backup.tables[t] = db.prepare(`SELECT * FROM ${t}`).all();
+    } catch(e) {
+      backup.tables[t] = [];
+    }
+  }
+
+  res.setHeader('Content-Disposition', `attachment; filename="marfan-crew-hours-backup-${new Date().toISOString().slice(0,10)}.json"`);
+  res.setHeader('Content-Type', 'application/json');
+  res.send(JSON.stringify(backup, null, 2));
+});
+
+// Restaurar copia de seguridad
+app.post('/api/backup/import', requireAdmin, (req, res) => {
+  const backup = req.body || {};
+  if (!backup.tables || typeof backup.tables !== 'object') {
+    return res.status(400).json({ error:'Archivo de copia no válido' });
+  }
+
+  const imported = [];
+  const skipped = [];
+
+  const tx = db.transaction(() => {
+    for (const [table, rows] of Object.entries(backup.tables)) {
+      if (!Array.isArray(rows)) { skipped.push(table); continue; }
+
+      const exists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
+      if (!exists) { skipped.push(table); continue; }
+
+      try {
+        db.prepare(`DELETE FROM ${table}`).run();
+
+        if (rows.length) {
+          const cols = Object.keys(rows[0]);
+          const placeholders = cols.map(() => '?').join(',');
+          const stmt = db.prepare(`INSERT INTO ${table} (${cols.join(',')}) VALUES (${placeholders})`);
+          for (const r of rows) stmt.run(...cols.map(c => r[c]));
+        }
+
+        imported.push(table);
+      } catch(e) {
+        skipped.push(table);
+      }
+    }
+  });
+
+  tx();
+  res.json({ ok:true, imported, skipped });
+});
+
 // Settings
 app.get('/api/settings', requireAuth, (req, res) => {
   res.json(getSettings());
@@ -2457,5 +2605,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Marfan Crew Hours V53 Enterprise Stable Build listening on port ${PORT}`);
+  console.log(`Marfan Crew Hours V53.1 Backup Delete Suspend listening on port ${PORT}`);
 });

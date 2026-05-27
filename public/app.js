@@ -1595,3 +1595,216 @@ async function deleteDocument(id){
     viewDocuments();
   }
 }
+
+
+// ---------- V53.1 DELETE / SUSPEND / BACKUP OVERRIDES ----------
+
+// Login operario reforzado: bloquea suspendidos
+async function doPhone(){
+  try{
+    let d;
+    try {
+      d = await api('/api/login-phone-v531',{method:'POST',body:JSON.stringify({phone:$('#phone').value})});
+    } catch(e) {
+      d = await api('/api/login-phone',{method:'POST',body:JSON.stringify({phone:$('#phone').value})});
+    }
+    state.user=d.user;
+    state.view='operario';
+    render();
+  }catch(e){
+    $('#loginMsg').innerHTML='❌ '+esc(e.message);
+  }
+}
+
+// Eventos con botón borrar real + confirmación
+async function viewCalendar(){
+  const events = await api('/api/events');
+  const clients = await api('/api/clients').catch(()=>[]);
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="v52-head">
+        <div>
+          <h3>Eventos</h3>
+          <p class="v52-sub">Crear, gestionar y borrar eventos con confirmación.</p>
+        </div>
+      </div>
+      <form id="eventForm" class="grid">
+        <input class="field" name="name" placeholder="Nombre evento" required>
+        <select class="field" name="client_id"><option value="">Cliente</option>${clients.map(c=>`<option value="${c.id}">${esc(c.name||c.legal_name||'Cliente')}</option>`).join('')}</select>
+        <input class="field" name="location" placeholder="Localización">
+        <input class="field" name="event_date" type="date" value="${typeof localDateStr==='function'?localDateStr():new Date().toISOString().slice(0,10)}">
+        <input class="field" name="start_time" type="time">
+        <input class="field" name="end_time" type="time">
+        <button>Crear evento</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Listado de eventos</h3>
+      <table class="table">
+        <thead><tr><th>Fecha</th><th>Evento</th><th>Cliente / Localización</th><th>Estado</th><th>Acciones</th></tr></thead>
+        <tbody>
+          ${events.map(e=>`
+            <tr>
+              <td>${formatLocalDate ? formatLocalDate(e.event_date) : esc(e.event_date)}<br>${esc(e.start_time||'')} - ${esc(e.end_time||'')}</td>
+              <td><b>${esc(e.name||'')}</b></td>
+              <td>${esc(e.client||'')}<br><span class="muted">${esc(e.location||'')}</span></td>
+              <td>${esc(e.status||e.operational_status||'')}</td>
+              <td>
+                <button onclick="openEventDetail(${e.id})">Abrir</button>
+                <button class="danger" onclick="deleteEventV531(${e.id}, '${esc(e.name||'Evento').replace(/'/g, "\\'")}')">Borrar</button>
+              </td>
+            </tr>
+          `).join('') || '<tr><td colspan="5">Sin eventos.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
+  const f=$('#eventForm');
+  if(f) f.onsubmit=async e=>{
+    e.preventDefault();
+    await api('/api/events',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});
+    viewCalendar();
+  };
+}
+
+async function deleteEventV531(id, name){
+  const ok = confirm(`ATENCIÓN: se va a borrar el evento "${name}".\n\nTambién se eliminarán sus asignaciones, fichajes, producción y albaranes relacionados.\n\n¿Confirmas el borrado?`);
+  if(!ok) return;
+  await api('/api/events/'+id,{method:'DELETE'});
+  alert('Evento borrado correctamente.');
+  viewCalendar();
+}
+
+// Operarios: borrar + suspender/reactivar
+async function viewUsers(){
+  const users = await api('/api/users');
+  $('#content').innerHTML = `
+    <div class="card">
+      <h3>Crear operario</h3>
+      <form id="userForm" class="grid">
+        <input class="field" name="first_name" placeholder="Nombre">
+        <input class="field" name="last_name" placeholder="Apellidos">
+        <input class="field" name="phone" placeholder="Teléfono">
+        <input class="field" name="email" placeholder="Email">
+        <select class="field" name="role"><option value="operario">Operario</option><option value="jefe">Jefe equipo</option></select>
+        <input class="field" name="services" placeholder="Servicios / cargo">
+        <button>Crear operario</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Operarios</h3>
+      <table class="table">
+        <thead><tr><th>Operario</th><th>Rol</th><th>Servicios</th><th>Estado</th><th>Acciones</th></tr></thead>
+        <tbody>
+          ${users.filter(u=>u.role!=='admin').map(u=>`
+            <tr>
+              <td><b>${esc(fullName ? fullName(u) : ((u.first_name||'')+' '+(u.last_name||'')))}</b><br>${esc(u.phone||'')}<br><span class="muted">${esc(u.email||'')}</span></td>
+              <td>${esc(u.role||'')}</td>
+              <td>${esc(u.services||'')}</td>
+              <td>${Number(u.active)===0 || String(u.availability||'').toLowerCase()==='suspendido'
+                ? '<span class="status-badge status-bad">Suspendido</span>'
+                : '<span class="status-badge status-ok">Activo</span>'}</td>
+              <td>
+                ${Number(u.active)===0 || String(u.availability||'').toLowerCase()==='suspendido'
+                  ? `<button class="ok" onclick="suspendUserV531(${u.id},0)">Reactivar</button>`
+                  : `<button class="secondary" onclick="suspendUserV531(${u.id},1)">Suspender</button>`}
+                <button class="danger" onclick="deleteUserV531(${u.id}, '${esc(fullName ? fullName(u) : (u.first_name||'Operario')).replace(/'/g, "\\'")}')">Borrar</button>
+              </td>
+            </tr>
+          `).join('') || '<tr><td colspan="5">Sin operarios.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
+  const f=$('#userForm');
+  if(f) f.onsubmit=async e=>{
+    e.preventDefault();
+    await api('/api/users',{method:'POST',body:JSON.stringify({...Object.fromEntries(new FormData(e.target)),active:1,availability:'disponible'})});
+    viewUsers();
+  };
+}
+
+async function suspendUserV531(id, suspended){
+  const msg = suspended
+    ? 'Este operario quedará suspendido y NO podrá entrar a su panel de operario. ¿Confirmas?'
+    : 'Este operario volverá a estar activo y podrá entrar a su panel. ¿Confirmas?';
+  if(!confirm(msg)) return;
+  await api('/api/users/'+id+'/suspend',{method:'PUT',body:JSON.stringify({suspended})});
+  viewUsers();
+}
+
+async function deleteUserV531(id, name){
+  if(!confirm(`ATENCIÓN: se va a borrar el operario "${name}".\n\nSe eliminarán sus asignaciones, fichajes y documentos.\n\n¿Confirmas el borrado?`)) return;
+  await api('/api/users/'+id,{method:'DELETE'});
+  alert('Operario borrado correctamente.');
+  viewUsers();
+}
+
+// Ajustes con backup export/import
+async function viewConfig(){
+  let settings = {};
+  try { settings = await api('/api/settings'); } catch(e) {}
+  $('#content').innerHTML = `
+    <div class="card">
+      <h3>Ajustes generales</h3>
+      <form id="settingsForm" class="grid">
+        <input class="field" name="company_name" value="${esc(settings.company_name||settings.company||'MARFAN CREW')}" placeholder="Empresa">
+        <input class="field" name="vat" value="${esc(settings.vat||21)}" placeholder="IVA">
+        <input class="field" name="geo_check_radius_m" value="${esc(settings.geo_check_radius_m||settings.gpsRadius||300)}" placeholder="Radio GPS">
+        <button>Guardar ajustes</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Copia de seguridad</h3>
+      <p class="muted">Descarga o restaura todos los datos de la web app: eventos, operarios, clientes, usuarios, fichajes, albaranes, tarifas y documentación.</p>
+      <div class="actions">
+        <button onclick="downloadBackupV531()">Descargar copia de seguridad</button>
+        <label class="secondary" style="display:inline-block;padding:12px 16px;border-radius:11px;font-weight:900;cursor:pointer">
+          Cargar copia de seguridad
+          <input id="backupFileV531" type="file" accept=".json" style="display:none" onchange="uploadBackupV531(event)">
+        </label>
+      </div>
+      <p class="muted"><b>Importante:</b> restaurar una copia reemplaza los datos actuales por los del archivo cargado.</p>
+    </div>
+  `;
+  const f=$('#settingsForm');
+  if(f) f.onsubmit=async e=>{
+    e.preventDefault();
+    await api('/api/settings',{method:'PUT',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});
+    alert('Ajustes guardados.');
+  };
+}
+
+async function downloadBackupV531(){
+  const res = await fetch('/api/backup/export',{headers:{Authorization: token ? 'Bearer '+token : ''}});
+  if(!res.ok){
+    alert('No se pudo descargar la copia.');
+    return;
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `marfan-crew-hours-backup-${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function uploadBackupV531(ev){
+  const file = ev.target.files[0];
+  if(!file) return;
+  if(!confirm('ATENCIÓN: vas a restaurar una copia de seguridad.\n\nEsto reemplazará la información actual de eventos, operarios, clientes, fichajes, albaranes y ajustes.\n\n¿Quieres continuar?')) return;
+  const text = await file.text();
+  let data;
+  try { data = JSON.parse(text); }
+  catch(e){ alert('Archivo JSON no válido.'); return; }
+
+  await api('/api/backup/import',{method:'POST',body:JSON.stringify(data)});
+  alert('Copia restaurada correctamente. Recarga la página.');
+  location.reload();
+}

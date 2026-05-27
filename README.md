@@ -96,3 +96,15 @@ Esta versión fuerza el acceso admin aunque exista una base SQLite anterior con 
 
 - PDFs:
   - documentos y vistas A4 vertical estilo albarán
+
+
+# V53.1 Backup + Delete + Suspend
+
+## Añadido
+- Borrar eventos con aviso de confirmación.
+- Borrar operarios con aviso de confirmación.
+- Suspender/reactivar operarios.
+- Operario suspendido no puede entrar a su panel.
+- Ajustes > Copia de seguridad:
+  - Descargar backup completo JSON.
+  - Restaurar backup completo JSON.
