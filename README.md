@@ -452,3 +452,30 @@ Corregir definitivamente la sincronización Google MARFAN sin tocar el submenú 
 - Actualiza eventos ya existentes.
 - Refresca calendario al cerrar popup.
 - Cache busting app.js?v=56.7.0.
+
+
+# V56.8 Operarios Roles + Asignaciones Persistentes
+
+## Operarios
+- Crear operario incluye desplegable de rol desde Tarifas.
+
+## Crear / Editar evento
+- Se pueden incluir operarios concretos.
+- Las asignaciones se guardan en base de datos.
+- Se pueden editar después sin borrar información del evento.
+
+## Tarifas
+- Añadir roles.
+- Quitar roles.
+- Editar roles.
+- Restaurar roles completos profesionales:
+  - carga/descarga
+  - técnicos sonido/luz/video
+  - limpieza
+  - auxiliares limpieza
+  - seguridad
+  - control accesos
+  - hostelería
+  - producción
+  - rigging
+  - carretilla/plataforma

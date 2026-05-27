@@ -1098,3 +1098,30 @@ button.warn{background:#f59e0b;color:#111}
   color:white!important;
   font-weight:950!important;
 }
+
+
+/* V56.8 Operarios roles + asignaciones */
+.assignment-box-v568{
+  display:grid;
+  gap:8px;
+}
+.assignment-row-v568{
+  display:grid;
+  grid-template-columns:2.3fr 1.6fr 1fr 1fr auto;
+  gap:8px;
+  align-items:center;
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:14px;
+  padding:10px;
+}
+.rate-edit-row-v568{
+  display:grid;
+  grid-template-columns:2fr 2.5fr .8fr .8fr .8fr .8fr auto;
+  gap:8px;
+  align-items:center;
+  margin-bottom:8px;
+}
+@media(max-width:980px){
+  .assignment-row-v568,.rate-edit-row-v568{grid-template-columns:1fr}
+}

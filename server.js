@@ -3134,7 +3134,7 @@ function v552CreateBackupObject() {
   const backup = {
     meta: {
       app: 'Marfan Crew Hours',
-      version: '56.7.0',
+      version: '56.8.0',
       exported_at: new Date().toISOString(),
       data_dir: V552_DATA_DIR,
       backup_dir: V552_BACKUP_DIR,
@@ -4551,6 +4551,176 @@ app.post('/api/google/final-force-sync-v567', requireAdmin, async (req,res)=>{
     console.error('final-force-sync-v567', e);
     res.status(500).json({ ok:false, error:e.message });
   }
+});
+
+
+// ---------- V56.8 OPERARIOS ROLES + ASIGNACIONES PERSISTENTES ----------
+function v568EnsureColumns() {
+  try {
+    addColumn('users','operator_role_id INTEGER DEFAULT NULL');
+    addColumn('users','operator_role_name TEXT DEFAULT ""');
+  } catch(e) {}
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS assignments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        service_role TEXT DEFAULT '',
+        planned_start TEXT DEFAULT '',
+        planned_end TEXT DEFAULT '',
+        status TEXT DEFAULT 'asignado',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+  } catch(e) {}
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS rates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        role TEXT,
+        name TEXT,
+        hourly_rate REAL DEFAULT 0,
+        night_rate REAL DEFAULT 0,
+        diet REAL DEFAULT 0,
+        active INTEGER DEFAULT 1,
+        notes TEXT DEFAULT '',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+  } catch(e) {}
+}
+
+function v568SeedRatesFull() {
+  v568EnsureColumns();
+  const rows = [
+    ['Operario carga y descarga','Carga, descarga, movimiento de material y apoyo general',18.50,23.50,15],
+    ['Auxiliar carga y descarga','Apoyo básico en carga/descarga y montaje simple',16.50,21.50,15],
+    ['Montador escenario / tarimas','Montaje de tarimas, escenarios, rampas y estructuras básicas',22.00,28.00,15],
+    ['Técnico sonido','Montaje, ajuste y operación de sistemas de sonido',25.00,30.00,15],
+    ['Técnico iluminación','Montaje, direccionamiento DMX y operación de iluminación',25.00,30.00,15],
+    ['Técnico vídeo / LED','Montaje, procesado y operación de pantalla LED/vídeo',28.00,34.00,15],
+    ['Técnico backline DJ','Montaje y asistencia de cabina DJ, CDJ, mixer y backline',25.00,32.00,15],
+    ['Jefe de equipo','Coordinación de operarios, timings, cliente y cierre del servicio',30.00,38.00,15],
+    ['Coordinador producción','Coordinación general de producción, proveedores y cliente',35.00,45.00,15],
+    ['Runner / conductor','Traslados, recados, logística y apoyo de producción',18.50,23.50,15],
+    ['Carretillero','Operario con carretilla elevadora',24.00,30.00,15],
+    ['Operador plataforma elevadora','Operador de plataforma/cherry picker',24.00,30.00,15],
+    ['Rigging / trabajos altura','Rigging, puntos de suspensión y trabajos en altura',35.00,45.00,15],
+    ['Auxiliar producción','Acreditaciones, apoyo producción, control básico y logística',18.50,23.50,15],
+    ['Azafato/a acreditaciones','Recepción, acreditaciones, asistencia al público o invitados',16.50,21.50,15],
+    ['Personal limpieza','Limpieza general del evento, camerinos, accesos y zonas comunes',15.00,20.00,15],
+    ['Auxiliar limpieza','Apoyo al equipo de limpieza y mantenimiento básico',14.00,18.00,15],
+    ['Responsable limpieza','Coordinación del equipo de limpieza y control de zonas',19.00,24.00,15],
+    ['Personal seguridad','Control de accesos, apoyo seguridad y vigilancia según servicio',20.00,26.00,15],
+    ['Auxiliar control accesos','Control básico de entradas, pulseras y apoyo al flujo de público',16.50,21.50,15],
+    ['Vigilante habilitado','Vigilante/seguridad habilitado según normativa aplicable',28.00,36.00,15],
+    ['Camarero/a apoyo evento','Servicio barra, catering o apoyo hostelería en evento',17.00,22.00,15],
+    ['Mozo almacén','Preparación, orden y recepción de material en almacén',16.50,21.50,15],
+    ['Técnico mantenimiento','Resolución incidencias, soporte y mantenimiento durante evento',24.00,30.00,15]
+  ];
+  db.prepare('DELETE FROM rates').run();
+  const stmt = db.prepare('INSERT INTO rates (role,name,hourly_rate,night_rate,diet,active,notes) VALUES (?,?,?,?,?,?,?)');
+  rows.forEach(r => stmt.run(r[0], r[0], r[2], r[3], r[4], 1, r[1]));
+}
+
+v568EnsureColumns();
+
+app.get('/api/operator-roles', requireAdmin, (req,res)=>{
+  v568EnsureColumns();
+  let rows = db.prepare('SELECT * FROM rates WHERE active!=0 ORDER BY role COLLATE NOCASE').all();
+  if (!rows.length) {
+    v568SeedRatesFull();
+    rows = db.prepare('SELECT * FROM rates WHERE active!=0 ORDER BY role COLLATE NOCASE').all();
+  }
+  res.json(rows);
+});
+
+app.post('/api/rates-pro/add', requireAdmin, (req,res)=>{
+  const b = req.body || {};
+  const info = db.prepare(`
+    INSERT INTO rates (role,name,hourly_rate,night_rate,diet,active,notes)
+    VALUES (?,?,?,?,?,?,?)
+  `).run(
+    b.role || b.name || 'Nuevo rol',
+    b.role || b.name || 'Nuevo rol',
+    Number(b.hourly_rate || 0),
+    Number(b.night_rate || 0),
+    Number(b.diet || 0),
+    b.active === 0 ? 0 : 1,
+    b.notes || ''
+  );
+  res.json({ok:true,id:info.lastInsertRowid});
+});
+
+app.put('/api/rates-pro/:id', requireAdmin, (req,res)=>{
+  const b = req.body || {};
+  db.prepare(`
+    UPDATE rates SET role=?, name=?, hourly_rate=?, night_rate=?, diet=?, active=?, notes=?
+    WHERE id=?
+  `).run(
+    b.role || b.name || '',
+    b.role || b.name || '',
+    Number(b.hourly_rate || 0),
+    Number(b.night_rate || 0),
+    Number(b.diet || 0),
+    b.active === 0 ? 0 : 1,
+    b.notes || '',
+    req.params.id
+  );
+  res.json({ok:true});
+});
+
+app.delete('/api/rates-pro/:id', requireAdmin, (req,res)=>{
+  db.prepare('DELETE FROM rates WHERE id=?').run(req.params.id);
+  res.json({ok:true});
+});
+
+app.post('/api/rates-pro/seed-full-v568', requireAdmin, (req,res)=>{
+  v568SeedRatesFull();
+  res.json({ok:true});
+});
+
+app.post('/api/events/:id/assignments-save', requireAdmin, (req,res)=>{
+  const eventId = Number(req.params.id);
+  const rows = Array.isArray((req.body||{}).assignments) ? req.body.assignments : [];
+  const event = db.prepare('SELECT * FROM events WHERE id=?').get(eventId);
+  if (!event) return res.status(404).json({error:'Evento no encontrado'});
+  const tx = db.transaction(()=>{
+    db.prepare('DELETE FROM assignments WHERE event_id=?').run(eventId);
+    const stmt = db.prepare(`
+      INSERT INTO assignments (event_id,user_id,service_role,planned_start,planned_end,status)
+      VALUES (?,?,?,?,?,?)
+    `);
+    for (const r of rows) {
+      if (!r.user_id) continue;
+      stmt.run(
+        eventId,
+        Number(r.user_id),
+        r.service_role || '',
+        r.planned_start || event.start_time || '',
+        r.planned_end || event.end_time || '',
+        r.status || 'asignado'
+      );
+    }
+  });
+  tx();
+  res.json({ok:true,count:rows.length});
+});
+
+app.get('/api/events/:id/assignments-full', requireAdmin, (req,res)=>{
+  const eventId = Number(req.params.id);
+  const rows = db.prepare(`
+    SELECT a.*, 
+           u.first_name,u.last_name,u.nickname,u.phone,u.operator_role_name,u.operator_role_id,
+           r.hourly_rate,r.night_rate,r.diet
+    FROM assignments a
+    JOIN users u ON u.id=a.user_id
+    LEFT JOIN rates r ON r.id=u.operator_role_id
+    WHERE a.event_id=?
+    ORDER BY u.first_name,u.last_name
+  `).all(eventId);
+  res.json(rows);
 });
 
 // Settings

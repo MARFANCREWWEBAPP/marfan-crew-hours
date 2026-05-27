@@ -4602,3 +4602,248 @@ async function viewCalendar(){
     </div>
   `;
 }
+
+
+// ---------- V56.8 OPERARIOS ROLES + ASIGNACIONES FRONTEND ----------
+let v568RolesCache = [];
+let v568UsersCache = [];
+
+async function loadRolesV568(){
+  v568RolesCache = await api('/api/operator-roles').catch(()=>[]);
+  return v568RolesCache;
+}
+async function loadUsersV568(){
+  v568UsersCache = await api('/api/users').catch(()=>[]);
+  return v568UsersCache;
+}
+function roleOptionsV568(selected=''){
+  return v568RolesCache.map(r=>`<option value="${r.id}" ${String(selected)===String(r.id)?'selected':''}>${esc(r.role||r.name||'')}</option>`).join('');
+}
+function usersOptionsV568(selected=''){
+  return v568UsersCache.filter(u=>u.role!=='admin' && Number(u.active)!==0).map(u=>`<option value="${u.id}" ${String(selected)===String(u.id)?'selected':''}>${esc((u.first_name||'')+' '+(u.last_name||''))}${u.nickname?' · '+esc(u.nickname):''}${u.operator_role_name?' · '+esc(u.operator_role_name):''}</option>`).join('');
+}
+
+function v568PatchOperatorFormRole(){
+  setTimeout(async ()=>{
+    await loadRolesV568();
+    const form = document.querySelector('#operatorFormV558, #operatorFormV566, #operatorFormV568');
+    if(!form || form.querySelector('[name="operator_role_id"]')) return;
+    const perfilBlock = [...form.querySelectorAll('.operator-block-v558,.operator-section')].find(b => (b.textContent||'').toLowerCase().includes('perfil laboral'));
+    if(perfilBlock){
+      const targetGrid = perfilBlock.querySelector('.operator-grid-v56,.grid') || perfilBlock;
+      const wrap = document.createElement('div');
+      wrap.className = 'operator-grid-v56';
+      wrap.innerHTML = `
+        <select class="field span-6" name="operator_role_id" onchange="syncOperatorRoleNameV568(this)">
+          <option value="">Rol de operario</option>
+          ${roleOptionsV568()}
+        </select>
+        <input class="field span-6" name="operator_role_name" placeholder="Rol seleccionado" readonly>
+      `;
+      targetGrid.prepend(wrap);
+    }
+  },300);
+}
+function syncOperatorRoleNameV568(sel){
+  const opt = sel.options[sel.selectedIndex];
+  const input = sel.closest('form').querySelector('[name="operator_role_name"]');
+  if(input) input.value = opt ? opt.textContent : '';
+}
+
+const __openCreateOperatorV558 = typeof openCreateOperatorV558 === 'function' ? openCreateOperatorV558 : null;
+if(__openCreateOperatorV558){
+  openCreateOperatorV558 = function(){
+    __openCreateOperatorV558();
+    v568PatchOperatorFormRole();
+  };
+}
+
+function addAssignmentRowV568(userId='', serviceRole='', start='', end=''){
+  const box = $('#assignmentsBoxV568');
+  const div = document.createElement('div');
+  div.className = 'assignment-row-v568';
+  div.innerHTML = `
+    <select class="field" name="user_id">${usersOptionsV568(userId)}</select>
+    <input class="field" name="service_role" placeholder="Rol en este evento" value="${esc(serviceRole||'')}">
+    <input class="field" name="planned_start" type="time" value="${esc(start||'')}">
+    <input class="field" name="planned_end" type="time" value="${esc(end||'')}">
+    <button type="button" class="danger" onclick="this.closest('.assignment-row-v568').remove()">Quitar</button>
+  `;
+  box.appendChild(div);
+}
+
+async function enhanceEventModalAssignmentsV568(eventId=null){
+  await loadUsersV568();
+  await loadRolesV568();
+
+  const form = document.querySelector('#eventFormV566, #eventFormV563, #eventFormV559');
+  if(!form || form.querySelector('#assignmentsBoxV568')) return;
+
+  const block = document.createElement('div');
+  block.className = 'v46-event-block-v566';
+  block.innerHTML = `
+    <h4>Operarios asignados al evento</h4>
+    <p class="muted">Selecciona operarios concretos. La asignación queda guardada y se mantiene al editar el evento.</p>
+    <div id="assignmentsBoxV568" class="assignment-box-v568"></div>
+    <button type="button" onclick="addAssignmentRowV568()">+ Añadir operario</button>
+  `;
+
+  const actions = form.querySelector('.event-actions-v559') || form.lastElementChild;
+  form.insertBefore(block, actions);
+
+  if(eventId){
+    const existing = await api('/api/events/'+eventId+'/assignments-full').catch(()=>[]);
+    existing.forEach(a=>addAssignmentRowV568(a.user_id,a.service_role || a.operator_role_name,a.planned_start,a.planned_end));
+    if(!existing.length) addAssignmentRowV568();
+  }else{
+    addAssignmentRowV568();
+  }
+}
+
+const __openCreateEventV559_v568 = typeof openCreateEventV559 === 'function' ? openCreateEventV559 : null;
+if(__openCreateEventV559_v568){
+  openCreateEventV559 = async function(){
+    await __openCreateEventV559_v568();
+    await enhanceEventModalAssignmentsV568();
+    const form = document.querySelector('#eventFormV566, #eventFormV563, #eventFormV559');
+    if(form && !form.dataset.v568Assignments){
+      form.dataset.v568Assignments = '1';
+      const oldSubmit = form.onsubmit;
+      form.onsubmit = async e => {
+        e.preventDefault();
+        const payload = Object.fromEntries(new FormData(e.target));
+        const created = await api('/api/events',{method:'POST',body:JSON.stringify(payload)});
+        const eventId = created.id || created.event_id || created.lastInsertRowid;
+        await saveAssignmentsV568(eventId);
+        if(typeof v534Toast === 'function') v534Toast('Evento creado con operarios asignados');
+        try { await api('/api/google/export-event-v563/'+eventId,{method:'POST'}); } catch(err){}
+        closeWizard();
+        viewCalendar();
+      };
+    }
+  };
+}
+
+async function saveAssignmentsV568(eventId){
+  const rows = [...document.querySelectorAll('#assignmentsBoxV568 .assignment-row-v568')].map(r=>({
+    user_id:Number(r.querySelector('[name="user_id"]').value || 0),
+    service_role:r.querySelector('[name="service_role"]').value || '',
+    planned_start:r.querySelector('[name="planned_start"]').value || '',
+    planned_end:r.querySelector('[name="planned_end"]').value || '',
+    status:'asignado'
+  })).filter(r=>r.user_id);
+  await api('/api/events/'+eventId+'/assignments-save',{method:'POST',body:JSON.stringify({assignments:rows})});
+}
+
+async function editEventAssignmentsV568(eventId){
+  const event = (await api('/api/events')).find(e=>Number(e.id)===Number(eventId));
+  if(!event){ alert('Evento no encontrado'); return; }
+  await loadUsersV568();
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal v46-event-modal-v566">
+        <div class="modal-head">
+          <h2>Editar operarios del evento</h2>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+        <div class="v46-event-block-v566">
+          <h4>${esc(event.name||'Evento')}</h4>
+          <p class="muted">${esc(event.event_date||'')} · ${esc(event.start_time||'')} - ${esc(event.end_time||'')}</p>
+          <div id="assignmentsBoxV568" class="assignment-box-v568"></div>
+          <button onclick="addAssignmentRowV568()">+ Añadir operario</button>
+        </div>
+        <div class="event-actions-v559">
+          <button class="secondary" onclick="closeWizard()">Cancelar</button>
+          <button onclick="saveAssignmentsV568(${eventId}); if(typeof v534Toast==='function')v534Toast('Asignaciones guardadas'); closeWizard(); viewCalendar();">Guardar cambios</button>
+        </div>
+      </div>
+    </div>
+  `;
+  const existing = await api('/api/events/'+eventId+'/assignments-full').catch(()=>[]);
+  existing.forEach(a=>addAssignmentRowV568(a.user_id,a.service_role || a.operator_role_name,a.planned_start,a.planned_end));
+  if(!existing.length) addAssignmentRowV568();
+}
+
+const __openEventDetail_v568 = typeof openEventDetail === 'function' ? openEventDetail : null;
+if(__openEventDetail_v568){
+  openEventDetail = async function(id){
+    await __openEventDetail_v568(id);
+    setTimeout(()=>{
+      const box = document.querySelector('.modal .actions, .modal .event-actions-v559, .modal .modal-head');
+      if(box && !document.getElementById('editAssignmentsBtnV568')){
+        const b = document.createElement('button');
+        b.id='editAssignmentsBtnV568';
+        b.innerText='Editar operarios';
+        b.onclick=()=>editEventAssignmentsV568(id);
+        box.appendChild(b);
+      }
+    },250);
+  };
+}
+
+async function viewRates(){
+  const rates = await api('/api/rates-pro').catch(()=>[]);
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="v52-head">
+        <div>
+          <h3>Tarifas y roles de operarios</h3>
+          <p class="muted">Añade, edita o elimina roles. Estos roles aparecen en Crear Operario y Crear Evento.</p>
+        </div>
+        <button class="secondary" onclick="resetRatesFullV568()">Restaurar roles completos</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Añadir nuevo rol</h3>
+      <form id="rateAddFormV568" class="rate-edit-row-v568">
+        <input class="field" name="role" placeholder="Nombre rol">
+        <input class="field" name="notes" placeholder="Descripción para administración">
+        <input class="field" name="hourly_rate" type="number" step="0.01" placeholder="D">
+        <input class="field" name="night_rate" type="number" step="0.01" placeholder="N">
+        <input class="field" name="diet" type="number" step="0.01" placeholder="Dieta">
+        <select class="field" name="active"><option value="1">Activo</option><option value="0">Inactivo</option></select>
+        <button>Añadir</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Roles actuales</h3>
+      ${rates.map(r=>`
+        <form class="rate-edit-row-v568" onsubmit="saveRateRowV568(event,${r.id})">
+          <input class="field" name="role" value="${esc(r.role||r.name||'')}">
+          <input class="field" name="notes" value="${esc(r.notes||'')}">
+          <input class="field" name="hourly_rate" type="number" step="0.01" value="${Number(r.hourly_rate||0)}">
+          <input class="field" name="night_rate" type="number" step="0.01" value="${Number(r.night_rate||0)}">
+          <input class="field" name="diet" type="number" step="0.01" value="${Number(r.diet||0)}">
+          <select class="field" name="active"><option value="1" ${Number(r.active)!==0?'selected':''}>Activo</option><option value="0" ${Number(r.active)===0?'selected':''}>Inactivo</option></select>
+          <div><button>Guardar</button><button type="button" class="danger" onclick="deleteRateV568(${r.id})">Quitar</button></div>
+        </form>
+      `).join('')}
+    </div>
+  `;
+  $('#rateAddFormV568').onsubmit = async e=>{
+    e.preventDefault();
+    await api('/api/rates-pro/add',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});
+    viewRates();
+  };
+}
+
+async function saveRateRowV568(e,id){
+  e.preventDefault();
+  await api('/api/rates-pro/'+id,{method:'PUT',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});
+  if(typeof v534Toast==='function') v534Toast('Rol guardado');
+  viewRates();
+}
+
+async function deleteRateV568(id){
+  if(!confirm('¿Quitar este rol de operario?')) return;
+  await api('/api/rates-pro/'+id,{method:'DELETE'});
+  viewRates();
+}
+
+async function resetRatesFullV568(){
+  if(!confirm('¿Restaurar todos los roles profesionales por defecto?')) return;
+  await api('/api/rates-pro/seed-full-v568',{method:'POST'});
+  viewRates();
+}
