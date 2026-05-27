@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "50.0.0",
-  "description": "Marfan Crew Hours V50 Pro Restore sobre base V46 A4 vertical",
+  "version": "51.0.0",
+  "description": "Marfan Crew Hours V51 Enterprise V46 Core",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

@@ -34,3 +34,14 @@ Contraseña: Admin1234*
 
 ## Railway
 /health = OK
+
+
+# V51 Enterprise V46 Core
+
+## Mejoras sobre V50
+- Logo ampliado y sin recorte en login y lateral.
+- UI más cercana a V46 A4 Vertical.
+- Dashboard reforzado con KPIs, accesos rápidos y alertas.
+- Producción Live funcional por fases.
+- Menú Tarifas mantenido.
+- Albaranes A4 vertical mantenidos.

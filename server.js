@@ -276,4 +276,4 @@ app.put('/api/settings',requireAdmin,(req,res)=>{ const db=loadDb(); db.settings
 app.get('*',(req,res)=>{ if(req.path.startsWith('/api/'))return res.status(404).json({error:'API no encontrada'}); res.sendFile(path.join(PUBLIC_DIR,'index.html')); });
 
 const PORT = Number(process.env.PORT || 8080);
-app.listen(PORT,'0.0.0.0',()=>console.log(`Marfan Crew Hours V50 Pro Restore listening on 0.0.0.0:${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`Marfan Crew Hours V51 Enterprise V46 Core listening on 0.0.0.0:${PORT}`));
