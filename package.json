@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "57.0.0",
-  "description": "V57 A4 PDF Buttons + AutoBackup Restore Safe",
+  "version": "57.2.0",
+  "description": "V57.2 Calendar Sync Pattern Fix + Event Dynamic Roles",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

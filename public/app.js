@@ -5208,3 +5208,289 @@ if(__viewConfigV57){
     }
   };
 }
+
+
+// ---------- V57.1 BACKUP AUTO-CLEAN UI ----------
+async function cleanupBackupsV571(){
+  const r = await api('/api/backup/cleanup-v571',{method:'POST'});
+  alert(`Limpieza realizada.\nMáximo permitido: ${r.max}\nBorrados: ${r.deleted}\nConservados: ${r.kept}`);
+  if(typeof backupCenterV57 === 'function') backupCenterV57();
+}
+
+const __backupCenterV57_571 = typeof backupCenterV57 === 'function' ? backupCenterV57 : null;
+if(__backupCenterV57_571){
+  backupCenterV57 = async function(){
+    await __backupCenterV57_571();
+    setTimeout(async ()=>{
+      const modal = document.querySelector('.modal');
+      if(modal && !document.getElementById('cleanupBackupsV571')){
+        const st = await api('/api/backup/status-v571').catch(()=>null);
+        const div = document.createElement('div');
+        div.className = 'backup-box-v57';
+        div.innerHTML = `
+          <b>Limpieza automática V57.1</b><br>
+          Máximo backups guardados: ${st ? st.max : 10}<br>
+          Backups actuales: ${st ? st.current : '—'}<br>
+          LATEST.json: ${st && st.latest_exists ? 'OK' : '—'}<br><br>
+          <button id="cleanupBackupsV571" onclick="cleanupBackupsV571()">Limpiar backups antiguos ahora</button>
+        `;
+        modal.appendChild(div);
+      }
+    },200);
+  };
+}
+
+
+// ---------- V57.2 CALENDAR SYNC + EVENT SUBMENU FINAL ----------
+async function fetchJsonV572(url, opts={}){
+  const headers = {'Content-Type':'application/json'};
+  if(typeof token !== 'undefined' && token) headers.Authorization = 'Bearer ' + token;
+  const res = await fetch(url, {...opts, headers:{...headers, ...(opts.headers||{})}});
+  const text = await res.text();
+  let data = {};
+  try{ data = text ? JSON.parse(text) : {}; }catch(e){ data = {error:text}; }
+  if(!res.ok) throw new Error(data.error || text || 'Error HTTP '+res.status);
+  return data;
+}
+
+async function forceGoogleSyncV572(){
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back"><div class="modal">
+      <div class="modal-head"><h2>Forzar sincronización Google MARFAN</h2><button class="secondary" onclick="closeWizard()">Cerrar</button></div>
+      <div class="sync-v572">Diagnosticando Google Calendar...</div>
+    </div></div>`;
+
+  try{
+    const diag = await fetchJsonV572('/api/google/diagnose-v572');
+    if(!diag.ok){
+      $('#modalRoot').innerHTML = `
+        <div class="modal-back"><div class="modal">
+          <div class="modal-head"><h2>No se puede sincronizar</h2><button class="secondary" onclick="closeWizard()">Cerrar</button></div>
+          <div class="sync-v572 bad"><b>Error:</b> ${esc(diag.error||'Error desconocido')}<pre>${esc(JSON.stringify(diag,null,2))}</pre></div>
+        </div></div>`;
+      return;
+    }
+
+    $('#modalRoot').innerHTML = `
+      <div class="modal-back"><div class="modal">
+        <div class="modal-head"><h2>Calendario encontrado</h2><button class="secondary" onclick="closeWizard()">Cerrar</button></div>
+        <div class="sync-v572 ok">
+          <b>${esc((diag.calendar||{}).summary||'MARFAN')}</b><br>
+          Permiso: ${esc((diag.calendar||{}).accessRole||'')}<br>
+          Sincronizando eventos...
+        </div>
+      </div></div>`;
+
+    const r = await fetchJsonV572('/api/google/force-sync-v572',{method:'POST'});
+    $('#modalRoot').innerHTML = `
+      <div class="modal-back"><div class="modal">
+        <div class="modal-head"><h2>Sincronización completada ✅</h2><button class="secondary" onclick="closeWizard();viewCalendar()">Cerrar</button></div>
+        <div class="sync-v572 ok">
+          <b>Calendario:</b> ${esc((r.calendar||{}).summary||'MARFAN')}<br>
+          <b>Eventos leídos:</b> ${r.read}<br>
+          <b>Creados:</b> ${r.created}<br>
+          <b>Actualizados:</b> ${r.updated}<br>
+          <b>Errores:</b> ${r.errors}
+        </div>
+        ${r.errors ? `<div class="sync-v572 bad"><pre>${esc(JSON.stringify((r.results||[]).filter(x=>x.action==='error'),null,2))}</pre></div>` : ''}
+        <button onclick="closeWizard();viewCalendar()">Ver calendario actualizado</button>
+      </div></div>`;
+  }catch(e){
+    $('#modalRoot').innerHTML = `
+      <div class="modal-back"><div class="modal">
+        <div class="modal-head"><h2>Error sincronizando</h2><button class="secondary" onclick="closeWizard()">Cerrar</button></div>
+        <div class="sync-v572 bad">${esc(e.message)}</div>
+      </div></div>`;
+  }
+}
+
+async function loadEventModalDataV572(){
+  const users = await fetchJsonV572('/api/users').catch(()=>[]);
+  const roles = await fetchJsonV572('/api/operator-roles').catch(()=>[]);
+  return {users:users.filter(u=>u.role!=='admin' && Number(u.active)!==0), roles};
+}
+function userOptionsV572(users){
+  return users.map(u=>`<option value="${u.id}">${esc((u.first_name||'')+' '+(u.last_name||''))}${u.nickname?' · '+esc(u.nickname):''}</option>`).join('');
+}
+function roleOptionsV572(roles){
+  return roles.map(r=>`<option value="${r.id}" data-name="${esc(r.role||r.name||'')}" data-day="${Number(r.hourly_rate||0)}" data-night="${Number(r.night_rate||0)}">${esc(r.role||r.name||'')}</option>`).join('');
+}
+function calcAssignV572(row){
+  const opt = row.querySelector('[name="role_id"]').options[row.querySelector('[name="role_id"]').selectedIndex];
+  const shift = row.querySelector('[name="shift"]').value;
+  const price = shift === 'N' ? Number(opt.dataset.night||0) : Number(opt.dataset.day||0);
+  row.querySelector('[name="price"]').value = price.toFixed(2);
+}
+function addAssignmentV572(users, roles){
+  const box = $('#assignmentsBoxV572');
+  const row = document.createElement('div');
+  row.className='assignment-row-v572';
+  row.innerHTML = `
+    <select class="field" name="user_id">${userOptionsV572(users)}</select>
+    <select class="field" name="role_id" onchange="calcAssignV572(this.closest('.assignment-row-v572'))">${roleOptionsV572(roles)}</select>
+    <select class="field" name="shift" onchange="calcAssignV572(this.closest('.assignment-row-v572'))"><option value="D">D</option><option value="N">N</option></select>
+    <input class="field" name="planned_start" type="time">
+    <input class="field" name="price" readonly placeholder="€/h">
+    <button type="button" class="danger" onclick="this.closest('.assignment-row-v572').remove()">Quitar</button>
+  `;
+  box.appendChild(row);
+  calcAssignV572(row);
+}
+
+// Sobrescribe crear evento definitivamente
+async function openCreateEventV559(){
+  const {users, roles} = await loadEventModalDataV572();
+
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal v46-event-modal-v566">
+        <div class="modal-head"><h2>Crear evento</h2><button class="secondary" onclick="closeWizard()">Cerrar</button></div>
+        <form id="eventFormV572" class="v46-event-form-v566">
+
+          <div class="v46-event-block-v566">
+            <h4>1. Datos del evento</h4>
+            <div class="v46-grid-v566">
+              <input class="field span-6" name="name" placeholder="Nombre del evento" required>
+              <input class="field span-3" name="event_code" placeholder="Referencia">
+              <select class="field span-3" name="status"><option value="programado">Programado</option><option value="confirmado">Confirmado</option><option value="pendiente">Pendiente</option><option value="realizado">Realizado</option></select>
+              <input class="field span-4" name="client" placeholder="Cliente">
+              <input class="field span-4" name="legal_name" placeholder="Razón social">
+              <input class="field span-4" name="cif" placeholder="CIF/NIF">
+            </div>
+          </div>
+
+          <div class="v46-event-block-v566">
+            <h4>2. Responsable y contacto</h4>
+            <div class="v46-grid-v566">
+              <input class="field span-4" name="contact_name" placeholder="Responsable">
+              <input class="field span-3" name="contact_phone" placeholder="Teléfono">
+              <input class="field span-5" name="contact_email" placeholder="Email">
+            </div>
+          </div>
+
+          <div class="v46-event-block-v566">
+            <h4>3. Fecha, horarios y ubicación</h4>
+            <div class="v46-grid-v566">
+              <input class="field span-3" name="event_date" type="date" value="${v55DateKey ? v55DateKey(v55CalDate || new Date()) : new Date().toISOString().slice(0,10)}" required>
+              <input class="field span-2" name="start_time" type="time" value="09:00">
+              <input class="field span-2" name="end_time" type="time" value="10:00">
+              <input class="field span-2" name="load_in_time" type="time">
+              <input class="field span-3" name="load_out_time" type="time">
+              <input class="field span-5" name="location" placeholder="Recinto / ubicación">
+              <input class="field span-7" name="address" placeholder="Dirección completa">
+              <input class="field span-6" name="access_notes" placeholder="Accesos / carga y descarga">
+              <input class="field span-6" name="parking_notes" placeholder="Parking / vehículos">
+            </div>
+          </div>
+
+          <div class="v46-event-block-v566">
+            <h4>4. Operarios del evento</h4>
+            <p class="muted">Aquí eliges el operario y el rol que hace EN ESTE EVENTO. Un mismo chico puede ser carga hoy y limpieza mañana.</p>
+            <div id="assignmentsBoxV572"></div>
+            <button type="button" onclick='addAssignmentV572(window.__usersV572, window.__rolesV572)'>+ Añadir operario</button>
+          </div>
+
+          <div class="v46-event-block-v566">
+            <h4>5. Producción y operación</h4>
+            <div class="v46-grid-v566">
+              <input class="field span-4" name="service_type" placeholder="Tipo de servicio">
+              <input class="field span-4" name="required_workers" type="number" placeholder="Operarios necesarios">
+              <input class="field span-4" name="required_team_leads" type="number" value="1" placeholder="Jefes de equipo">
+              <input class="field span-6" name="material_notes" placeholder="Material / técnica">
+              <input class="field span-6" name="crew_notes" placeholder="Notas para crew">
+              <textarea class="field span-12" name="production_notes" placeholder="Notas producción"></textarea>
+            </div>
+          </div>
+
+          <div class="v46-event-block-v566">
+            <h4>6. Facturación y costes</h4>
+            <div class="v46-grid-v566">
+              <select class="field span-3" name="payment_status"><option value="pendiente">Pendiente</option><option value="facturado">Facturado</option><option value="cobrado">Cobrado</option></select>
+              <input class="field span-3" name="estimated_external_cost" type="number" step="0.01" placeholder="Coste externo">
+              <input class="field span-3" name="estimated_transport_cost" type="number" step="0.01" placeholder="Transporte">
+              <input class="field span-3" name="estimated_other_cost" type="number" step="0.01" placeholder="Otros">
+            </div>
+          </div>
+
+          <div class="v46-event-block-v566">
+            <h4>7. Notas internas</h4>
+            <textarea class="field span-12" name="notes" placeholder="Notas internas"></textarea>
+          </div>
+
+          <div class="event-actions-v559">
+            <button type="button" class="secondary" onclick="closeWizard()">Cancelar</button>
+            <button>Guardar evento</button>
+          </div>
+        </form>
+      </div>
+    </div>`;
+
+  window.__usersV572 = users;
+  window.__rolesV572 = roles;
+  addAssignmentV572(users, roles);
+
+  $('#eventFormV572').onsubmit = async e=>{
+    e.preventDefault();
+    const payload = Object.fromEntries(new FormData(e.target));
+    const created = await fetchJsonV572('/api/events',{method:'POST',body:JSON.stringify(payload)});
+    const eventId = created.id || created.event_id || created.lastInsertRowid;
+
+    const assignments = [...document.querySelectorAll('.assignment-row-v572')].map(row=>{
+      const roleSel = row.querySelector('[name="role_id"]');
+      const opt = roleSel.options[roleSel.selectedIndex];
+      return {
+        user_id:Number(row.querySelector('[name="user_id"]').value),
+        service_role:opt.dataset.name || opt.textContent,
+        planned_start:row.querySelector('[name="planned_start"]').value || payload.start_time || '',
+        planned_end:payload.end_time || '',
+        status:'asignado'
+      };
+    }).filter(x=>x.user_id);
+
+    await fetchJsonV572('/api/events/'+eventId+'/assignments-save',{method:'POST',body:JSON.stringify({assignments})});
+    if(typeof v534Toast === 'function') v534Toast('Evento creado con operarios asignados');
+    closeWizard();
+    viewCalendar();
+  };
+}
+
+// Sobrescribe calendario y mete botón real siempre visible
+async function viewCalendar(){
+  const eventsLocal = await fetchJsonV572('/api/events').catch(()=>[]);
+  const googleStatus = await fetchJsonV572('/api/google/status-v557').catch(()=>({connected:false}));
+  const events = eventsLocal.map(e=>({...e, source:e.operational_status==='google_marfan'?'google':'local'}));
+  const body = v55CalView==='week' ? v55RenderWeekAuto(events) : v55CalView==='day' ? v55RenderDayAuto(events) : v55RenderMonthAuto(events);
+
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div>
+          <h3>Calendario eventos · MARFAN</h3>
+          <p class="v52-sub">Pulsa el botón rojo para sincronizar manualmente con Google.</p>
+        </div>
+        <div class="v55-google-panel">
+          ${googleStatus.connected ? '<span class="status-badge status-ok">Google conectado</span>' : '<span class="status-badge status-warn">Google no conectado</span><button onclick="v559OpenGooglePopup()">Conectar Google</button>'}
+          <button class="force-sync-v572" onclick="forceGoogleSyncV572()">FORZAR SINCRONIZACIÓN GOOGLE</button>
+          <button class="secondary" onclick="viewCalendar()">Actualizar vista</button>
+        </div>
+      </div>
+      <div class="google-sync-debug-v561 ok">Eventos cargados en app: ${events.length}</div>
+    </div>
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div class="actions">
+          <button onclick="openCreateEventV559()">+ Crear evento</button>
+          <button class="secondary" onclick="v55MoveCalendar(-1)">← Anterior</button>
+          <button onclick="v55CalDate=new Date();viewCalendar()">Hoy</button>
+          <button class="secondary" onclick="v55MoveCalendar(1)">Siguiente →</button>
+        </div>
+        <h2 style="text-transform:capitalize">${v55CalendarTitle()}</h2>
+        <div class="v55-view-tabs">
+          <button class="${v55CalView==='month'?'active':''}" onclick="v55SetView('month')">Mes</button>
+          <button class="${v55CalView==='week'?'active':''}" onclick="v55SetView('week')">Semana</button>
+          <button class="${v55CalView==='day'?'active':''}" onclick="v55SetView('day')">Día</button>
+        </div>
+      </div>
+      <br>${body}
+    </div>`;
+}

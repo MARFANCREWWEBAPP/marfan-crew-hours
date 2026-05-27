@@ -1,21 +1,15 @@
 
-# V57 A4 PDF + AutoBackup Restore Safe
+# V57.2 Calendar Sync Pattern Fix + Event Dynamic Roles
 
-## Botones PDF A4
-- Carpeta de documentos de cada operario.
-- Albarán de evento.
-- Finanzas Pro del evento.
+## Arregla calendario
+- Nuevo botón real: FORZAR SINCRONIZACIÓN GOOGLE.
+- Corrige error: "The string did not match the expected pattern".
+- Usa fechas RFC3339 válidas.
+- Diagnóstico antes de sincronizar.
+- Importa eventos Google MARFAN a base local.
 
-## Backup automático
-- Cada POST/PUT/DELETE importante crea copia.
-- Copia en /data/backups.
-- LATEST.json siempre actualizado.
-
-## Restauración automática
-- Al iniciar una versión nueva, si la base está vacía, intenta restaurar LATEST.json.
-
-## Backup manual
-- Ajustes > Copias de seguridad V57.
-- Generar copia completa.
-- Descargar copia completa.
-- Restaurar copia.
+## Arregla crear evento
+- Sobrescribe definitivamente el submenú.
+- Seleccionas operario + rol del evento + turno.
+- El precio cambia según rol y D/N.
+- El mismo operario puede trabajar en roles distintos por evento.

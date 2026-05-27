@@ -5069,3 +5069,241 @@ app.post('/api/google/manual-force-sync-v569', requireAdmin, async (req,res)=>{
     res.status(500).json({ok:false,error:e.message});
   }
 });
+
+
+// ---------- V57.1 BACKUP AUTO-CLEAN MAX 10 ----------
+const V571_MAX_BACKUPS = Number(process.env.MAX_BACKUPS || 10);
+
+function v571CleanOldBackups(){
+  try{
+    const dir = typeof v57BackupDir === 'function'
+      ? v57BackupDir()
+      : path.join((typeof V552_DATA_DIR !== 'undefined' ? V552_DATA_DIR : '/data'), 'backups');
+
+    fs.mkdirSync(dir,{recursive:true});
+
+    const files = fs.readdirSync(dir)
+      .filter(f => f.endsWith('.json') && f !== 'LATEST.json')
+      .map(f => {
+        const p = path.join(dir,f);
+        const st = fs.statSync(p);
+        return { filename:f, path:p, mtime:st.mtimeMs };
+      })
+      .sort((a,b)=>b.mtime-a.mtime);
+
+    const toDelete = files.slice(V571_MAX_BACKUPS);
+    for(const f of toDelete){
+      try{ fs.unlinkSync(f.path); }catch(e){}
+    }
+
+    return {
+      ok:true,
+      kept:Math.min(files.length,V571_MAX_BACKUPS),
+      deleted:toDelete.length,
+      max:V571_MAX_BACKUPS
+    };
+  }catch(e){
+    console.error('v571CleanOldBackups', e);
+    return {ok:false,error:e.message};
+  }
+}
+
+// envolver escritura de backup para limpiar automáticamente después
+if(typeof v57WriteBackup === 'function' && !global.__v571BackupWrapped){
+  global.__v571BackupWrapped = true;
+  const __v57WriteBackupOriginal = v57WriteBackup;
+  v57WriteBackup = function(reason='auto'){
+    const result = __v57WriteBackupOriginal(reason);
+    try{ result.cleanup = v571CleanOldBackups(); }catch(e){}
+    return result;
+  };
+}
+
+app.post('/api/backup/cleanup-v571', requireAdmin, (req,res)=>{
+  res.json(v571CleanOldBackups());
+});
+
+app.get('/api/backup/status-v571', requireAdmin, (req,res)=>{
+  try{
+    const dir = typeof v57BackupDir === 'function'
+      ? v57BackupDir()
+      : path.join((typeof V552_DATA_DIR !== 'undefined' ? V552_DATA_DIR : '/data'), 'backups');
+    const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && f !== 'LATEST.json');
+    res.json({
+      ok:true,
+      max:V571_MAX_BACKUPS,
+      current:files.length,
+      latest_exists:fs.existsSync(path.join(dir,'LATEST.json')),
+      dir
+    });
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+
+// ---------- V57.2 CALENDAR SYNC PATTERN FIX ----------
+function v572TokenPath(){
+  return path.join((typeof V552_DATA_DIR !== 'undefined' ? V552_DATA_DIR : (process.env.DATA_DIR || '/data')), 'google-token.json');
+}
+function v572GetTokens(){
+  try{ if(typeof v557GetTokensAny==='function'){ const t=v557GetTokensAny(); if(t) return t; }}catch(e){}
+  try{ if(typeof v567GetTokens==='function'){ const t=v567GetTokens(); if(t) return t; }}catch(e){}
+  try{ if(fs.existsSync(v572TokenPath())) return JSON.parse(fs.readFileSync(v572TokenPath(),'utf8')); }catch(e){}
+  return null;
+}
+function v572OAuth(){
+  const clientId = process.env.GOOGLE_CLIENT_ID || '';
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
+  const callbackUrl = process.env.GOOGLE_CALLBACK_URL || '';
+  if(!clientId || !clientSecret || !callbackUrl) throw new Error('Faltan variables Google en Railway: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_CALLBACK_URL');
+  return new google.auth.OAuth2(clientId, clientSecret, callbackUrl);
+}
+async function v572Calendar(){
+  const tokens = v572GetTokens();
+  if(!tokens) throw new Error('No hay token Google guardado. Conecta Google otra vez.');
+  const oauth = v572OAuth();
+  oauth.setCredentials(tokens);
+  return google.calendar({version:'v3', auth:oauth});
+}
+function v572Clean(s){
+  return String(s||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+}
+async function v572FindMarfanCalendar(calendar){
+  const targetId = String(process.env.GOOGLE_TARGET_CALENDAR_ID || '').trim();
+  const targetName = String(process.env.GOOGLE_TARGET_CALENDAR_NAME || 'MARFAN').trim();
+  const list = await calendar.calendarList.list({maxResults:250, showHidden:true});
+  const calendars = list.data.items || [];
+  if(targetId){
+    const c = calendars.find(x=>x.id===targetId);
+    if(c) return {calendar:c, calendars, match:'id'};
+  }
+  let c = calendars.find(x=>v572Clean(x.summary)===v572Clean(targetName));
+  if(c) return {calendar:c, calendars, match:'nombre exacto'};
+  c = calendars.find(x=>v572Clean(x.summary).includes('marfan') || v572Clean(x.id).includes('marfan'));
+  if(c) return {calendar:c, calendars, match:'flexible'};
+  throw new Error('No encuentro calendario MARFAN. Disponibles: ' + calendars.map(x=>x.summary).join(', '));
+}
+function v572DateParts(raw){
+  if(!raw) return {date:'', time:''};
+  if(/^\d{4}-\d{2}-\d{2}$/.test(raw)) return {date:raw,time:''};
+  const d = new Date(raw);
+  if(Number.isNaN(d.getTime())) return {date:String(raw).slice(0,10), time:String(raw).slice(11,16)};
+  const p = new Intl.DateTimeFormat('sv-SE', {
+    timeZone:'Europe/Madrid', year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit', hour12:false
+  }).formatToParts(d).reduce((a,x)=>{a[x.type]=x.value; return a;}, {});
+  return {date:`${p.year}-${p.month}-${p.day}`, time:`${p.hour}:${p.minute}`};
+}
+function v572Cols(table){
+  try{return db.prepare(`PRAGMA table_info("${table}")`).all().map(c=>c.name);}catch(e){return [];}
+}
+function v572EnsureLinks(){
+  db.exec(`CREATE TABLE IF NOT EXISTS google_event_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL,
+    google_event_id TEXT NOT NULL,
+    calendar_id TEXT DEFAULT '',
+    synced_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );`);
+}
+function v572UpsertGoogleEvent(item, calendarId){
+  v572EnsureLinks();
+  const s = item.start || {};
+  const e = item.end || {};
+  const start = v572DateParts(s.dateTime || s.date);
+  const end = v572DateParts(e.dateTime || e.date);
+  if(!start.date) throw new Error('Evento Google sin fecha válida: ' + (item.summary || item.id));
+
+  const data = {
+    name:item.summary || 'Evento MARFAN',
+    client:'MARFAN',
+    location:item.location || '',
+    notes:item.description || '',
+    event_date:start.date,
+    start_time:start.time || '09:00',
+    end_time:end.time || '10:00',
+    status:'programado',
+    operational_status:'google_marfan'
+  };
+  const cols = v572Cols('events');
+  const keys = Object.keys(data).filter(k=>cols.includes(k));
+  if(!keys.length) throw new Error('Tabla events sin columnas compatibles');
+
+  const existing = db.prepare('SELECT * FROM google_event_links WHERE google_event_id=?').get(item.id);
+  if(existing){
+    db.prepare(`UPDATE events SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>data[k]), existing.event_id);
+    db.prepare('UPDATE google_event_links SET calendar_id=?, synced_at=CURRENT_TIMESTAMP WHERE id=?').run(calendarId, existing.id);
+    return {action:'updated', event_id:existing.event_id, summary:data.name};
+  }
+  const info = db.prepare(`INSERT INTO events (${keys.map(k=>`"${k}"`).join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>data[k]));
+  db.prepare('INSERT INTO google_event_links (event_id,google_event_id,calendar_id) VALUES (?,?,?)').run(info.lastInsertRowid, item.id, calendarId);
+  return {action:'created', event_id:info.lastInsertRowid, summary:data.name};
+}
+
+app.get('/api/google/diagnose-v572', requireAdmin, async (req,res)=>{
+  const out = {
+    ok:false,
+    has_token:!!v572GetTokens(),
+    has_client_id:!!process.env.GOOGLE_CLIENT_ID,
+    has_client_secret:!!process.env.GOOGLE_CLIENT_SECRET,
+    callback_url:process.env.GOOGLE_CALLBACK_URL || '',
+    target_name:process.env.GOOGLE_TARGET_CALENDAR_NAME || 'MARFAN',
+    target_id:process.env.GOOGLE_TARGET_CALENDAR_ID || ''
+  };
+  try{
+    const cal = await v572Calendar();
+    const found = await v572FindMarfanCalendar(cal);
+    out.ok = true;
+    out.calendar = {id:found.calendar.id, summary:found.calendar.summary, accessRole:found.calendar.accessRole};
+    out.match = found.match;
+    out.calendars = found.calendars.map(c=>({id:c.id, summary:c.summary, accessRole:c.accessRole}));
+    res.json(out);
+  }catch(e){
+    out.error = e.message;
+    res.json(out);
+  }
+});
+
+app.post('/api/google/force-sync-v572', requireAdmin, async (req,res)=>{
+  try{
+    const cal = await v572Calendar();
+    const found = await v572FindMarfanCalendar(cal);
+    const timeMin = '2024-01-01T00:00:00.000Z';
+    const timeMax = new Date(new Date().getFullYear()+3, 11, 31, 23, 59, 59).toISOString();
+
+    let pageToken = undefined;
+    const items = [];
+    do{
+      const r = await cal.events.list({
+        calendarId:found.calendar.id,
+        timeMin,
+        timeMax,
+        singleEvents:true,
+        orderBy:'startTime',
+        maxResults:250,
+        pageToken
+      });
+      items.push(...(r.data.items||[]).filter(i=>i.status!=='cancelled'));
+      pageToken = r.data.nextPageToken || undefined;
+    }while(pageToken);
+
+    const results = items.map(item=>{
+      try{return v572UpsertGoogleEvent(item, found.calendar.id);}
+      catch(e){return {action:'error', summary:item.summary || item.id, error:e.message};}
+    });
+
+    res.json({
+      ok:true,
+      calendar:{id:found.calendar.id, summary:found.calendar.summary, accessRole:found.calendar.accessRole},
+      match:found.match,
+      read:items.length,
+      created:results.filter(x=>x.action==='created').length,
+      updated:results.filter(x=>x.action==='updated').length,
+      errors:results.filter(x=>x.action==='error').length,
+      results:results.slice(0,80)
+    });
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
