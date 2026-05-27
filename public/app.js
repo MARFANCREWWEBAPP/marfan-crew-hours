@@ -1808,3 +1808,310 @@ async function uploadBackupV531(ev){
   alert('Copia restaurada correctamente. Recarga la página.');
   location.reload();
 }
+
+
+// ---------- V53.2 DASHBOARD GRAPH RESTORE ----------
+function v532Tooltip(){
+  let el=document.getElementById('v532Tooltip');
+  if(!el){
+    el=document.createElement('div');
+    el.id='v532Tooltip';
+    el.className='v532-tooltip';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function v532ShowTooltip(ev, html){
+  const el=v532Tooltip();
+  el.innerHTML=html;
+  el.style.display='block';
+  let x=ev.clientX+14, y=ev.clientY+14;
+  const rect=el.getBoundingClientRect();
+  if(x+rect.width>window.innerWidth-12) x=ev.clientX-rect.width-14;
+  if(y+rect.height>window.innerHeight-12) y=ev.clientY-rect.height-14;
+  el.style.left=x+'px';
+  el.style.top=y+'px';
+}
+function v532HideTooltip(){
+  const el=document.getElementById('v532Tooltip');
+  if(el) el.style.display='none';
+}
+
+async function viewDashboard(){
+  const d = await api('/api/dashboard').catch(()=>({}));
+  let graph = [];
+  try {
+    graph = (await api('/api/dashboard-graph')).rows || [];
+  } catch(e) {
+    graph = d.monthly || [];
+  }
+
+  const ingresos = Number(d.revenue || d.income || d.total || 0);
+  const beneficio = Number(d.profit || 0);
+  const activos = Number(d.active || 0);
+  const operarios = Number(d.users || d.workers || 0);
+  const clientes = Number(d.clients || 0);
+  const eventos = Number(d.events || 0);
+  const albaranesSinFirma = Number(d.unsigned_notes || d.notes_unsigned || 0);
+  const max = Math.max(1, ...graph.map(x=>Number(x.amount||0)));
+
+  $('#content').innerHTML = `
+    <div class="v53-kpi-grid">
+      <div class="v53-kpi-card"><div class="label">Ingresos</div><div class="value">${v53Money(ingresos)}</div></div>
+      <div class="v53-kpi-card"><div class="label">Beneficio</div><div class="value">${v53Money(beneficio)}</div></div>
+      <div class="v53-kpi-card"><div class="label">Eventos activos</div><div class="value">${activos}</div></div>
+      <div class="v53-kpi-card"><div class="label">Operarios</div><div class="value">${operarios}</div></div>
+      <div class="v53-kpi-card"><div class="label">Clientes</div><div class="value">${clientes}</div></div>
+      <div class="v53-kpi-card"><div class="label">Albaranes sin firma</div><div class="value">${albaranesSinFirma}</div></div>
+      <div class="v53-kpi-card"><div class="label">Eventos totales</div><div class="value">${eventos}</div></div>
+    </div>
+
+    <div class="card v532-chart-card">
+      <div class="v52-head">
+        <div>
+          <h3>Progresión anual de facturación</h3>
+          <p class="v52-sub">Gráfica restaurada con tooltip flotante para que no se corte la información mensual.</p>
+        </div>
+        <div class="actions">
+          <button onclick="go('finanzas')">Ver Finanzas Pro</button>
+          <button class="secondary" onclick="go('eventos')">Eventos</button>
+        </div>
+      </div>
+
+      <div class="v532-chart">
+        ${(graph.length?graph:[{month:'Demo',amount:0,profit:0,cost:0,events:0}]).map(x=>{
+          const h = Math.max(8, Math.round((Number(x.amount||0)/max)*190));
+          const month = esc(x.month||'Mes');
+          const amount = v53Money(x.amount||0);
+          const profit = v53Money(x.profit||0);
+          const cost = v53Money(x.cost||0);
+          const events = Number(x.events||0);
+          return `
+            <div class="v532-bar-wrap">
+              <div class="v532-bar"
+                style="height:${h}px"
+                onmousemove="v532ShowTooltip(event, '<b>${month}</b><br>Facturación: ${amount}<br>Beneficio: ${profit}<br>Coste: ${cost}<br>Eventos: ${events}')"
+                onclick="v532ShowTooltip(event, '<b>${month}</b><br>Facturación: ${amount}<br>Beneficio: ${profit}<br>Coste: ${cost}<br>Eventos: ${events}')"
+                onmouseleave="v532HideTooltip()">
+              </div>
+              <div class="v532-month">${month}</div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Alertas operativas</h3>
+      ${(d.alerts||[]).length ? d.alerts.map(a=>`<p><span class="status-badge status-warn">${esc(a.type||'alerta')}</span> ${esc(a.text||a.message||'')}</p>`).join('') : '<p class="muted">Sin alertas críticas.</p>'}
+    </div>
+
+    <div class="card">
+      <h3>Accesos rápidos</h3>
+      <div class="actions">
+        <button onclick="go('eventos')">Crear evento</button>
+        <button onclick="go('tarifas')">Tarifas</button>
+        <button onclick="go('gps')">GPS Live</button>
+        <button onclick="go('finanzas')">Finanzas Pro</button>
+        <button onclick="go('documentacion')">Documentación</button>
+        <button onclick="go('albaranes')">Albaranes A4</button>
+      </div>
+    </div>
+  `;
+}
+
+
+// ---------- V53.3 BACKUP CENTER + CALENDAR RESTORE ----------
+async function downloadBackupV531(){
+  const res = await fetch('/api/backup/export-v533', {
+    method:'GET',
+    headers:{ Authorization: token ? 'Bearer '+token : '' }
+  });
+  if(!res.ok){
+    const t = await res.text().catch(()=>'');
+    alert('No se pudo descargar la copia de seguridad. ' + t);
+    return;
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `marfan-crew-hours-backup-${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function uploadBackupV531(ev){
+  const file = ev.target.files[0];
+  if(!file) return;
+  if(!confirm('ATENCIÓN: vas a restaurar una copia de seguridad completa.\n\nEsto reemplazará los datos actuales por los del archivo.\n\n¿Confirmas?')) return;
+  const text = await file.text();
+  let data;
+  try { data = JSON.parse(text); }
+  catch(e){ alert('Archivo JSON no válido.'); return; }
+  const r = await api('/api/backup/import-v533',{method:'POST',body:JSON.stringify(data)});
+  alert(`Copia restaurada correctamente.\nTablas importadas: ${r.imported.length}\nSaltadas: ${r.skipped.length}`);
+  location.reload();
+}
+
+async function saveOnlineBackupV533(){
+  const r = await api('/api/backup/save-online',{method:'POST'});
+  alert('Backup guardado en servidor: ' + r.filename);
+  viewConfig();
+}
+
+async function restoreOnlineBackupV533(filename){
+  if(!confirm(`Se restaurará el backup online:\n${filename}\n\n¿Confirmas?`)) return;
+  const r = await api('/api/backup/restore-online',{method:'POST',body:JSON.stringify({filename})});
+  alert(`Backup restaurado.\nTablas importadas: ${r.imported.length}\nSaltadas: ${r.skipped.length}`);
+  location.reload();
+}
+
+async function refreshOnlineBackupsV533(){
+  const box = document.getElementById('onlineBackupsBox');
+  if(!box) return;
+  try{
+    const d = await api('/api/backup/list-online');
+    box.innerHTML = `<div class="v533-backup-list">${
+      d.backups.map(b=>`
+        <div class="v533-backup-item">
+          <div>
+            <b>${esc(b.filename)}</b><br>
+            <span class="muted">${new Date(b.created_at).toLocaleString('es-ES')} · ${(b.size_bytes/1024).toFixed(1)} KB</span>
+          </div>
+          <button onclick="restoreOnlineBackupV533('${esc(b.filename).replace(/'/g,"\\'")}')">Restaurar</button>
+        </div>
+      `).join('') || '<p class="muted">No hay backups online guardados todavía.</p>'
+    }</div>`;
+  }catch(e){
+    box.innerHTML = '<p class="muted">No se pudieron listar los backups online.</p>';
+  }
+}
+
+async function viewConfig(){
+  let settings = {};
+  try { settings = await api('/api/settings'); } catch(e) {}
+  $('#content').innerHTML = `
+    <div class="card">
+      <h3>Ajustes generales</h3>
+      <form id="settingsForm" class="grid">
+        <input class="field" name="company_name" value="${esc(settings.company_name||settings.company||'MARFAN CREW')}" placeholder="Empresa">
+        <input class="field" name="vat" value="${esc(settings.vat||21)}" placeholder="IVA">
+        <input class="field" name="geo_check_radius_m" value="${esc(settings.geo_check_radius_m||settings.gpsRadius||300)}" placeholder="Radio GPS">
+        <button>Guardar ajustes</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Copia de seguridad completa</h3>
+      <p class="muted">Incluye eventos, operarios, usuarios, clientes, fichajes, tarifas, albaranes, documentación y ajustes.</p>
+      <div class="actions">
+        <button onclick="downloadBackupV531()">Descargar backup JSON</button>
+        <label class="secondary" style="display:inline-block;padding:12px 16px;border-radius:11px;font-weight:900;cursor:pointer">
+          Cargar backup JSON
+          <input id="backupFileV531" type="file" accept=".json" style="display:none" onchange="uploadBackupV531(event)">
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Backup online en servidor</h3>
+      <p class="muted">Guarda copias dentro del servidor Railway. Para que sean persistentes a largo plazo, activa un volumen/persistent storage en Railway.</p>
+      <div class="actions">
+        <button onclick="saveOnlineBackupV533()">Guardar backup online ahora</button>
+        <button class="secondary" onclick="refreshOnlineBackupsV533()">Actualizar lista</button>
+      </div>
+      <div id="onlineBackupsBox" style="margin-top:14px"></div>
+    </div>
+  `;
+  const f=$('#settingsForm');
+  if(f) f.onsubmit=async e=>{
+    e.preventDefault();
+    await api('/api/settings',{method:'PUT',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});
+    alert('Ajustes guardados.');
+  };
+  refreshOnlineBackupsV533();
+}
+
+function v533MonthKey(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+function v533DateKey(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+let v533CalendarOffset = 0;
+
+async function viewCalendar(){
+  const events = await api('/api/events');
+  const clients = await api('/api/clients').catch(()=>[]);
+  const now = new Date();
+  const current = new Date(now.getFullYear(), now.getMonth()+v533CalendarOffset, 1);
+  const start = new Date(current);
+  const startDay = (start.getDay()+6)%7; // lunes = 0
+  start.setDate(start.getDate()-startDay);
+  const days = [];
+  for(let i=0;i<42;i++){
+    const d = new Date(start);
+    d.setDate(start.getDate()+i);
+    days.push(d);
+  }
+  const monthName = current.toLocaleDateString('es-ES',{month:'long',year:'numeric'});
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="v52-head">
+        <div>
+          <h3>Calendario de eventos</h3>
+          <p class="v52-sub">Vista tipo Google Calendar restaurada.</p>
+        </div>
+        <div class="v533-cal-actions">
+          <button class="secondary" onclick="v533CalendarOffset--;viewCalendar()">← Mes anterior</button>
+          <button onclick="v533CalendarOffset=0;viewCalendar()">Hoy</button>
+          <button class="secondary" onclick="v533CalendarOffset++;viewCalendar()">Mes siguiente →</button>
+        </div>
+      </div>
+      <h2 style="text-transform:capitalize">${monthName}</h2>
+    </div>
+
+    <div class="card">
+      <h3>Crear evento rápido</h3>
+      <form id="eventForm" class="grid">
+        <input class="field" name="name" placeholder="Nombre evento" required>
+        <select class="field" name="client_id"><option value="">Cliente</option>${clients.map(c=>`<option value="${c.id}">${esc(c.name||c.legal_name||'Cliente')}</option>`).join('')}</select>
+        <input class="field" name="location" placeholder="Localización">
+        <input class="field" name="event_date" type="date" value="${v533DateKey(new Date())}">
+        <input class="field" name="start_time" type="time">
+        <input class="field" name="end_time" type="time">
+        <button>Crear evento</button>
+      </form>
+    </div>
+
+    <div class="v533-calendar-head">
+      <div>Lunes</div><div>Martes</div><div>Miércoles</div><div>Jueves</div><div>Viernes</div><div>Sábado</div><div>Domingo</div>
+    </div>
+    <div class="v533-calendar">
+      ${days.map(day=>{
+        const key = v533DateKey(day);
+        const evs = events.filter(e=>e.event_date===key);
+        const other = day.getMonth()!==current.getMonth();
+        return `
+          <div class="v533-day ${other?'other':''}">
+            <div class="v533-day-num">${day.getDate()}</div>
+            ${evs.map(e=>`
+              <span class="v533-event-chip ${e.status==='realizado'?'done':e.status==='cancelado'?'cancel':''}" onclick="openEventDetail(${e.id})">
+                ${esc(e.start_time||'')} ${esc(e.name||'Evento')}
+              </span>
+            `).join('')}
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+  const f=$('#eventForm');
+  if(f) f.onsubmit=async e=>{
+    e.preventDefault();
+    await api('/api/events',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});
+    viewCalendar();
+  };
+}

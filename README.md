@@ -108,3 +108,20 @@ Esta versión fuerza el acceso admin aunque exista una base SQLite anterior con 
 - Ajustes > Copia de seguridad:
   - Descargar backup completo JSON.
   - Restaurar backup completo JSON.
+
+
+# V53.2 Dashboard Graph Hotfix
+- Restaura la gráfica de progresión anual del dashboard.
+- Añade `/api/dashboard-graph`.
+- Tooltip flotante corregido para que no se corte.
+
+
+# V53.3 Backup Center + Calendar Restore
+- Corrige descarga de backup completo.
+- Permite restaurar backup completo desde JSON.
+- Añade backup online interno en servidor:
+  - guardar backup
+  - listar backups
+  - restaurar backup
+- Restaura calendario tipo Google Calendar.
+- Nota: para persistencia real en Railway, activar volumen/persistent storage.

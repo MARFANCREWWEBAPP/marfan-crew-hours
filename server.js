@@ -1188,7 +1188,7 @@ async function geocodeAddressOSM(address) {
 
 
 // ---------- API ROUTES ----------
-app.get('/health', (req, res) => res.json({ ok: true, version: '53.1.0' }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '53.3.0' }));
 
 
 app.post('/api/geocode', requireAdmin, async (req, res) => {
@@ -2432,6 +2432,138 @@ app.get('/api/pdf-template/:type/:id', requireAuth, (req, res) => {
 });
 
 
+
+// ---------- V53.3 BACKUP CENTER ----------
+function v533BackupDir() {
+  const dir = process.env.BACKUP_DIR || path.join(__dirname, 'data', 'backups');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function v533AllTableNames() {
+  return db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(x => x.name);
+}
+
+function v533CreateBackupObject() {
+  const backup = {
+    meta: {
+      app: 'Marfan Crew Hours',
+      version: '53.3.0',
+      exported_at: new Date().toISOString()
+    },
+    tables: {}
+  };
+  const tables = v533AllTableNames();
+  for (const t of tables) {
+    try {
+      backup.tables[t] = db.prepare(`SELECT * FROM "${t}"`).all();
+    } catch(e) {
+      backup.tables[t] = [];
+    }
+  }
+  return backup;
+}
+
+function v533SafeFileName() {
+  return `marfan-backup-${new Date().toISOString().replace(/[:.]/g,'-')}.json`;
+}
+
+function v533RestoreBackupObject(backup) {
+  if (!backup || !backup.tables || typeof backup.tables !== 'object') {
+    throw new Error('Archivo de copia no válido');
+  }
+
+  const imported = [];
+  const skipped = [];
+
+  const tx = db.transaction(() => {
+    for (const [table, rows] of Object.entries(backup.tables)) {
+      if (!Array.isArray(rows)) { skipped.push(table); continue; }
+
+      const exists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
+      if (!exists) { skipped.push(table); continue; }
+
+      try {
+        db.prepare(`DELETE FROM "${table}"`).run();
+
+        if (rows.length) {
+          const tableCols = db.prepare(`PRAGMA table_info("${table}")`).all().map(c => c.name);
+          const cols = Object.keys(rows[0]).filter(c => tableCols.includes(c));
+          if (cols.length) {
+            const placeholders = cols.map(() => '?').join(',');
+            const stmt = db.prepare(`INSERT INTO "${table}" (${cols.map(c=>`"${c}"`).join(',')}) VALUES (${placeholders})`);
+            for (const r of rows) stmt.run(...cols.map(c => r[c]));
+          }
+        }
+        imported.push(table);
+      } catch(e) {
+        console.error('restore table error', table, e);
+        skipped.push(table);
+      }
+    }
+  });
+
+  tx();
+  return { imported, skipped };
+}
+
+// Descarga directa completa
+app.get('/api/backup/export-v533', requireAdmin, (req, res) => {
+  const backup = v533CreateBackupObject();
+  const filename = `marfan-crew-hours-backup-${new Date().toISOString().slice(0,10)}.json`;
+  res.status(200);
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(JSON.stringify(backup, null, 2));
+});
+
+// Guardar backup en servidor
+app.post('/api/backup/save-online', requireAdmin, (req, res) => {
+  const backup = v533CreateBackupObject();
+  const filename = v533SafeFileName();
+  const filepath = path.join(v533BackupDir(), filename);
+  fs.writeFileSync(filepath, JSON.stringify(backup, null, 2));
+  res.json({ ok:true, filename, created_at: backup.meta.exported_at });
+});
+
+// Listar backups guardados en servidor
+app.get('/api/backup/list-online', requireAdmin, (req, res) => {
+  const dir = v533BackupDir();
+  const files = fs.readdirSync(dir)
+    .filter(f => f.endsWith('.json'))
+    .map(f => {
+      const p = path.join(dir, f);
+      const st = fs.statSync(p);
+      return { filename:f, size_bytes:st.size, created_at:st.mtime.toISOString() };
+    })
+    .sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
+  res.json({ ok:true, backups:files });
+});
+
+// Restaurar backup guardado en servidor
+app.post('/api/backup/restore-online', requireAdmin, (req, res) => {
+  const filename = String((req.body || {}).filename || '');
+  if (!filename || filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+    return res.status(400).json({ error:'Nombre de backup inválido' });
+  }
+  const filepath = path.join(v533BackupDir(), filename);
+  if (!fs.existsSync(filepath)) return res.status(404).json({ error:'Backup no encontrado' });
+  const backup = JSON.parse(fs.readFileSync(filepath,'utf8'));
+  const result = v533RestoreBackupObject(backup);
+  res.json({ ok:true, ...result });
+});
+
+// Restaurar backup subido desde archivo JSON
+app.post('/api/backup/import-v533', requireAdmin, (req, res) => {
+  try {
+    const backup = req.body || {};
+    const result = v533RestoreBackupObject(backup);
+    res.json({ ok:true, ...result });
+  } catch(e) {
+    res.status(400).json({ error:e.message || 'No se pudo restaurar el backup' });
+  }
+});
+
 // ---------- V53.1 DELETE / SUSPEND / BACKUP ROUTES ----------
 
 // Borrado seguro de eventos + datos relacionados
@@ -2579,6 +2711,39 @@ app.post('/api/backup/import', requireAdmin, (req, res) => {
   res.json({ ok:true, imported, skipped });
 });
 
+
+// ---------- V53.2 DASHBOARD GRAPH DATA ----------
+app.get('/api/dashboard-graph', requireAdmin, (req, res) => {
+  try {
+    const events = db.prepare('SELECT * FROM events ORDER BY event_date').all();
+    const map = {};
+    for (const e of events) {
+      const key = String(e.event_date || '').slice(0,7) || 'sin-fecha';
+      if (!map[key]) map[key] = { month:key, amount:0, profit:0, cost:0, events:0 };
+      let fin = null;
+      try { fin = auditEventFinancial(e.id); } catch(err) {}
+      const amount = fin ? Number(fin.revenue || 0) : Number(e.total_amount || e.amount || e.km_amount || 0);
+      const cost = fin ? Number(fin.totalCost || 0) : Number(e.estimated_external_cost||0)+Number(e.estimated_transport_cost||0)+Number(e.estimated_other_cost||0);
+      const profit = fin ? Number(fin.profit || 0) : amount - cost;
+      map[key].amount += amount;
+      map[key].cost += cost;
+      map[key].profit += profit;
+      map[key].events += 1;
+    }
+    const rows = Object.values(map).sort((a,b)=>String(a.month).localeCompare(String(b.month))).map(r=>({
+      month:r.month,
+      amount:Math.round(r.amount*100)/100,
+      cost:Math.round(r.cost*100)/100,
+      profit:Math.round(r.profit*100)/100,
+      events:r.events
+    }));
+    res.json({ rows });
+  } catch(e) {
+    console.error('dashboard-graph', e);
+    res.json({ rows: [] });
+  }
+});
+
 // Settings
 app.get('/api/settings', requireAuth, (req, res) => {
   res.json(getSettings());
@@ -2605,5 +2770,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Marfan Crew Hours V53.1 Backup Delete Suspend listening on port ${PORT}`);
+  console.log(`Marfan Crew Hours V53.3 Backup Center Calendar listening on port ${PORT}`);
 });
