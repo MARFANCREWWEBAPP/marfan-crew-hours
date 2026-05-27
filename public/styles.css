@@ -797,3 +797,39 @@ button.warn{background:#f59e0b;color:#111}
   flex-wrap:wrap;
   padding-top:8px;
 }
+
+
+/* V55.9 Calendar UX + Evento Modal V46 */
+.event-modal-v559{
+  max-width:1160px !important;
+}
+.event-form-v559{
+  display:grid;
+  gap:16px;
+}
+.event-block-v559{
+  background:#f8fafc;
+  border:1px solid #e5e7eb;
+  border-radius:18px;
+  padding:16px;
+}
+.event-block-v559 h4{
+  margin:0 0 12px 0;
+  font-size:15px;
+  font-weight:950;
+}
+.event-actions-v559{
+  display:flex;
+  justify-content:flex-end;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.google-popup-note-v559{
+  background:#eff6ff;
+  border:1px solid #bfdbfe;
+  color:#1e40af;
+  padding:10px 12px;
+  border-radius:14px;
+  font-weight:800;
+  font-size:13px;
+}

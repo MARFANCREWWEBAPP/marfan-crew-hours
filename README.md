@@ -328,3 +328,17 @@ El calendario seguirá mostrando el estado:
 - PRL/Riesgos laborales.
 - Carga directa de documentos a carpeta personal.
 - Notas internas.
+
+
+# V55.9 Calendar UX + Evento Modal V46
+
+## Cambios
+- Conectar Google abre popup, no saca al usuario de la app principal.
+- La app escucha la conexión y refresca calendario automáticamente.
+- Crear evento pasa a ventana modal completa estilo V46.
+- Formulario de evento con:
+  - Datos principales
+  - Fecha/horario/ubicación
+  - Crew/operación
+  - Tarifas/facturación
+  - Notas internas

@@ -3255,3 +3255,178 @@ function openCreateOperatorV558(){
     viewUsers();
   };
 }
+
+
+// ---------- V55.9 CALENDAR POPUP + EVENT MODAL V46 ----------
+function v559OpenGooglePopup(){
+  const w = 520, h = 720;
+  const left = Math.max(0, (window.screen.width - w) / 2);
+  const top = Math.max(0, (window.screen.height - h) / 2);
+  const popup = window.open('/auth/google-safe', 'googleCalendarAuth', `width=${w},height=${h},left=${left},top=${top}`);
+  if(!popup){
+    alert('El navegador ha bloqueado la ventana emergente. Permite popups para esta web.');
+    return;
+  }
+}
+
+window.addEventListener('message', (ev)=>{
+  if(ev.data && ev.data.type === 'GOOGLE_CALENDAR_CONNECTED'){
+    if(typeof v534Toast === 'function') v534Toast('Google Calendar MARFAN conectado');
+    setTimeout(()=>viewCalendar(),500);
+  }
+});
+
+function openCreateEventV559(){
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal event-modal-v559">
+        <div class="modal-head">
+          <h2>Crear evento</h2>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+
+        <form id="eventFormV559" class="event-form-v559">
+
+          <div class="event-block-v559">
+            <h4>1. Datos principales</h4>
+            <div class="grid">
+              <input class="field" name="name" placeholder="Nombre del evento" required>
+              <input class="field" name="client" placeholder="Cliente">
+              <input class="field" name="contact_name" placeholder="Responsable / contacto">
+              <input class="field" name="contact_phone" placeholder="Teléfono contacto">
+              <input class="field" name="contact_email" placeholder="Email contacto">
+              <select class="field" name="status">
+                <option value="programado">Programado</option>
+                <option value="confirmado">Confirmado</option>
+                <option value="pendiente">Pendiente</option>
+                <option value="realizado">Realizado</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="event-block-v559">
+            <h4>2. Fecha, horario y ubicación</h4>
+            <div class="grid">
+              <input class="field" name="event_date" type="date" value="${v55DateKey ? v55DateKey(v55CalDate || new Date()) : new Date().toISOString().slice(0,10)}" required>
+              <input class="field" name="start_time" type="time" value="09:00">
+              <input class="field" name="end_time" type="time" value="10:00">
+              <input class="field" name="location" placeholder="Ubicación / recinto">
+              <input class="field" name="address" placeholder="Dirección completa">
+              <input class="field" name="load_in_time" type="time" title="Hora carga / entrada">
+              <input class="field" name="load_out_time" type="time" title="Hora salida / desmontaje">
+            </div>
+          </div>
+
+          <div class="event-block-v559">
+            <h4>3. Crew y operación</h4>
+            <div class="grid">
+              <input class="field" name="required_workers" type="number" placeholder="Operarios necesarios">
+              <input class="field" name="required_team_leads" type="number" placeholder="Jefes de equipo" value="1">
+              <select class="field" name="operational_status">
+                <option value="borrador">Borrador</option>
+                <option value="crew_parcial">Crew parcial</option>
+                <option value="crew_completo">Crew completo</option>
+                <option value="produccion">Producción</option>
+              </select>
+              <input class="field" name="service_type" placeholder="Tipo de servicio">
+              <input class="field" name="material_notes" placeholder="Material / notas técnicas">
+              <input class="field" name="access_notes" placeholder="Accesos / carga y descarga">
+            </div>
+          </div>
+
+          <div class="event-block-v559">
+            <h4>4. Tarifas y facturación</h4>
+            <div class="grid">
+              <input class="field" name="hourly_rate" type="number" step="0.01" placeholder="Tarifa hora">
+              <input class="field" name="night_rate" type="number" step="0.01" placeholder="Tarifa nocturna">
+              <input class="field" name="diet_price" type="number" step="0.01" placeholder="Dieta">
+              <input class="field" name="km_amount" type="number" step="0.01" placeholder="Kilometraje / transporte">
+              <select class="field" name="payment_status">
+                <option value="pendiente">Pendiente</option>
+                <option value="facturado">Facturado</option>
+                <option value="cobrado">Cobrado</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="event-block-v559">
+            <h4>5. Notas internas</h4>
+            <textarea class="field" name="notes" placeholder="Notas internas del evento"></textarea>
+          </div>
+
+          <div class="event-actions-v559">
+            <button type="button" class="secondary" onclick="closeWizard()">Cancelar</button>
+            <button>Guardar evento</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  $('#eventFormV559').onsubmit = async e => {
+    e.preventDefault();
+    const payload = Object.fromEntries(new FormData(e.target));
+    const created = await api('/api/events',{method:'POST',body:JSON.stringify(payload)});
+    if(typeof v534Toast === 'function') v534Toast('Evento creado correctamente');
+    const googleStatus = await api('/api/google/status-v557').catch(()=>({connected:false}));
+    if(googleStatus.connected){
+      try { await v55ExportOne(created.id || created.event_id); } catch(err){}
+    }
+    closeWizard();
+    viewCalendar();
+  };
+}
+
+// Override calendar again: no external full page OAuth, popup only + create event modal.
+const __v559BaseCalendar = typeof viewCalendar === 'function' ? viewCalendar : null;
+viewCalendar = async function(){
+  const localEvents = await api('/api/events');
+  const googleStatus = await api('/api/google/status-v557').catch(()=>({configured:false,connected:false,target_calendar_name:'MARFAN'}));
+  const googleData = await api('/api/google/marfan-events').catch(()=>({connected:false,events:[]}));
+  const googleEvents = googleData.events || [];
+  const events = [...localEvents.map(e=>({...e,source:'local'})), ...googleEvents];
+
+  const body = v55CalView==='week' ? v55RenderWeekAuto(events) : v55CalView==='day' ? v55RenderDayAuto(events) : v55RenderMonthAuto(events);
+
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div>
+          <h3>Calendario eventos · MARFAN</h3>
+          <p class="v52-sub">Vista tipo Google Calendar integrada. La app principal no se cierra.</p>
+        </div>
+        <div class="v55-google-panel">
+          ${googleStatus.connected
+            ? `<span class="status-badge status-ok">Google MARFAN conectado</span>`
+            : `<span class="status-badge status-warn">Google no conectado</span><button onclick="v559OpenGooglePopup()">Conectar Google</button>`}
+          <button class="secondary" onclick="v55ImportGoogle()">Importar MARFAN</button>
+          <button class="secondary" onclick="v55ExportAll()">Exportar a MARFAN</button>
+        </div>
+      </div>
+      <div class="google-popup-note-v559">
+        ${googleStatus.connected
+          ? `Sincronización activa con calendario MARFAN.`
+          : `Pulsa “Conectar Google”: se abrirá una ventana emergente y volverás automáticamente a esta app.`}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div class="actions">
+          <button onclick="openCreateEventV559()">+ Crear evento</button>
+          <button class="secondary" onclick="v55MoveCalendar(-1)">← Anterior</button>
+          <button onclick="v55CalDate=new Date();viewCalendar()">Hoy</button>
+          <button class="secondary" onclick="v55MoveCalendar(1)">Siguiente →</button>
+        </div>
+        <h2 style="text-transform:capitalize">${v55CalendarTitle()}</h2>
+        <div class="v55-view-tabs">
+          <button class="${v55CalView==='month'?'active':''}" onclick="v55SetView('month')">Mes</button>
+          <button class="${v55CalView==='week'?'active':''}" onclick="v55SetView('week')">Semana</button>
+          <button class="${v55CalView==='day'?'active':''}" onclick="v55SetView('day')">Día</button>
+        </div>
+      </div>
+      <br>
+      ${body}
+    </div>
+  `;
+};

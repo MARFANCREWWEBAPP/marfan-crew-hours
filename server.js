@@ -3134,7 +3134,7 @@ function v552CreateBackupObject() {
   const backup = {
     meta: {
       app: 'Marfan Crew Hours',
-      version: '55.8.0',
+      version: '55.9.0',
       exported_at: new Date().toISOString(),
       data_dir: V552_DATA_DIR,
       backup_dir: V552_BACKUP_DIR,
@@ -3610,4 +3610,31 @@ app.get('/api/backup/status', requireAdmin, (req, res) => {
     railway_volume_required:true,
     note:'Para conservar datos entre versiones, Railway debe tener un Volume montado en /data.'
   });
+});
+
+// ---------- V55.9 GOOGLE POPUP CALLBACK ----------
+app.get('/auth/google/callback-popup', async (req,res)=>{
+  try {
+    const code = req.query.code;
+    if (!code) return res.status(400).send('Falta code OAuth.');
+    const clientId = process.env.GOOGLE_CLIENT_ID || (typeof GOOGLE_CLIENT_ID !== 'undefined' ? GOOGLE_CLIENT_ID : '');
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET || (typeof GOOGLE_CLIENT_SECRET !== 'undefined' ? GOOGLE_CLIENT_SECRET : '');
+    const callbackUrl = process.env.GOOGLE_CALLBACK_URL || (typeof GOOGLE_CALLBACK_URL !== 'undefined' ? GOOGLE_CALLBACK_URL : '');
+    const oauth2 = new google.auth.OAuth2(clientId, clientSecret, callbackUrl);
+    const { tokens } = await oauth2.getToken(code);
+    if (typeof v557SaveTokensEverywhere === 'function') v557SaveTokensEverywhere(tokens);
+    else if (typeof v55SaveGoogleTokens === 'function') v55SaveGoogleTokens(tokens);
+    res.send(`
+      <html><body style="font-family:Arial;padding:34px">
+        <h2>Google Calendar MARFAN conectado ✅</h2>
+        <p>Puedes cerrar esta ventana.</p>
+        <script>
+          try { window.opener && window.opener.postMessage({type:'GOOGLE_CALENDAR_CONNECTED'}, '*'); } catch(e) {}
+          setTimeout(()=>window.close(),900);
+        </script>
+      </body></html>
+    `);
+  } catch(e) {
+    res.status(500).send('Error conectando Google Calendar: '+e.message);
+  }
 });
