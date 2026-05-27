@@ -2772,3 +2772,13 @@ app.get('*', (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Marfan Crew Hours V53.3 Backup Center Calendar listening on port ${PORT}`);
 });
+
+
+// ---------- V53.4 AUTO DELIVERY NOTES ----------
+app.post('/api/events/:id/complete', requireAdmin, (req,res)=>{
+  const id=Number(req.params.id);
+  try{
+    db.prepare("UPDATE events SET status='realizado' WHERE id=?").run(id);
+  }catch(e){}
+  res.json({ok:true});
+});

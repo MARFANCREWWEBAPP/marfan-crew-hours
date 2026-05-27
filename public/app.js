@@ -2115,3 +2115,45 @@ async function viewCalendar(){
     viewCalendar();
   };
 }
+
+
+// ---------- V53.4 ENTERPRISE UX PATCH ----------
+function v534Toast(msg){
+ let el=document.getElementById('v534Toast');
+ if(!el){
+   el=document.createElement('div');
+   el.id='v534Toast';
+   el.style.cssText='position:fixed;right:20px;bottom:20px;background:#111;color:#fff;padding:14px 18px;border-radius:14px;z-index:999999;font-weight:800';
+   document.body.appendChild(el);
+ }
+ el.innerHTML='✅ '+msg;
+ el.style.display='block';
+ clearTimeout(window.__toastv534);
+ window.__toastv534=setTimeout(()=>el.style.display='none',2500);
+}
+
+const __fetchv534 = window.fetch;
+window.fetch = async (...args)=>{
+ const r = await __fetchv534(...args);
+ try{
+   const method=((args[1]||{}).method||'GET').toUpperCase();
+   if(r.ok && ['POST','PUT','DELETE'].includes(method)){
+      setTimeout(()=>v534Toast('Guardado correctamente'),100);
+   }
+ }catch(e){}
+ return r;
+};
+
+async function finalizarEventoV534(id){
+ if(!confirm('¿Finalizar evento y generar albaranes automáticamente?')) return;
+ await api('/api/events/'+id+'/complete',{method:'POST'});
+ v534Toast('Evento finalizado');
+}
+
+async function operario(){
+  const docs=await api('/api/my-documents').catch(()=>[]);
+  $('#content').innerHTML='<div class="card"><h3>📁 Mis documentos</h3>'+(
+    docs.map(d=>'<div class="v53-doc-card"><b>'+esc(d.title||'Documento')+'</b><br>'+(d.file_url?'<a target="_blank" href="'+d.file_url+'"><button>Ver documento</button></a>':'')+'</div>').join('')
+    || '<p>No hay documentos</p>'
+  )+'</div>';
+}
