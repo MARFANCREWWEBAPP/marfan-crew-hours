@@ -5949,3 +5949,125 @@ if(__openEventDetailV575){
 
 // Utilidad global para otros menús futuros: cualquier módulo puede llamar a esto.
 window.openPdfA4SubmenuV575 = openPdfA4SubmenuV575;
+
+
+// ---------- V57.6 CALENDAR EVENT ACTIONS FRONTEND ----------
+async function openCalendarEventActionsV576(id){
+  const data = await api('/api/events/'+id+'/full-v576');
+  const e = data.event || {};
+  const assignments = data.assignments || [];
+
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal event-actions-modal-v576">
+        <div class="modal-head">
+          <div>
+            <h2>${esc(e.name || 'Evento')}</h2>
+            <p class="muted">${esc(e.event_date||'')} · ${esc(e.start_time||'')} - ${esc(e.end_time||'')}</p>
+          </div>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+
+        <div class="event-actions-section-v576">
+          <h3>Acciones del evento</h3>
+          <div class="actions">
+            <button class="event-edit-v576" onclick="editCalendarEventV576(${id})">Editar evento</button>
+            <button class="event-delete-v576" onclick="deleteCalendarEventV576(${id}, '${esc((e.name||'Evento')).replace(/'/g, "\\'")}')">Borrar evento</button>
+            <button class="secondary" onclick="globalEventDeliveryPdfA4V575 ? globalEventDeliveryPdfA4V575(${id}) : null">Visualizar PDF A4</button>
+          </div>
+        </div>
+
+        <div class="event-actions-section-v576">
+          <h3>Información</h3>
+          <div class="event-actions-grid-v576">
+            <p class="span-6"><b>Cliente</b><br>${esc(e.client||'—')}</p>
+            <p class="span-6"><b>Ubicación</b><br>${esc(e.location||e.address||'—')}</p>
+            <p class="span-3"><b>Estado</b><br>${esc(e.status||'—')}</p>
+            <p class="span-3"><b>Producción</b><br>${esc(e.operational_status||'—')}</p>
+            <p class="span-6"><b>Contacto</b><br>${esc(e.contact_name||'—')} · ${esc(e.contact_phone||'')}</p>
+            <p class="span-12"><b>Notas</b><br>${esc(e.notes||e.production_notes||'—')}</p>
+          </div>
+        </div>
+
+        <div class="event-actions-section-v576">
+          <h3>Operarios asignados</h3>
+          ${assignments.map(a=>`
+            <div style="border-bottom:1px solid #e5e7eb;padding:8px 0">
+              <b>${esc((a.first_name||'')+' '+(a.last_name||''))}${a.nickname?' · '+esc(a.nickname):''}</b><br>
+              ${esc(a.service_role||'')} · ${esc(a.planned_start||'')} - ${esc(a.planned_end||'')}
+            </div>
+          `).join('') || '<p class="muted">Sin operarios asignados.</p>'}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function editCalendarEventV576(id){
+  const data = await api('/api/events/'+id+'/full-v576');
+  const e = data.event || {};
+
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal event-actions-modal-v576">
+        <div class="modal-head">
+          <h2>Editar evento</h2>
+          <button class="secondary" onclick="openCalendarEventActionsV576(${id})">Volver</button>
+        </div>
+
+        <form id="editEventFormV576">
+          <div class="event-actions-section-v576">
+            <h3>Datos principales</h3>
+            <div class="event-actions-grid-v576">
+              <input class="field span-6" name="name" value="${esc(e.name||'')}" placeholder="Nombre evento">
+              <input class="field span-3" name="event_date" type="date" value="${esc(e.event_date||'')}">
+              <select class="field span-3" name="status">
+                ${['programado','confirmado','pendiente','realizado','cancelado'].map(s=>`<option value="${s}" ${e.status===s?'selected':''}>${s}</option>`).join('')}
+              </select>
+              <input class="field span-3" name="start_time" type="time" value="${esc(e.start_time||'')}">
+              <input class="field span-3" name="end_time" type="time" value="${esc(e.end_time||'')}">
+              <input class="field span-6" name="client" value="${esc(e.client||'')}" placeholder="Cliente">
+              <input class="field span-6" name="location" value="${esc(e.location||'')}" placeholder="Ubicación">
+              <input class="field span-6" name="address" value="${esc(e.address||'')}" placeholder="Dirección">
+              <input class="field span-4" name="contact_name" value="${esc(e.contact_name||'')}" placeholder="Contacto">
+              <input class="field span-4" name="contact_phone" value="${esc(e.contact_phone||'')}" placeholder="Teléfono">
+              <input class="field span-4" name="contact_email" value="${esc(e.contact_email||'')}" placeholder="Email">
+              <textarea class="field span-12" name="notes" placeholder="Notas">${esc(e.notes||'')}</textarea>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button class="event-edit-v576">Guardar cambios</button>
+            <button type="button" class="secondary" onclick="openCalendarEventActionsV576(${id})">Cancelar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  $('#editEventFormV576').onsubmit = async ev => {
+    ev.preventDefault();
+    await api('/api/events/'+id+'/update-v576',{
+      method:'PUT',
+      body:JSON.stringify(Object.fromEntries(new FormData(ev.target)))
+    });
+    if(typeof v534Toast === 'function') v534Toast('Evento actualizado');
+    await openCalendarEventActionsV576(id);
+    setTimeout(()=>viewCalendar(),350);
+  };
+}
+
+async function deleteCalendarEventV576(id, name='Evento'){
+  const ok = confirm(`Vas a borrar definitivamente el evento:\n\n${name}\n\nEsta acción también eliminará sus asignaciones y enlaces internos. ¿Confirmas?`);
+  if(!ok) return;
+
+  await api('/api/events/'+id+'/delete-v576',{method:'DELETE'});
+  if(typeof v534Toast === 'function') v534Toast('Evento borrado correctamente');
+  closeWizard();
+  await viewCalendar();
+}
+
+// Override del click del calendario para abrir subventana de acciones.
+async function openEventDetail(id){
+  return openCalendarEventActionsV576(id);
+}

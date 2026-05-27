@@ -60,3 +60,21 @@ Aplicado a:
 - albarán de evento
 - Finanzas Pro
 - compatibilidad con funciones antiguas printHtmlV57 y buildA4ModalV573
+
+
+# V57.6 Calendar Event Actions
+
+## Calendario
+Al pulsar un evento:
+- abre subventana/modal
+- muestra datos del evento
+- permite editar
+- permite borrar
+
+## Borrar
+- pide confirmación
+- elimina evento
+- elimina asignaciones
+- elimina líneas de roles
+- elimina enlaces Google internos
+- refresca calendario
