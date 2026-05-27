@@ -2229,7 +2229,7 @@ function v55SetView(v){
   viewCalendar();
 }
 async function v55ConnectGoogle(){
-  location.href='/auth/google';
+  location.href='/auth/google-safe';
 }
 async function v55DisconnectGoogle(){
   if(!confirm('¿Desconectar Google Calendar?')) return;
@@ -2525,7 +2525,7 @@ async function viewCalendar(){
       <div class="v553-sync-info">
         ${googleStatus.connected
           ? `Mostrando eventos locales + eventos del calendario Google “MARFAN”.`
-          : `Para sincronizar con Google MARFAN, primero conecta OAuth en Variables Railway y entra una vez a /auth/google.`}
+          : `Para sincronizar con Google MARFAN, primero conecta OAuth en Variables Railway y entra una vez a /auth/google-safe.`}
       </div>
       ${!googleStatus.configured ? '<br><p class="status-badge status-bad">Faltan variables GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_CALLBACK_URL en Railway.</p>' : ''}
     </div>

@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "55.3.0",
-  "description": "Marfan Crew Hours V55.3 - Calendar Auto View",
+  "version": "55.4.0",
+  "description": "Marfan Crew Hours V55.4 - OAuth Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

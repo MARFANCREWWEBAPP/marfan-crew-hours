@@ -239,3 +239,18 @@ Al entrar en Calendario eventos:
 
 ## Requisito
 GOOGLE_TARGET_CALENDAR_NAME=MARFAN
+
+
+# V55.4 OAuth Fix
+
+## Usa esta URL para conectar Google
+https://marfan-crew-hours-production-ef76.up.railway.app/auth/google-safe
+
+## Diagnóstico
+/api/google/debug-v554
+
+## Railway Variables obligatorias
+GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET
+GOOGLE_CALLBACK_URL=https://marfan-crew-hours-production-ef76.up.railway.app/auth/google/callback
+GOOGLE_TARGET_CALENDAR_NAME=MARFAN

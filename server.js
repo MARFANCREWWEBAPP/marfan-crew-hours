@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const { google } = require('googleapis');
 
 const app = express();
 
@@ -2912,6 +2913,63 @@ async function v55GoogleCalendarClient() {
 
 v55EnsureGoogleTables();
 
+
+// ---------- V55.4 OAUTH SAFE ROUTES ----------
+app.get('/api/google/debug-v554', requireAdmin, (req,res)=>{
+  res.json({
+    ok:true,
+    googleapis_loaded: !!google,
+    has_client_id: !!process.env.GOOGLE_CLIENT_ID,
+    has_client_secret: !!process.env.GOOGLE_CLIENT_SECRET,
+    callback_url: process.env.GOOGLE_CALLBACK_URL || GOOGLE_CALLBACK_URL || '',
+    target_calendar_name: process.env.GOOGLE_TARGET_CALENDAR_NAME || 'MARFAN'
+  });
+});
+
+// Esta ruta sustituye a /auth/google con validación clara.
+// Si ves error aquí, faltan variables o la Redirect URI no coincide.
+app.get('/auth/google-safe', requireAdmin, (req,res)=>{
+  try{
+    const clientId = process.env.GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID || '';
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET || GOOGLE_CLIENT_SECRET || '';
+    const callbackUrl = process.env.GOOGLE_CALLBACK_URL || GOOGLE_CALLBACK_URL || '';
+
+    if(!clientId || !clientSecret || !callbackUrl){
+      return res.status(400).send(`
+        <html><body style="font-family:Arial;padding:40px">
+          <h1>Faltan variables Google OAuth</h1>
+          <p>Revisa Railway → Variables:</p>
+          <ul>
+            <li>GOOGLE_CLIENT_ID: ${clientId ? 'OK' : 'FALTA'}</li>
+            <li>GOOGLE_CLIENT_SECRET: ${clientSecret ? 'OK' : 'FALTA'}</li>
+            <li>GOOGLE_CALLBACK_URL: ${callbackUrl ? callbackUrl : 'FALTA'}</li>
+            <li>GOOGLE_TARGET_CALENDAR_NAME: ${process.env.GOOGLE_TARGET_CALENDAR_NAME || 'MARFAN'}</li>
+          </ul>
+        </body></html>
+      `);
+    }
+
+    const oauth2 = new google.auth.OAuth2(clientId, clientSecret, callbackUrl);
+    const url = oauth2.generateAuthUrl({
+      access_type:'offline',
+      prompt:'consent',
+      scope:[
+        'https://www.googleapis.com/auth/calendar',
+        'https://www.googleapis.com/auth/calendar.events'
+      ]
+    });
+    return res.redirect(url);
+  }catch(e){
+    console.error('auth/google-safe error', e);
+    return res.status(500).send(`
+      <html><body style="font-family:Arial;padding:40px">
+        <h1>Error OAuth Google</h1>
+        <pre>${String(e.stack || e.message || e).replace(/[<>&]/g, s=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</pre>
+      </body></html>
+    `);
+  }
+});
+
 app.get('/auth/google', requireAdmin, (req,res)=>{
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
     return res.status(400).send('Faltan GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET en Railway Variables.');
@@ -3075,7 +3133,7 @@ function v552CreateBackupObject() {
   const backup = {
     meta: {
       app: 'Marfan Crew Hours',
-      version: '55.3.0',
+      version: '55.4.0',
       exported_at: new Date().toISOString(),
       data_dir: V552_DATA_DIR,
       backup_dir: V552_BACKUP_DIR,
