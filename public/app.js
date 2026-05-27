@@ -2804,3 +2804,148 @@ async function uploadOperatorPhotoV555(id){
   v534Toast ? v534Toast('Fotografía guardada y redimensionada') : alert('Fotografía guardada');
   openOperatorFolderV555(id);
 }
+
+
+// ---------- V55.6 OPERARIOS UX CLIENTE STYLE ----------
+async function viewUsers(){
+  const users = await api('/api/users');
+
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="operator-list-head">
+        <div>
+          <h3>Crear operario</h3>
+          <p class="operator-form-help">Ficha organizada por bloques, igual que clientes: datos claros, lectura rápida y creación sencilla.</p>
+        </div>
+      </div>
+
+      <form id="userForm" class="operator-create-layout">
+
+        <div class="operator-section">
+          <h4>1. Datos principales</h4>
+          <div class="grid">
+            <input class="field" name="first_name" placeholder="Nombre">
+            <input class="field" name="last_name" placeholder="Apellidos">
+            <input class="field" name="nickname" placeholder="Apodo / mote">
+            <input class="field" name="dni" placeholder="DNI / NIE">
+            <input class="field" name="birth_date" type="date" title="Fecha nacimiento">
+            <input class="field" id="operatorPhotoNew" type="file" accept="image/*" title="Fotografía">
+          </div>
+        </div>
+
+        <div class="operator-section">
+          <h4>2. Contacto</h4>
+          <div class="grid">
+            <input class="field" name="phone" placeholder="Teléfono">
+            <input class="field" name="email" placeholder="Email">
+            <input class="field" name="address" placeholder="Dirección">
+            <input class="field" name="city" placeholder="Ciudad">
+            <input class="field" name="province" placeholder="Provincia">
+            <input class="field" name="postal_code" placeholder="Código postal">
+          </div>
+        </div>
+
+        <div class="operator-section">
+          <h4>3. Perfil laboral</h4>
+          <div class="grid">
+            <select class="field" name="role">
+              <option value="operario">Operario</option>
+              <option value="jefe">Jefe equipo</option>
+            </select>
+            <input class="field" name="services" placeholder="Cargo principal">
+            <input class="field" name="skills" placeholder="Skills / especialidades">
+            <input class="field" name="vehicle" placeholder="Vehículo propio / matrícula">
+            <input class="field" name="license_type" placeholder="Carnet / permisos">
+            <select class="field" name="availability">
+              <option value="disponible">Disponible</option>
+              <option value="parcial">Parcial</option>
+              <option value="no_disponible">No disponible</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="operator-section">
+          <h4>4. Costes internos</h4>
+          <div class="grid">
+            <input class="field" name="internal_hour_cost" type="number" step="0.01" placeholder="Coste interno hora">
+            <input class="field" name="internal_night_cost" type="number" step="0.01" placeholder="Coste interno nocturno">
+            <input class="field" name="iban" placeholder="IBAN">
+          </div>
+        </div>
+
+        <div class="operator-section">
+          <h4>5. Emergencias y equipación</h4>
+          <div class="grid">
+            <input class="field" name="emergency_contact" placeholder="Contacto emergencia">
+            <input class="field" name="emergency_phone" placeholder="Teléfono emergencia">
+            <input class="field" name="shirt_size" placeholder="Talla camiseta">
+            <input class="field" name="shoe_size" placeholder="Número calzado">
+          </div>
+        </div>
+
+        <div class="operator-section">
+          <h4>6. Notas internas</h4>
+          <textarea class="field" name="notes" placeholder="Notas internas del operario"></textarea>
+        </div>
+
+        <div class="operator-form-actions">
+          <button type="reset" class="secondary">Limpiar</button>
+          <button>Guardar operario</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="operator-list-head">
+        <h3>Listado de operarios</h3>
+        <span class="badge">${users.filter(u=>u.role!=='admin').length} operarios</span>
+      </div>
+
+      <table class="table">
+        <thead><tr><th>Operario</th><th>Contacto</th><th>Perfil</th><th>Estado</th><th>Acciones</th></tr></thead>
+        <tbody>
+          ${users.filter(u=>u.role!=='admin').map(u=>`
+            <tr>
+              <td>
+                <div class="operator-name-line">
+                  ${operatorAvatarV555(u)}
+                  <div>
+                    <b>${operatorDisplayNameV555(u)}</b><br>
+                    <span class="muted">${esc(u.dni||'')}</span>
+                  </div>
+                </div>
+              </td>
+              <td>${esc(u.phone||'')}<br><span class="muted">${esc(u.email||'')}</span></td>
+              <td>${esc(u.role||'')}<br><span class="muted">${esc(u.services||u.skills||'')}</span></td>
+              <td>${Number(u.active)===0 || String(u.availability||'').toLowerCase()==='suspendido'
+                ? '<span class="status-badge status-bad">Suspendido</span>'
+                : '<span class="status-badge status-ok">Activo</span>'}</td>
+              <td>
+                <button onclick="openOperatorFolderV555(${u.id})">Carpeta</button>
+                ${Number(u.active)===0 || String(u.availability||'').toLowerCase()==='suspendido'
+                  ? `<button class="ok" onclick="suspendUserV531(${u.id},0)">Reactivar</button>`
+                  : `<button class="secondary" onclick="suspendUserV531(${u.id},1)">Suspender</button>`}
+                <button class="danger" onclick="deleteUserV531(${u.id}, '${esc((u.first_name||'Operario')).replace(/'/g, "\\'")}')">Borrar</button>
+              </td>
+            </tr>
+          `).join('') || '<tr><td colspan="5">Sin operarios.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  const f=$('#userForm');
+  if(f) f.onsubmit=async e=>{
+    e.preventDefault();
+    const payload={...Object.fromEntries(new FormData(e.target)), active:1};
+    const created = await api('/api/users',{method:'POST',body:JSON.stringify(payload)});
+    const file=$('#operatorPhotoNew').files[0];
+    if(file && (created.id || created.user_id)){
+      const dataUrl=await resizeImageV555(file);
+      await api('/api/users/'+(created.id||created.user_id)+'/photo',{method:'POST',body:JSON.stringify({dataUrl})});
+    }
+    if(typeof v534Toast==='function') v534Toast('Operario creado correctamente');
+    else alert('Operario creado correctamente');
+    viewUsers();
+  };
+}

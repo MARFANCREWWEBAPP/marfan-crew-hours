@@ -266,3 +266,15 @@ GOOGLE_TARGET_CALENDAR_NAME=MARFAN
 - Listado con foto, nombre y mote.
 - Botón Carpeta por operario.
 - Carpeta con datos completos y documentos del operario.
+
+
+# V55.6 Operarios UX Cliente Style
+
+## Cambio principal
+La creación de operarios se rediseña visualmente como el menú de clientes:
+- bloques claros
+- lectura más cómoda
+- formulario menos saturado
+- apodo/mote mantenido
+- fotografía mantenida
+- carpeta de documentos mantenida

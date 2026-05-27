@@ -693,3 +693,44 @@ button.warn{background:#f59e0b;color:#111}
   align-items:center;
   flex-wrap:wrap;
 }
+
+
+/* V55.6 Operarios UX Cliente Style */
+.operator-create-layout{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:16px;
+}
+.operator-section{
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:18px;
+  padding:16px;
+}
+.operator-section h4{
+  margin:0 0 12px 0;
+  font-size:15px;
+  font-weight:950;
+}
+.operator-section .grid{
+  margin:0;
+}
+.operator-form-actions{
+  display:flex;
+  justify-content:flex-end;
+  gap:10px;
+  margin-top:12px;
+}
+.operator-form-help{
+  color:#667085;
+  font-size:13px;
+  margin-top:-4px;
+  margin-bottom:10px;
+}
+.operator-list-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+}
