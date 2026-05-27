@@ -1,28 +1,36 @@
-# Marfan Crew Hours V49 Full Restore Clean
+# Marfan Crew Hours V50 Pro Restore - Base V46 A4 Vertical
 
-## Importante
-No muestra credenciales en la pantalla principal.
+## Base conceptual
+Reconstruida tomando como referencia estable la V46 A4 Vertical:
+- albaranes A4 vertical
+- dashboard completo
+- menús de admin
+- vista operario
+- estructura de eventos/operarios/clientes
 
-## Admin por defecto
+## Implementaciones auditoría añadidas
+- Estados operativos
+- Operaciones
+- Disponibilidad operarios
+- GPS Live
+- Producción Live
+- Finanzas / rentabilidad
+- Documentación / vencimientos
+- KPIs avanzados dashboard
+- Albaranes A4 vertical
+- Menú Tarifas restaurado
+- Demo clientes, operarios y eventos
+- Logo completo sin recortar
+
+## Admin
 Usuario: admin@marfancrew.local
 Contraseña: Admin1234*
 
 ## Operarios demo
 666111222
 666333444
+666222333
+666555777
 
-## Incluye
-- Dashboard operativo
-- Eventos
-- Asignación de operarios
-- Operarios
-- Clientes
-- GPS Live
-- Producción Live
-- Finanzas Pro
-- Documentación
-- Albaranes A4
-- Ajustes
-- Vista operario
-- Login real por API con token
-- Railway estable
+## Railway
+/health = OK
