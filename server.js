@@ -3134,7 +3134,7 @@ function v552CreateBackupObject() {
   const backup = {
     meta: {
       app: 'Marfan Crew Hours',
-      version: '56.6.0',
+      version: '56.7.0',
       exported_at: new Date().toISOString(),
       data_dir: V552_DATA_DIR,
       backup_dir: V552_BACKUP_DIR,
@@ -4321,6 +4321,236 @@ app.get('/api/event-role-lines/:eventId', requireAdmin, (req,res)=>{
     const rows = db.prepare('SELECT * FROM event_role_lines WHERE event_id=? ORDER BY id').all(req.params.eventId);
     res.json(rows);
   }catch(e){res.json([])}
+});
+
+
+// ---------- V56.7 CALENDAR SYNC FINAL FIX ----------
+function v567TokenFilePath() {
+  return path.join((typeof V552_DATA_DIR !== 'undefined' ? V552_DATA_DIR : (process.env.DATA_DIR || '/data')), 'google-token.json');
+}
+
+function v567GetTokens() {
+  try {
+    if (typeof v557GetTokensAny === 'function') {
+      const t = v557GetTokensAny();
+      if (t && (t.access_token || t.refresh_token)) return t;
+    }
+  } catch(e) {}
+  try {
+    if (typeof v55GetGoogleTokens === 'function') {
+      const t = v55GetGoogleTokens();
+      if (t && (t.access_token || t.refresh_token)) return t;
+    }
+  } catch(e) {}
+  try {
+    const p = v567TokenFilePath();
+    if (fs.existsSync(p)) {
+      const t = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (t && (t.access_token || t.refresh_token)) return t;
+    }
+  } catch(e) {}
+  return null;
+}
+
+function v567SaveTokens(tokens) {
+  try { if (typeof v557SaveTokensEverywhere === 'function') v557SaveTokensEverywhere(tokens); } catch(e) {}
+  try { if (typeof v55SaveGoogleTokens === 'function') v55SaveGoogleTokens(tokens); } catch(e) {}
+  try {
+    const p = v567TokenFilePath();
+    fs.mkdirSync(path.dirname(p), { recursive:true });
+    fs.writeFileSync(p, JSON.stringify(tokens, null, 2));
+  } catch(e) {}
+}
+
+function v567OAuthClient() {
+  const clientId = process.env.GOOGLE_CLIENT_ID || (typeof GOOGLE_CLIENT_ID !== 'undefined' ? GOOGLE_CLIENT_ID : '');
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || (typeof GOOGLE_CLIENT_SECRET !== 'undefined' ? GOOGLE_CLIENT_SECRET : '');
+  const callbackUrl = process.env.GOOGLE_CALLBACK_URL || (typeof GOOGLE_CALLBACK_URL !== 'undefined' ? GOOGLE_CALLBACK_URL : '');
+  if (!clientId || !clientSecret || !callbackUrl) throw new Error('Faltan variables GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_CALLBACK_URL en Railway.');
+  return new google.auth.OAuth2(clientId, clientSecret, callbackUrl);
+}
+
+async function v567CalendarClient() {
+  const tokens = v567GetTokens();
+  if (!tokens) throw new Error('Google aparece conectado pero no hay token válido guardado. Vuelve a conectar Google.');
+  const oauth2 = v567OAuthClient();
+  oauth2.setCredentials(tokens);
+  oauth2.on('tokens', nt => v567SaveTokens({...tokens, ...nt}));
+  // fuerza refresh si hay refresh_token, así detectamos invalid_grant aquí y no silenciosamente
+  try {
+    if (tokens.refresh_token) {
+      const r = await oauth2.getAccessToken();
+      if (r && r.token) v567SaveTokens({...tokens, access_token:r.token});
+    }
+  } catch(e) {
+    throw new Error('Token Google inválido o caducado. Reconecta Google. Detalle: ' + e.message);
+  }
+  return google.calendar({ version:'v3', auth:oauth2 });
+}
+
+function v567Normalize(s) {
+  return String(s||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+}
+
+async function v567FindCalendar(calendar) {
+  const targetId = String(process.env.GOOGLE_TARGET_CALENDAR_ID || '').trim();
+  const targetName = String(process.env.GOOGLE_TARGET_CALENDAR_NAME || 'MARFAN').trim();
+  const resp = await calendar.calendarList.list({ maxResults:250, showHidden:true });
+  const calendars = resp.data.items || [];
+
+  if (targetId) {
+    const c = calendars.find(x => x.id === targetId);
+    if (c) return { calendar:c, calendars, match:'GOOGLE_TARGET_CALENDAR_ID' };
+  }
+
+  const target = v567Normalize(targetName);
+  let c = calendars.find(x => v567Normalize(x.summary) === target);
+  if (c) return { calendar:c, calendars, match:'nombre exacto' };
+
+  c = calendars.find(x => v567Normalize(x.summary).includes('marfan') || v567Normalize(x.id).includes('marfan'));
+  if (c) return { calendar:c, calendars, match:'búsqueda flexible marfan' };
+
+  throw new Error('No encuentro calendario MARFAN. Calendarios visibles: ' + calendars.map(x => `${x.summary} (${x.accessRole})`).join(', '));
+}
+
+function v567DateParts(raw) {
+  if (!raw) return { date:'', time:'' };
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return { date:raw, time:'' };
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return { date:String(raw).slice(0,10), time:String(raw).slice(11,16) };
+  const p = new Intl.DateTimeFormat('sv-SE', {
+    timeZone:'Europe/Madrid',
+    year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit',
+    hour12:false
+  }).formatToParts(d).reduce((a,x)=>{a[x.type]=x.value; return a;}, {});
+  return { date:`${p.year}-${p.month}-${p.day}`, time:`${p.hour}:${p.minute}` };
+}
+
+function v567EnsureLinkTable() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS google_event_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id INTEGER NOT NULL,
+      google_event_id TEXT NOT NULL,
+      calendar_id TEXT DEFAULT '',
+      synced_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+}
+
+function v567Cols(table) {
+  try { return db.prepare(`PRAGMA table_info("${table}")`).all().map(c=>c.name); }
+  catch(e) { return []; }
+}
+
+function v567UpsertGoogleItem(item, calendarId) {
+  v567EnsureLinkTable();
+
+  const s = item.start || {};
+  const e = item.end || {};
+  const start = v567DateParts(s.dateTime || s.date);
+  const end = v567DateParts(e.dateTime || e.date);
+
+  const data = {
+    name: item.summary || 'Evento MARFAN',
+    client: 'MARFAN',
+    location: item.location || '',
+    event_date: start.date,
+    start_time: start.time || '09:00',
+    end_time: end.time || '10:00',
+    notes: item.description || '',
+    status: 'programado',
+    operational_status: 'google_marfan'
+  };
+
+  const cols = v567Cols('events');
+  const keys = Object.keys(data).filter(k => cols.includes(k));
+  if (!keys.length) throw new Error('Tabla events sin columnas compatibles.');
+
+  const existing = db.prepare('SELECT * FROM google_event_links WHERE google_event_id=?').get(item.id);
+  if (existing) {
+    const sets = keys.map(k => `"${k}"=?`).join(',');
+    db.prepare(`UPDATE events SET ${sets} WHERE id=?`).run(...keys.map(k=>data[k]), existing.event_id);
+    db.prepare('UPDATE google_event_links SET calendar_id=?, synced_at=CURRENT_TIMESTAMP WHERE id=?').run(calendarId, existing.id);
+    return { action:'updated', event_id:existing.event_id, summary:data.name };
+  }
+
+  const stmt = db.prepare(`INSERT INTO events (${keys.map(k=>`"${k}"`).join(',')}) VALUES (${keys.map(()=>'?').join(',')})`);
+  const info = stmt.run(...keys.map(k=>data[k]));
+  db.prepare('INSERT INTO google_event_links (event_id,google_event_id,calendar_id) VALUES (?,?,?)').run(info.lastInsertRowid, item.id, calendarId);
+  return { action:'created', event_id:info.lastInsertRowid, summary:data.name };
+}
+
+app.get('/api/google/final-diagnose-v567', requireAdmin, async (req,res)=>{
+  const out = {
+    ok:false,
+    has_token:!!v567GetTokens(),
+    token_file:v567TokenFilePath(),
+    has_client_id:!!process.env.GOOGLE_CLIENT_ID,
+    has_client_secret:!!process.env.GOOGLE_CLIENT_SECRET,
+    callback_url:process.env.GOOGLE_CALLBACK_URL || '',
+    target_name:process.env.GOOGLE_TARGET_CALENDAR_NAME || 'MARFAN',
+    target_id:process.env.GOOGLE_TARGET_CALENDAR_ID || ''
+  };
+  try {
+    const cal = await v567CalendarClient();
+    const found = await v567FindCalendar(cal);
+    out.ok = true;
+    out.calendar = { id:found.calendar.id, summary:found.calendar.summary, accessRole:found.calendar.accessRole };
+    out.match = found.match;
+    out.available = found.calendars.map(c => ({ id:c.id, summary:c.summary, accessRole:c.accessRole, hidden:c.hidden||false }));
+    res.json(out);
+  } catch(e) {
+    out.error = e.message;
+    res.json(out);
+  }
+});
+
+app.post('/api/google/final-force-sync-v567', requireAdmin, async (req,res)=>{
+  try {
+    const cal = await v567CalendarClient();
+    const found = await v567FindCalendar(cal);
+
+    const now = new Date();
+    const min = new Date(now.getFullYear()-2, 0, 1);
+    const max = new Date(now.getFullYear()+3, 11, 31);
+
+    let pageToken = null;
+    const items = [];
+    do {
+      const r = await cal.events.list({
+        calendarId:found.calendar.id,
+        timeMin:min.toISOString(),
+        timeMax:max.toISOString(),
+        singleEvents:true,
+        orderBy:'startTime',
+        maxResults:250,
+        pageToken
+      });
+      items.push(...(r.data.items || []).filter(x => x.status !== 'cancelled'));
+      pageToken = r.data.nextPageToken || null;
+    } while(pageToken);
+
+    const results = items.map(item => {
+      try { return v567UpsertGoogleItem(item, found.calendar.id); }
+      catch(e) { return { action:'error', summary:item.summary || item.id, error:e.message }; }
+    });
+
+    res.json({
+      ok:true,
+      calendar:{ id:found.calendar.id, summary:found.calendar.summary, accessRole:found.calendar.accessRole },
+      match:found.match,
+      read:items.length,
+      created:results.filter(x=>x.action==='created').length,
+      updated:results.filter(x=>x.action==='updated').length,
+      errors:results.filter(x=>x.action==='error').length,
+      results:results.slice(0,80)
+    });
+  } catch(e) {
+    console.error('final-force-sync-v567', e);
+    res.status(500).json({ ok:false, error:e.message });
+  }
 });
 
 // Settings

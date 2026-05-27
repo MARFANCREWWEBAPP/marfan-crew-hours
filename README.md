@@ -432,3 +432,23 @@ No modifica el modal de crear evento, que se mantiene igual que V56.3/V56.4.
 - Roles profesionales precargados.
 - Nombres claros para administración.
 - Botón para restaurar roles V46 Pro.
+
+
+# V56.7 Calendar Sync Final Fix
+
+## Objetivo
+Corregir definitivamente la sincronización Google MARFAN sin tocar el submenú de crear evento.
+
+## Cambios
+- Botón rojo visible: FORZAR SINCRONIZACIÓN GOOGLE MARFAN.
+- Diagnóstico completo:
+  - token
+  - OAuth
+  - callback
+  - calendario encontrado
+  - permisos
+  - calendarios disponibles
+- Importa eventos de Google MARFAN a base local.
+- Actualiza eventos ya existentes.
+- Refresca calendario al cerrar popup.
+- Cache busting app.js?v=56.7.0.

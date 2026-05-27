@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "56.6.0",
-  "description": "Marfan Crew Hours V56.6 - V46 Event Modal + Tarifas Roles Pro",
+  "version": "56.7.0",
+  "description": "Marfan Crew Hours V56.7 - Calendar Sync Final Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
