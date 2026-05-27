@@ -40,3 +40,23 @@ No usa:
 - orderBy
 
 Así evitamos el error de patrón en Google Calendar API y sincronizamos de forma simple.
+
+
+# V57.5 PDF A4 Global Viewer
+
+## Objetivo
+Cualquier documento PDF/A4 generado desde cualquier menú debe abrirse como submenú/modal.
+
+## Acciones estándar
+- Visualizar PDF A4
+- Imprimir PDF A4
+
+## Implementación
+Función global:
+openPdfA4SubmenuV575({title, subtitle, body, autoPrint})
+
+Aplicado a:
+- carpeta documental de operarios
+- albarán de evento
+- Finanzas Pro
+- compatibilidad con funciones antiguas printHtmlV57 y buildA4ModalV573

@@ -1196,3 +1196,66 @@ button.warn{background:#f59e0b;color:#111}
 .sync-v574.bad{background:#fee2e2;border-color:#fecaca;color:#991b1b}
 .sync-v574 pre{white-space:pre-wrap;max-height:300px;overflow:auto;background:rgba(255,255,255,.8);border-radius:10px;padding:10px;font-size:12px}
 .force-sync-v574{background:#7f1d1d!important;color:#fff!important;font-weight:950!important}
+
+
+/* V57.5 PDF A4 Global Viewer */
+.pdf-global-actions-v575{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+  margin:12px 0;
+}
+.pdf-global-view-v575{
+  background:#2563eb!important;
+  color:#fff!important;
+  font-weight:950!important;
+}
+.pdf-global-print-v575{
+  background:#111!important;
+  color:#fff!important;
+  font-weight:950!important;
+}
+.pdf-a4-wrapper-v575{
+  width:210mm;
+  min-height:297mm;
+  background:white;
+  color:#111;
+  padding:14mm;
+  font-family:Arial,sans-serif;
+  box-shadow:0 10px 34px rgba(0,0,0,.12);
+  margin:auto;
+}
+.pdf-a4-header-v575{
+  display:flex;
+  justify-content:space-between;
+  gap:20px;
+  border-bottom:2px solid #111;
+  padding-bottom:12px;
+  margin-bottom:18px;
+}
+.pdf-a4-brand-v575{
+  font-size:24px;
+  font-weight:950;
+}
+.pdf-a4-content-v575 h1{
+  font-size:24px;
+  margin:12px 0;
+}
+.pdf-a4-content-v575 h2{
+  font-size:17px;
+  margin-top:18px;
+}
+@media print{
+  body *{visibility:hidden!important}
+  #globalPdfPrintAreaV575, #globalPdfPrintAreaV575 *{visibility:visible!important}
+  #globalPdfPrintAreaV575{
+    position:absolute;
+    left:0;
+    top:0;
+    width:100%;
+    box-shadow:none!important;
+    margin:0!important;
+  }
+  .no-print{display:none!important}
+  @page{size:A4 portrait;margin:10mm}
+}

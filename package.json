@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "57.4.0",
-  "description": "V57.4 Calendar Sync No Pattern Error Fix",
+  "version": "57.5.0",
+  "description": "V57.5 PDF A4 Global Viewer Submenu",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
