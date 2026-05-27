@@ -8,6 +8,18 @@ const fs = require('fs');
 
 const app = express();
 
+// V53_5_PERSISTENT_DATA_DIR
+// Railway: conectar un Volume montado en /data para conservar DB y backups entre versiones.
+const PERSISTENT_DATA_DIR = process.env.PERSISTENT_DATA_DIR || process.env.DATA_DIR || '/data';
+const PERSISTENT_BACKUP_DIR = process.env.BACKUP_DIR || path.join(PERSISTENT_DATA_DIR, 'backups');
+try {
+  fs.mkdirSync(PERSISTENT_DATA_DIR, { recursive: true });
+  fs.mkdirSync(PERSISTENT_BACKUP_DIR, { recursive: true });
+} catch(e) {
+  console.warn('Persistent dirs warning', e.message);
+}
+
+
 const ADMIN_FIXED_EMAIL = 'admin@marfancrew.local';
 const ADMIN_FIXED_PASSWORD = 'Admin1234*';
 
@@ -2435,9 +2447,8 @@ app.get('/api/pdf-template/:type/:id', requireAuth, (req, res) => {
 
 // ---------- V53.3 BACKUP CENTER ----------
 function v533BackupDir() {
-  const dir = process.env.BACKUP_DIR || path.join(__dirname, 'data', 'backups');
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
+  fs.mkdirSync(PERSISTENT_BACKUP_DIR, { recursive: true });
+  return PERSISTENT_BACKUP_DIR;
 }
 
 function v533AllTableNames() {
@@ -2781,4 +2792,22 @@ app.post('/api/events/:id/complete', requireAdmin, (req,res)=>{
     db.prepare("UPDATE events SET status='realizado' WHERE id=?").run(id);
   }catch(e){}
   res.json({ok:true});
+});
+
+
+// ---------- V53.5 PERSISTENT BACKUP STATUS ----------
+app.get('/api/backup/status', requireAdmin, (req, res) => {
+  let backups = [];
+  try {
+    const dir = v533BackupDir();
+    backups = fs.readdirSync(dir).filter(f=>f.endsWith('.json'));
+  } catch(e) {}
+  res.json({
+    ok:true,
+    persistent_data_dir:PERSISTENT_DATA_DIR,
+    persistent_backup_dir:PERSISTENT_BACKUP_DIR,
+    backups_count:backups.length,
+    railway_volume_required:true,
+    note:'Para conservar datos entre versiones, Railway debe tener un Volume montado en /data.'
+  });
 });

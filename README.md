@@ -125,3 +125,30 @@ Esta versión fuerza el acceso admin aunque exista una base SQLite anterior con 
   - restaurar backup
 - Restaura calendario tipo Google Calendar.
 - Nota: para persistencia real en Railway, activar volumen/persistent storage.
+
+
+# V53.5 Persistent Backup Ready
+
+## Objetivo
+Que al subir nuevas versiones sigan apareciendo las copias de seguridad y se pueda recuperar la información.
+
+## Importante Railway
+Debes crear un Volume/Persistent Storage montado en:
+
+/data
+
+La app usa:
+- Datos persistentes: /data
+- Backups online: /data/backups
+
+## Variables opcionales
+PERSISTENT_DATA_DIR=/data
+BACKUP_DIR=/data/backups
+
+## En Ajustes
+Aparecerá:
+- Descargar backup completo.
+- Cargar backup JSON.
+- Guardar backup online.
+- Lista de backups online disponibles.
+- Restaurar cualquier backup guardado.

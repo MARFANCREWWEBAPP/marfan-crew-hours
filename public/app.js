@@ -2157,3 +2157,35 @@ async function operario(){
     || '<p>No hay documentos</p>'
   )+'</div>';
 }
+
+
+// ---------- V53.5 PERSISTENT BACKUP UI ----------
+async function refreshOnlineBackupsV533(){
+  const box = document.getElementById('onlineBackupsBox');
+  if(!box) return;
+  try{
+    const status = await api('/api/backup/status').catch(()=>null);
+    const d = await api('/api/backup/list-online');
+    box.innerHTML = `
+      ${status ? `<div class="v533-backup-item">
+        <div>
+          <b>Estado persistencia</b><br>
+          <span class="muted">Datos: ${esc(status.persistent_data_dir)} · Backups: ${esc(status.persistent_backup_dir)}</span><br>
+          <span class="muted">Importante: Railway necesita Volume montado en /data para conservarlo entre versiones.</span>
+        </div>
+      </div>` : ''}
+      <div class="v533-backup-list">${
+        d.backups.map(b=>`
+          <div class="v533-backup-item">
+            <div>
+              <b>${esc(b.filename)}</b><br>
+              <span class="muted">${new Date(b.created_at).toLocaleString('es-ES')} · ${(b.size_bytes/1024).toFixed(1)} KB</span>
+            </div>
+            <button onclick="restoreOnlineBackupV533('${esc(b.filename).replace(/'/g,"\\'")}')">Restaurar</button>
+          </div>
+        `).join('') || '<p class="muted">No hay backups online guardados todavía.</p>'
+      }</div>`;
+  }catch(e){
+    box.innerHTML = '<p class="muted">No se pudieron listar los backups online.</p>';
+  }
+}
