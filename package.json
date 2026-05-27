@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "57.2.0",
-  "description": "V57.2 Calendar Sync Pattern Fix + Event Dynamic Roles",
+  "version": "57.3.0",
+  "description": "V57.3 PDF A4 Ver e Imprimir Buttons",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

@@ -5494,3 +5494,189 @@ async function viewCalendar(){
       <br>${body}
     </div>`;
 }
+
+
+// ---------- V57.3 PDF A4 VER + IMPRIMIR ----------
+function buildA4ModalV573(title, subtitle, body, autoPrint=false){
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal" style="max-width:980px">
+        <div class="modal-head no-print">
+          <h2>${esc(title)}</h2>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+
+        <div class="no-print pdf-actions-v573">
+          <button class="btn-print-pdf-v573" onclick="window.print()">Imprimir PDF A4</button>
+        </div>
+
+        <div id="printAreaV57" class="a4-print-v57">
+          <div class="a4-head-v57">
+            <div>
+              <div class="a4-title-v57">MARFAN CREW</div>
+              <div>${esc(subtitle||'')}</div>
+            </div>
+            <div>${new Date().toLocaleString('es-ES')}</div>
+          </div>
+          ${body}
+        </div>
+      </div>
+    </div>
+  `;
+  if(autoPrint) setTimeout(()=>window.print(),350);
+}
+
+async function viewOperatorPdfA4V573(userId){
+  const data = await api('/api/users/'+userId+'/folder');
+  const u = data.user;
+  const docs = data.docs || [];
+
+  buildA4ModalV573('PDF A4 · Carpeta operario','Base documental del operario',`
+    <h1>${esc((u.first_name||'')+' '+(u.last_name||''))} ${u.nickname?'· '+esc(u.nickname):''}</h1>
+    <p>
+      <b>DNI:</b> ${esc(u.dni||'—')}<br>
+      <b>Teléfono:</b> ${esc(u.phone||'—')}<br>
+      <b>Email:</b> ${esc(u.email||'—')}<br>
+      <b>Rol:</b> ${esc(u.operator_role_name||u.services||'—')}
+    </p>
+    <h2>Documentos</h2>
+    ${docs.map(d=>`
+      <div style="border:1px solid #ddd;border-radius:12px;padding:10px;margin:8px 0">
+        <b>${esc(d.title||'Documento')}</b><br>
+        Tipo: ${esc(d.doc_type||'')}<br>
+        Validez: ${esc(d.expiry_date||'—')}<br>
+        Estado: ${esc(d.computed_status||'')}<br>
+        ${d.file_url ? `Archivo: ${esc(d.file_url)}` : ''}
+      </div>
+    `).join('') || '<p>Sin documentos.</p>'}
+  `);
+}
+
+async function printOperatorPdfA4V573(userId){
+  await viewOperatorPdfA4V573(userId);
+  setTimeout(()=>window.print(),450);
+}
+
+async function viewDeliveryPdfA4V573(eventId){
+  const events = await api('/api/events').catch(()=>[]);
+  const event = events.find(e=>Number(e.id)===Number(eventId)) || {};
+  let assignments = [];
+  try{ assignments = await api('/api/events/'+eventId+'/assignments-full'); }catch(e){}
+
+  buildA4ModalV573('PDF A4 · Albarán evento','Albarán de servicio realizado',`
+    <h1>${esc(event.name||'Evento')}</h1>
+    <p>
+      <b>Fecha:</b> ${esc(event.event_date||'')}<br>
+      <b>Horario:</b> ${esc(event.start_time||'')} - ${esc(event.end_time||'')}<br>
+      <b>Cliente:</b> ${esc(event.client||'')}<br>
+      <b>Ubicación:</b> ${esc(event.location||event.address||'')}
+    </p>
+    <h2>Personal asignado</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr>
+          <th style="text-align:left;border-bottom:1px solid #111;padding:6px">Operario</th>
+          <th style="text-align:left;border-bottom:1px solid #111;padding:6px">Rol</th>
+          <th style="text-align:left;border-bottom:1px solid #111;padding:6px">Entrada</th>
+          <th style="text-align:left;border-bottom:1px solid #111;padding:6px">Salida</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${assignments.map(a=>`
+          <tr>
+            <td style="border-bottom:1px solid #ddd;padding:6px">${esc((a.first_name||'')+' '+(a.last_name||''))}${a.nickname?' · '+esc(a.nickname):''}</td>
+            <td style="border-bottom:1px solid #ddd;padding:6px">${esc(a.service_role||a.operator_role_name||'')}</td>
+            <td style="border-bottom:1px solid #ddd;padding:6px">${esc(a.planned_start||'')}</td>
+            <td style="border-bottom:1px solid #ddd;padding:6px">${esc(a.planned_end||'')}</td>
+          </tr>
+        `).join('') || '<tr><td colspan="4" style="padding:6px">Sin operarios asignados.</td></tr>'}
+      </tbody>
+    </table>
+    <h2>Notas</h2>
+    <p>${esc(event.notes||event.production_notes||'')}</p>
+  `);
+}
+
+async function printDeliveryPdfA4V573(eventId){
+  await viewDeliveryPdfA4V573(eventId);
+  setTimeout(()=>window.print(),450);
+}
+
+async function viewFinancePdfA4V573(eventId){
+  const events = await api('/api/events').catch(()=>[]);
+  const event = events.find(e=>Number(e.id)===Number(eventId)) || {};
+  let fin = {};
+  try{ fin = await api('/api/finance/event/'+eventId); }catch(e){}
+
+  buildA4ModalV573('PDF A4 · Finanzas Pro','Informe financiero interno del evento',`
+    <h1>${esc(event.name||'Evento')}</h1>
+    <p>
+      <b>Fecha:</b> ${esc(event.event_date||'')}<br>
+      <b>Cliente:</b> ${esc(event.client||'')}<br>
+      <b>Ubicación:</b> ${esc(event.location||event.address||'')}
+    </p>
+    <h2>Resumen económico</h2>
+    <table style="width:100%;border-collapse:collapse">
+      <tr><td style="padding:7px;border-bottom:1px solid #ddd">Ingresos</td><td style="padding:7px;border-bottom:1px solid #ddd;text-align:right">${Number(fin.revenue||event.total_amount||0).toFixed(2)} €</td></tr>
+      <tr><td style="padding:7px;border-bottom:1px solid #ddd">Costes reales</td><td style="padding:7px;border-bottom:1px solid #ddd;text-align:right">${Number(fin.totalCost||0).toFixed(2)} €</td></tr>
+      <tr><td style="padding:7px;border-bottom:1px solid #ddd"><b>Beneficio</b></td><td style="padding:7px;border-bottom:1px solid #ddd;text-align:right"><b>${Number(fin.profit||0).toFixed(2)} €</b></td></tr>
+      <tr><td style="padding:7px;border-bottom:1px solid #ddd">Margen</td><td style="padding:7px;border-bottom:1px solid #ddd;text-align:right">${Number(fin.margin||0).toFixed(2)} %</td></tr>
+    </table>
+    <p style="font-size:11px;color:#666;margin-top:22px">Documento interno de administración. No entregar al cliente salvo autorización.</p>
+  `);
+}
+
+async function printFinancePdfA4V573(eventId){
+  await viewFinancePdfA4V573(eventId);
+  setTimeout(()=>window.print(),450);
+}
+
+function addPdfButtonsV573(container, buttons){
+  if(!container) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'pdf-actions-v573';
+  buttons.forEach(b=>{
+    if(document.getElementById(b.id)) return;
+    const btn = document.createElement('button');
+    btn.id = b.id;
+    btn.className = b.print ? 'btn-print-pdf-v573' : 'btn-view-pdf-v573';
+    btn.innerText = b.label;
+    btn.onclick = b.onclick;
+    wrap.appendChild(btn);
+  });
+  if(wrap.children.length) container.appendChild(wrap);
+}
+
+// Operarios: carpeta documental
+const __openOperatorFolderV573 = typeof openOperatorFolderV555 === 'function' ? openOperatorFolderV555 : null;
+if(__openOperatorFolderV573){
+  openOperatorFolderV555 = async function(id){
+    await __openOperatorFolderV573(id);
+    setTimeout(()=>{
+      const modal = document.querySelector('.modal');
+      const head = modal ? (modal.querySelector('.modal-head') || modal) : null;
+      addPdfButtonsV573(head, [
+        {id:'viewOperatorPdfA4V573', label:'Ver PDF A4', onclick:()=>viewOperatorPdfA4V573(id)},
+        {id:'printOperatorPdfA4V573', label:'Imprimir PDF A4', print:true, onclick:()=>printOperatorPdfA4V573(id)}
+      ]);
+    },300);
+  };
+}
+
+// Eventos: albarán y finanzas
+const __openEventDetailV573 = typeof openEventDetail === 'function' ? openEventDetail : null;
+if(__openEventDetailV573){
+  openEventDetail = async function(id){
+    await __openEventDetailV573(id);
+    setTimeout(()=>{
+      const modal = document.querySelector('.modal');
+      const box = modal ? (modal.querySelector('.actions') || modal.querySelector('.modal-head') || modal) : null;
+      addPdfButtonsV573(box, [
+        {id:'viewDeliveryPdfA4V573', label:'Ver PDF A4 Albarán', onclick:()=>viewDeliveryPdfA4V573(id)},
+        {id:'printDeliveryPdfA4V573', label:'Imprimir PDF A4 Albarán', print:true, onclick:()=>printDeliveryPdfA4V573(id)},
+        {id:'viewFinancePdfA4V573', label:'Ver PDF A4 Finanzas', onclick:()=>viewFinancePdfA4V573(id)},
+        {id:'printFinancePdfA4V573', label:'Imprimir PDF A4 Finanzas', print:true, onclick:()=>printFinancePdfA4V573(id)}
+      ]);
+    },300);
+  };
+}

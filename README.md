@@ -13,3 +13,14 @@
 - Seleccionas operario + rol del evento + turno.
 - El precio cambia según rol y D/N.
 - El mismo operario puede trabajar en roles distintos por evento.
+
+
+# V57.3 PDF A4 Ver e Imprimir
+
+## Cambios
+- Botones separados:
+  - Ver PDF A4
+  - Imprimir PDF A4
+- Operarios: carpeta documental.
+- Eventos: albarán.
+- Finanzas Pro: informe financiero interno.

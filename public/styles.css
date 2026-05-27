@@ -1169,3 +1169,22 @@ button.warn{background:#f59e0b;color:#111}
 .force-sync-v572{background:#dc2626!important;color:#fff!important;font-weight:950!important}
 .assignment-row-v572{display:grid;grid-template-columns:2fr 1.8fr .8fr .8fr .8fr auto;gap:8px;align-items:center;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:10px;margin:8px 0}
 @media(max-width:980px){.assignment-row-v572{grid-template-columns:1fr}}
+
+
+/* V57.3 Botones PDF A4 Ver / Imprimir */
+.pdf-actions-v573{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  margin-top:8px;
+}
+.btn-view-pdf-v573{
+  background:#2563eb!important;
+  color:#fff!important;
+  font-weight:950!important;
+}
+.btn-print-pdf-v573{
+  background:#111!important;
+  color:#fff!important;
+  font-weight:950!important;
+}
