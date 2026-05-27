@@ -1,0 +1,8 @@
+{
+  "name": "Marfan Crew Hours",
+  "short_name": "Marfan Crew",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050505",
+  "theme_color": "#050505"
+}
