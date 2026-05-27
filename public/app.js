@@ -3905,3 +3905,192 @@ async function viewCalendar(){
     </div>
   `;
 }
+
+
+// ---------- V56.4 INFORMES PDF MULTI-TIPO FRONTEND ----------
+async function viewReportsV562(){
+  const events = await api('/api/events');
+  const users = await api('/api/users');
+
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="v52-head">
+        <div>
+          <h3>Informes PDF Pro</h3>
+          <p class="muted">Selecciona el tipo de informe y genera PDF A4 vertical con el mismo formato profesional.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card report-panel-v562">
+      <div class="report-tabs-v562">
+        <span>1. Tipo de informe</span>
+        <span>2. Evento / Personal</span>
+        <span>3. Parámetros</span>
+        <span>4. PDF A4 vertical</span>
+      </div>
+
+      <form id="reportFormV562" class="report-selector-v562">
+        <h4>Tipo de informe</h4>
+        <select class="field" name="report_type" id="reportTypeV564" onchange="toggleReportFieldsV564()">
+          <option value="employee_costs">Costes empresa por empleado</option>
+          <option value="event_summary">Resumen general del evento</option>
+          <option value="staff_hours">Horas de personal por evento</option>
+          <option value="delivery_notes">Albaranes del evento</option>
+          <option value="documents">Documentación del personal</option>
+        </select>
+
+        <br><br>
+        <div id="eventSelectBoxV564">
+          <h4>Evento</h4>
+          <select class="field" name="event_id">
+            <option value="">Selecciona evento</option>
+            ${events.map(e=>`<option value="${e.id}">${esc(e.event_date||'')} · ${esc(e.name||'Evento')} · ${esc(e.client||'')}</option>`).join('')}
+          </select>
+        </div>
+
+        <br>
+        <h4>Personal</h4>
+        <select class="field" name="user_ids" multiple size="7">
+          <option value="0">TODOS LOS ASIGNADOS / TODOS</option>
+          ${users.filter(u=>u.role!=='admin').map(u=>`<option value="${u.id}">${esc((u.first_name||'')+' '+(u.last_name||''))} ${u.nickname ? '('+esc(u.nickname)+')' : ''}</option>`).join('')}
+        </select>
+
+        <div id="costParamsV564">
+          <br>
+          <h4>Costes empresa</h4>
+          <div class="operator-grid-v56">
+            <input class="field span-3" name="default_hour_cost" type="number" step="0.01" value="0" placeholder="Coste hora defecto">
+            <input class="field span-3" name="social_security_percent" type="number" step="0.01" value="32" placeholder="% Seguridad Social">
+            <input class="field span-3" name="gestoria_cost" type="number" step="0.01" value="0" placeholder="Gastos gestoría">
+            <input class="field span-3" name="transport_cost" type="number" step="0.01" value="0" placeholder="Transporte / taxi">
+            <input class="field span-3" name="diet_cost" type="number" step="0.01" value="0" placeholder="Dietas empresa">
+            <input class="field span-3" name="extra_cost" type="number" step="0.01" value="0" placeholder="Extras">
+          </div>
+        </div>
+
+        <br>
+        <button>Generar informe</button>
+      </form>
+    </div>
+
+    <div id="reportResultV562"></div>
+  `;
+
+  toggleReportFieldsV564();
+
+  $('#reportFormV562').onsubmit = async e => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const type = fd.get('report_type');
+    const selected = [...e.target.querySelector('[name="user_ids"]').selectedOptions].map(o=>Number(o.value)).filter(Boolean);
+    const payload = {
+      report_type:type,
+      event_id:Number(fd.get('event_id')||0),
+      user_ids:selected,
+      default_hour_cost:Number(fd.get('default_hour_cost')||0),
+      social_security_percent:Number(fd.get('social_security_percent')||32),
+      gestoria_cost:Number(fd.get('gestoria_cost')||0),
+      transport_cost:Number(fd.get('transport_cost')||0),
+      diet_cost:Number(fd.get('diet_cost')||0),
+      extra_cost:Number(fd.get('extra_cost')||0)
+    };
+
+    if(type === 'employee_costs'){
+      const report = await api('/api/reports/employee-costs',{method:'POST',body:JSON.stringify(payload)});
+      renderReportV562(report);
+    }else{
+      const report = await api('/api/reports/multi',{method:'POST',body:JSON.stringify(payload)});
+      renderReportMultiV564(report);
+    }
+  };
+}
+
+function toggleReportFieldsV564(){
+  const type = $('#reportTypeV564') ? $('#reportTypeV564').value : 'employee_costs';
+  const cost = $('#costParamsV564');
+  const eventBox = $('#eventSelectBoxV564');
+  if(cost) cost.style.display = type === 'employee_costs' ? 'block' : 'none';
+  if(eventBox) eventBox.style.display = type === 'documents' ? 'none' : 'block';
+}
+
+function renderReportMultiV564(report){
+  if(report.type === 'event_summary') return renderEventSummaryV564(report);
+  if(report.type === 'staff_hours') return renderStaffHoursV564(report);
+  if(report.type === 'delivery_notes') return renderDeliveryNotesV564(report);
+  if(report.type === 'documents') return renderDocumentsReportV564(report);
+}
+
+function reportShellV564(title, subtitle, body){
+  $('#reportResultV562').innerHTML = `
+    <div class="card no-print">
+      <h3>Informe generado</h3>
+      <div class="actions"><button onclick="window.print()">Descargar / Imprimir PDF A4</button></div>
+    </div>
+    <div id="reportPrintAreaV562" class="report-a4-v562">
+      <div class="report-a4-head-v562">
+        <div>
+          <div class="report-a4-title-v562">MARFAN CREW</div>
+          <div>${esc(subtitle)}</div>
+        </div>
+        <div><b>A4 Vertical</b><br>${new Date().toLocaleString('es-ES')}</div>
+      </div>
+      <h1>${esc(title)}</h1>
+      ${body}
+      <p style="font-size:11px;color:#666;margin-top:24px">Documento generado por Marfan Crew Hours.</p>
+    </div>
+  `;
+}
+
+function renderEventSummaryV564(r){
+  const e = r.event;
+  const rows = r.assignments || [];
+  reportShellV564('Resumen general del evento','Informe operativo',`
+    <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
+      <tr><td><b>Evento</b></td><td>${esc(e.name||'')}</td></tr>
+      <tr><td><b>Fecha</b></td><td>${esc(e.event_date||'')}</td></tr>
+      <tr><td><b>Horario</b></td><td>${esc(e.start_time||'')} - ${esc(e.end_time||'')}</td></tr>
+      <tr><td><b>Cliente</b></td><td>${esc(e.client||'')}</td></tr>
+      <tr><td><b>Ubicación</b></td><td>${esc(e.location||'')}</td></tr>
+      <tr><td><b>Estado</b></td><td>${esc(e.status||'')}</td></tr>
+    </table>
+    <h2>Personal asignado</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr><th style="text-align:left;border-bottom:1px solid #111;padding:6px">Operario</th><th style="text-align:left;border-bottom:1px solid #111;padding:6px">Rol</th><th style="text-align:left;border-bottom:1px solid #111;padding:6px">Teléfono</th></tr></thead>
+      <tbody>${rows.map(a=>`<tr><td style="border-bottom:1px solid #ddd;padding:6px">${esc((a.first_name||'')+' '+(a.last_name||''))}</td><td style="border-bottom:1px solid #ddd;padding:6px">${esc(a.service_role||'')}</td><td style="border-bottom:1px solid #ddd;padding:6px">${esc(a.phone||'')}</td></tr>`).join('')}</tbody>
+    </table>
+  `);
+}
+
+function renderStaffHoursV564(r){
+  const e = r.event;
+  const rows = r.rows || [];
+  const total = rows.reduce((a,x)=>a+Number(x.hours||0),0);
+  reportShellV564('Horas de personal por evento','Informe de horas',`
+    <p><b>${esc(e.name||'')}</b> · ${esc(e.event_date||'')}</p>
+    <div class="report-kpis-v562"><div class="report-kpi-v562"><span>Total horas</span><b>${total.toFixed(2)}</b></div><div class="report-kpi-v562"><span>Operarios</span><b>${rows.length}</b></div></div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr><th style="text-align:left;border-bottom:1px solid #111;padding:6px">Empleado</th><th style="text-align:left;border-bottom:1px solid #111;padding:6px">Inicio</th><th style="text-align:left;border-bottom:1px solid #111;padding:6px">Fin</th><th style="text-align:right;border-bottom:1px solid #111;padding:6px">Horas</th></tr></thead>
+      <tbody>${rows.map(x=>`<tr><td style="border-bottom:1px solid #ddd;padding:6px">${esc((x.first_name||'')+' '+(x.last_name||''))}</td><td style="border-bottom:1px solid #ddd;padding:6px">${esc(x.start||'')}</td><td style="border-bottom:1px solid #ddd;padding:6px">${esc(x.end||'')}</td><td style="border-bottom:1px solid #ddd;padding:6px;text-align:right">${Number(x.hours||0).toFixed(2)}</td></tr>`).join('')}</tbody>
+    </table>
+  `);
+}
+
+function renderDeliveryNotesV564(r){
+  const e = r.event;
+  const notes = r.notes || [];
+  reportShellV564('Albaranes del evento','Informe de albaranes',`
+    <p><b>${esc(e.name||'')}</b> · ${esc(e.event_date||'')}</p>
+    ${notes.map(n=>`<div style="border:1px solid #ddd;border-radius:12px;padding:10px;margin:8px 0"><b>${esc(n.title||'Albarán')}</b><br>Creado: ${esc(n.created_at||'')}<br>Firmado: ${Number(n.signed)?'Sí':'No'}</div>`).join('') || '<p>No hay albaranes para este evento.</p>'}
+  `);
+}
+
+function renderDocumentsReportV564(r){
+  const rows = r.rows || [];
+  reportShellV564('Documentación del personal','Informe documental',`
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr><th style="text-align:left;border-bottom:1px solid #111;padding:6px">Operario</th><th style="text-align:left;border-bottom:1px solid #111;padding:6px">Documento</th><th style="text-align:left;border-bottom:1px solid #111;padding:6px">Caducidad</th><th style="text-align:left;border-bottom:1px solid #111;padding:6px">Estado</th></tr></thead>
+      <tbody>${rows.map(d=>`<tr><td style="border-bottom:1px solid #ddd;padding:6px">${esc((d.first_name||'')+' '+(d.last_name||''))}</td><td style="border-bottom:1px solid #ddd;padding:6px">${esc(d.doc_type||'')} · ${esc(d.title||'')}</td><td style="border-bottom:1px solid #ddd;padding:6px">${esc(d.expiry_date||'—')}</td><td style="border-bottom:1px solid #ddd;padding:6px">${esc(d.computed_status||'')}</td></tr>`).join('')}</tbody>
+    </table>
+  `);
+}

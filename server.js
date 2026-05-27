@@ -3134,7 +3134,7 @@ function v552CreateBackupObject() {
   const backup = {
     meta: {
       app: 'Marfan Crew Hours',
-      version: '56.3.0',
+      version: '56.4.0',
       exported_at: new Date().toISOString(),
       data_dir: V552_DATA_DIR,
       backup_dir: V552_BACKUP_DIR,
@@ -3911,6 +3911,90 @@ app.post('/api/google/export-event-v563/:id', requireAdmin, async (req,res)=>{
 
     res.json({ok:true,google_event_id:result.data.id,htmlLink:result.data.htmlLink,calendar:resolved.calendar});
   } catch(e) {
+    res.status(500).json({error:e.message});
+  }
+});
+
+
+// ---------- V56.4 INFORMES PDF MULTI-TIPO ----------
+app.post('/api/reports/multi', requireAdmin, (req,res)=>{
+  try{
+    const b = req.body || {};
+    const type = b.report_type || 'employee_costs';
+    const eventId = Number(b.event_id || 0);
+    const event = eventId ? db.prepare('SELECT * FROM events WHERE id=?').get(eventId) : null;
+
+    if(type === 'employee_costs'){
+      return res.status(400).json({error:'Usa /api/reports/employee-costs para employee_costs'});
+    }
+
+    if(type === 'event_summary'){
+      if(!event) return res.status(404).json({error:'Evento no encontrado'});
+      const assignments = db.prepare(`
+        SELECT a.*, u.first_name,u.last_name,u.nickname,u.phone
+        FROM assignments a
+        JOIN users u ON u.id=a.user_id
+        WHERE a.event_id=?
+        ORDER BY u.first_name,u.last_name
+      `).all(eventId);
+      return res.json({ok:true,type,event,assignments,generated_at:new Date().toISOString()});
+    }
+
+    if(type === 'staff_hours'){
+      if(!event) return res.status(404).json({error:'Evento no encontrado'});
+      const rows = db.prepare(`
+        SELECT a.*, u.first_name,u.last_name,u.nickname,u.phone,u.dni
+        FROM assignments a
+        JOIN users u ON u.id=a.user_id
+        WHERE a.event_id=?
+        ORDER BY u.first_name,u.last_name
+      `).all(eventId).map(a=>{
+        const start = a.planned_start || event.start_time || '';
+        const end = a.planned_end || event.end_time || '';
+        const hours = typeof v562HoursBetween === 'function' ? v562HoursBetween(start,end) : 0;
+        return {...a,start,end,hours};
+      });
+      return res.json({ok:true,type,event,rows,generated_at:new Date().toISOString()});
+    }
+
+    if(type === 'delivery_notes'){
+      if(!event) return res.status(404).json({error:'Evento no encontrado'});
+      let notes = [];
+      try { notes = db.prepare('SELECT * FROM delivery_notes WHERE event_id=? ORDER BY created_at DESC').all(eventId); } catch(e){}
+      try {
+        const alt = db.prepare('SELECT * FROM event_delivery_notes WHERE event_id=? ORDER BY created_at DESC').all(eventId);
+        notes = notes.concat(alt);
+      } catch(e){}
+      return res.json({ok:true,type,event,notes,generated_at:new Date().toISOString()});
+    }
+
+    if(type === 'documents'){
+      const selectedUserIds = Array.isArray(b.user_ids) ? b.user_ids.map(Number).filter(Boolean) : [];
+      let rows = [];
+      if(selectedUserIds.length){
+        const placeholders = selectedUserIds.map(()=>'?').join(',');
+        rows = db.prepare(`
+          SELECT d.*, u.first_name,u.last_name,u.nickname,u.phone,u.dni
+          FROM worker_documents d
+          JOIN users u ON u.id=d.user_id
+          WHERE d.user_id IN (${placeholders})
+          ORDER BY u.first_name,d.expiry_date
+        `).all(...selectedUserIds);
+      }else{
+        rows = db.prepare(`
+          SELECT d.*, u.first_name,u.last_name,u.nickname,u.phone,u.dni
+          FROM worker_documents d
+          JOIN users u ON u.id=d.user_id
+          ORDER BY u.first_name,d.expiry_date
+        `).all();
+      }
+      rows = rows.map(d=>({...d,computed_status: typeof auditDocStatus==='function' ? auditDocStatus(d.expiry_date) : ''}));
+      return res.json({ok:true,type,event:null,rows,generated_at:new Date().toISOString()});
+    }
+
+    res.status(400).json({error:'Tipo de informe no soportado'});
+  }catch(e){
+    console.error('reports multi', e);
     res.status(500).json({error:e.message});
   }
 });

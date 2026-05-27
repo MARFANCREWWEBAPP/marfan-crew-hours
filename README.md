@@ -388,3 +388,16 @@ El calendario seguirá mostrando el estado:
 ## Crear evento
 - Modal ampliado estilo V46.
 - Datos principales, cliente, contacto, horarios, ubicación, operación, producción, tarifas, costes, notas.
+
+
+# V56.4 Informes PDF Multi-Tipo
+
+## Añadido
+Mantiene el informe perfecto de V56.2 y añade selector de tipo:
+- Costes empresa por empleado.
+- Resumen general del evento.
+- Horas de personal por evento.
+- Albaranes del evento.
+- Documentación del personal.
+
+Todos en formato A4 vertical.
