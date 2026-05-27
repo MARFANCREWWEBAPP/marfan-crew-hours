@@ -35,3 +35,10 @@ Se mantiene el sistema de admin de la V46.
 
 ## Railway
 /health debe devolver OK.
+
+
+# V52.1 Hotfix Startup
+Corrige el error:
+`ReferenceError: addDaysJS is not defined`
+
+Mantiene base V46 A4 Vertical + módulos auditoría.

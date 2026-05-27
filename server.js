@@ -853,6 +853,16 @@ function isNowInEventWindow(now, date, start, end) {
 }
 
 
+
+function addDaysJS(dateStr, days) {
+  const base = dateStr ? new Date(dateStr + 'T12:00:00') : new Date();
+  base.setDate(base.getDate() + Number(days || 0));
+  const y = base.getFullYear();
+  const m = String(base.getMonth() + 1).padStart(2, '0');
+  const d = String(base.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 function initAuditModules() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS production_tasks (
@@ -1077,7 +1087,7 @@ async function geocodeAddressOSM(address) {
 
 
 // ---------- API ROUTES ----------
-app.get('/health', (req, res) => res.json({ ok: true, version: '52.0.0' }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '52.1.0' }));
 
 
 app.post('/api/geocode', requireAdmin, async (req, res) => {
@@ -2264,5 +2274,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Marfan Crew Hours V52 V46 Audit Complete listening on port ${PORT}`);
+  console.log(`Marfan Crew Hours V52.1 Hotfix Startup listening on port ${PORT}`);
 });
