@@ -5,9 +5,64 @@ const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
-const zlib = require('zlib');
 
 const app = express();
+
+// ---------- V55.2 PERSISTENT RECOVERY LOCK ----------
+// En Railway, el Volume debe estar montado en /data.
+// Esta versión fuerza DB y backups a /data para que las actualizaciones NO borren información.
+const V552_DATA_DIR = process.env.PERSISTENT_DATA_DIR || process.env.DATA_DIR || '/data';
+const V552_BACKUP_DIR = process.env.BACKUP_DIR || path.join(V552_DATA_DIR, 'backups');
+const V552_LEGACY_BACKUP_DIRS = [
+  path.join(__dirname, 'data', 'backups'),
+  path.join(__dirname, 'backups'),
+  '/app/data/backups'
+];
+
+function v552EnsurePersistentDirs() {
+  try {
+    fs.mkdirSync(V552_DATA_DIR, { recursive: true });
+    fs.mkdirSync(V552_BACKUP_DIR, { recursive: true });
+  } catch(e) {
+    console.warn('V55.2 persistent dirs warning:', e.message);
+  }
+}
+
+function v552IsPersistentMounted() {
+  try {
+    if (!fs.existsSync(V552_DATA_DIR)) return false;
+    const test = path.join(V552_DATA_DIR, '.mch_persistent_test');
+    fs.writeFileSync(test, String(Date.now()));
+    fs.unlinkSync(test);
+    return true;
+  } catch(e) {
+    return false;
+  }
+}
+
+function v552MigrateLegacyBackups() {
+  v552EnsurePersistentDirs();
+  const migrated = [];
+  for (const dir of V552_LEGACY_BACKUP_DIRS) {
+    try {
+      if (!fs.existsSync(dir) || path.resolve(dir) === path.resolve(V552_BACKUP_DIR)) continue;
+      const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+      for (const f of files) {
+        const src = path.join(dir, f);
+        const dst = path.join(V552_BACKUP_DIR, f);
+        if (!fs.existsSync(dst)) {
+          fs.copyFileSync(src, dst);
+          migrated.push(f);
+        }
+      }
+    } catch(e) {}
+  }
+  return migrated;
+}
+
+v552EnsurePersistentDirs();
+v552MigrateLegacyBackups();
+
 
 // V53_5_PERSISTENT_DATA_DIR
 // Railway: conectar un Volume montado en /data para conservar DB y backups entre versiones.
@@ -2448,8 +2503,8 @@ app.get('/api/pdf-template/:type/:id', requireAuth, (req, res) => {
 
 // ---------- V53.3 BACKUP CENTER ----------
 function v533BackupDir() {
-  fs.mkdirSync(PERSISTENT_BACKUP_DIR, { recursive: true });
-  return PERSISTENT_BACKUP_DIR;
+  v552EnsurePersistentDirs();
+  return V552_BACKUP_DIR;
 }
 
 function v533AllTableNames() {
@@ -2756,6 +2811,453 @@ app.get('/api/dashboard-graph', requireAdmin, (req, res) => {
   }
 });
 
+
+// ---------- V55 GOOGLE CALENDAR SYNC ----------
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const GOOGLE_CALLBACK_URL = process.env.GOOGLE_CALLBACK_URL || 'https://marfan-crew-hours-production-ef76.up.railway.app/auth/google/callback';
+
+const GOOGLE_TARGET_CALENDAR_NAME = process.env.GOOGLE_TARGET_CALENDAR_NAME || 'MARFAN';
+const GOOGLE_TARGET_CALENDAR_ID = process.env.GOOGLE_TARGET_CALENDAR_ID || '';
+
+async function v551ResolveTargetCalendarId(calendar) {
+  if (GOOGLE_TARGET_CALENDAR_ID) return GOOGLE_TARGET_CALENDAR_ID;
+  const list = await calendar.calendarList.list();
+  const calendars = list.data.items || [];
+  const found = calendars.find(c => String(c.summary || '').trim().toLowerCase() === String(GOOGLE_TARGET_CALENDAR_NAME).trim().toLowerCase());
+  if (found) return found.id;
+  throw new Error(`No encuentro el calendario "${GOOGLE_TARGET_CALENDAR_NAME}" en Google Calendar. Créalo o configura GOOGLE_TARGET_CALENDAR_ID.`);
+}
+
+const GOOGLE_SCOPES = [
+  'https://www.googleapis.com/auth/calendar',
+  'https://www.googleapis.com/auth/calendar.events'
+];
+
+function v55GoogleOAuthClient() {
+  return new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_CALLBACK_URL);
+}
+
+function v55EnsureGoogleTables() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS google_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT DEFAULT 'google',
+      tokens_json TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS google_event_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id INTEGER NOT NULL,
+      google_event_id TEXT NOT NULL,
+      calendar_id TEXT DEFAULT '',
+      synced_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+}
+
+function v55GetGoogleTokens() {
+  try {
+    const row = db.prepare("SELECT * FROM google_tokens WHERE provider='google' ORDER BY id DESC LIMIT 1").get();
+    if (!row) return null;
+    return JSON.parse(row.tokens_json || '{}');
+  } catch(e) { return null; }
+}
+
+function v55SaveGoogleTokens(tokens) {
+  const row = db.prepare("SELECT * FROM google_tokens WHERE provider='google' ORDER BY id DESC LIMIT 1").get();
+  if (row) {
+    db.prepare("UPDATE google_tokens SET tokens_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(JSON.stringify(tokens), row.id);
+  } else {
+    db.prepare("INSERT INTO google_tokens (provider,tokens_json) VALUES (?,?)").run('google', JSON.stringify(tokens));
+  }
+}
+
+function v55CalendarStatus() {
+  return {
+    configured: !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_CALLBACK_URL),
+    connected: !!v55GetGoogleTokens(),
+    callback_url: GOOGLE_CALLBACK_URL,
+    target_calendar_name: GOOGLE_TARGET_CALENDAR_NAME,
+    target_calendar_id_configured: !!GOOGLE_TARGET_CALENDAR_ID
+  };
+}
+
+function v55EventToGoogle(e) {
+  const date = e.event_date || new Date().toISOString().slice(0,10);
+  const start = e.start_time || '09:00';
+  const end = e.end_time || '10:00';
+  return {
+    summary: e.name || 'Evento Marfan Crew',
+    location: e.location || '',
+    description: [
+      'Creado desde Marfan Crew Hours',
+      e.client ? `Cliente: ${e.client}` : '',
+      e.notes ? `Notas: ${e.notes}` : ''
+    ].filter(Boolean).join('\\n'),
+    start: { dateTime: `${date}T${start}:00`, timeZone: 'Europe/Madrid' },
+    end: { dateTime: `${date}T${end}:00`, timeZone: 'Europe/Madrid' }
+  };
+}
+
+async function v55GoogleCalendarClient() {
+  const tokens = v55GetGoogleTokens();
+  if (!tokens) throw new Error('Google Calendar no conectado');
+  const oauth2 = v55GoogleOAuthClient();
+  oauth2.setCredentials(tokens);
+  return google.calendar({ version:'v3', auth:oauth2 });
+}
+
+v55EnsureGoogleTables();
+
+app.get('/auth/google', requireAdmin, (req,res)=>{
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+    return res.status(400).send('Faltan GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET en Railway Variables.');
+  }
+  const oauth2 = v55GoogleOAuthClient();
+  const url = oauth2.generateAuthUrl({
+    access_type:'offline',
+    prompt:'consent',
+    scope:GOOGLE_SCOPES
+  });
+  res.redirect(url);
+});
+
+app.get('/auth/google/callback', async (req,res)=>{
+  try {
+    const code = req.query.code;
+    if (!code) return res.status(400).send('Falta code OAuth.');
+    const oauth2 = v55GoogleOAuthClient();
+    const { tokens } = await oauth2.getToken(code);
+    v55SaveGoogleTokens(tokens);
+    res.send(`
+      <html><body style="font-family:Arial;padding:40px">
+        <h1>Google Calendar conectado correctamente ✅</h1>
+        <p>Ya puedes cerrar esta ventana y volver a Marfan Crew Hours.</p>
+        <script>setTimeout(()=>window.close(),2500)</script>
+      </body></html>
+    `);
+  } catch(e) {
+    console.error('google callback', e);
+    res.status(500).send('Error conectando Google Calendar: '+e.message);
+  }
+});
+
+app.get('/api/google/status', requireAdmin, (req,res)=>{
+  res.json(v55CalendarStatus());
+});
+
+app.post('/api/google/disconnect', requireAdmin, (req,res)=>{
+  try { db.prepare("DELETE FROM google_tokens WHERE provider='google'").run(); } catch(e) {}
+  res.json({ok:true});
+});
+
+app.post('/api/google/export-event/:id', requireAdmin, async (req,res)=>{
+  try {
+    const event = db.prepare('SELECT * FROM events WHERE id=?').get(req.params.id);
+    if (!event) return res.status(404).json({error:'Evento no encontrado'});
+    const calendar = await v55GoogleCalendarClient();
+    const targetCalendarId = await v551ResolveTargetCalendarId(calendar);
+    const existing = db.prepare('SELECT * FROM google_event_links WHERE event_id=? ORDER BY id DESC LIMIT 1').get(event.id);
+    let result;
+    if (existing) {
+      result = await calendar.events.update({
+        calendarId: existing.calendar_id || 'primary',
+        eventId: existing.google_event_id,
+        requestBody: v55EventToGoogle(event)
+      });
+    } else {
+      result = await calendar.events.insert({
+        calendarId:targetCalendarId,
+        requestBody: v55EventToGoogle(event)
+      });
+      db.prepare('INSERT INTO google_event_links (event_id,google_event_id,calendar_id) VALUES (?,?,?)').run(event.id, result.data.id, targetCalendarId);
+    }
+    res.json({ok:true, google_event_id:result.data.id, htmlLink:result.data.htmlLink});
+  } catch(e) {
+    console.error('export google event', e);
+    res.status(500).json({error:e.message});
+  }
+});
+
+app.post('/api/google/export-all', requireAdmin, async (req,res)=>{
+  try {
+    const events = db.prepare("SELECT * FROM events WHERE status!='cancelado' ORDER BY event_date").all();
+    const out = [];
+    for (const e of events) {
+      try {
+        const calendar = await v55GoogleCalendarClient();
+        const targetCalendarId = await v551ResolveTargetCalendarId(calendar);
+        const existing = db.prepare('SELECT * FROM google_event_links WHERE event_id=? ORDER BY id DESC LIMIT 1').get(e.id);
+        let result;
+        if (existing) {
+          result = await calendar.events.update({
+            calendarId: existing.calendar_id || 'primary',
+            eventId: existing.google_event_id,
+            requestBody: v55EventToGoogle(e)
+          });
+        } else {
+          result = await calendar.events.insert({ calendarId:targetCalendarId, requestBody:v55EventToGoogle(e) });
+          db.prepare('INSERT INTO google_event_links (event_id,google_event_id,calendar_id) VALUES (?,?,?)').run(e.id, result.data.id, targetCalendarId);
+        }
+        out.push({event_id:e.id, ok:true, google_event_id:result.data.id});
+      } catch(err) {
+        out.push({event_id:e.id, ok:false, error:err.message});
+      }
+    }
+    res.json({ok:true, results:out});
+  } catch(e) {
+    res.status(500).json({error:e.message});
+  }
+});
+
+app.post('/api/google/import-upcoming', requireAdmin, async (req,res)=>{
+  try {
+    const calendar = await v55GoogleCalendarClient();
+    const targetCalendarId = await v551ResolveTargetCalendarId(calendar);
+    const now = new Date();
+    const max = new Date();
+    max.setMonth(max.getMonth()+6);
+    const response = await calendar.events.list({
+      calendarId:targetCalendarId,
+      timeMin:now.toISOString(),
+      timeMax:max.toISOString(),
+      singleEvents:true,
+      orderBy:'startTime',
+      maxResults:100
+    });
+    const imported = [];
+    const items = response.data.items || [];
+    for (const item of items) {
+      const googleId = item.id;
+      const exists = db.prepare('SELECT * FROM google_event_links WHERE google_event_id=?').get(googleId);
+      if (exists) continue;
+      const startRaw = item.start.dateTime || item.start.date;
+      const endRaw = item.end.dateTime || item.end.date;
+      const sd = new Date(startRaw);
+      const ed = new Date(endRaw);
+      const eventDate = item.start.date || sd.toISOString().slice(0,10);
+      const startTime = item.start.date ? '09:00' : String(sd.toTimeString().slice(0,5));
+      const endTime = item.end.date ? '10:00' : String(ed.toTimeString().slice(0,5));
+      const cols = db.prepare("PRAGMA table_info(events)").all().map(c=>c.name);
+      const data = {
+        name:item.summary || 'Evento Google',
+        location:item.location || '',
+        event_date:eventDate,
+        start_time:startTime,
+        end_time:endTime,
+        notes:item.description || '',
+        status:'programado',
+        operational_status:'importado_google'
+      };
+      const keys = Object.keys(data).filter(k=>cols.includes(k));
+      const stmt = db.prepare(`INSERT INTO events (${keys.map(k=>`"${k}"`).join(',')}) VALUES (${keys.map(()=>'?').join(',')})`);
+      const info = stmt.run(...keys.map(k=>data[k]));
+      db.prepare('INSERT INTO google_event_links (event_id,google_event_id,calendar_id) VALUES (?,?,?)').run(info.lastInsertRowid, googleId, targetCalendarId);
+      imported.push({event_id:info.lastInsertRowid, google_event_id:googleId, summary:item.summary});
+    }
+    res.json({ok:true, imported});
+  } catch(e) {
+    console.error('import google', e);
+    res.status(500).json({error:e.message});
+  }
+});
+
+
+// ---------- V55.2 ROBUST BACKUP CENTER ----------
+function v552AllTableNames() {
+  return db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(x => x.name);
+}
+
+function v552CreateBackupObject() {
+  const backup = {
+    meta: {
+      app: 'Marfan Crew Hours',
+      version: '55.3.0',
+      exported_at: new Date().toISOString(),
+      data_dir: V552_DATA_DIR,
+      backup_dir: V552_BACKUP_DIR,
+      google_target_calendar_name: process.env.GOOGLE_TARGET_CALENDAR_NAME || 'MARFAN'
+    },
+    tables: {}
+  };
+  for (const t of v552AllTableNames()) {
+    try {
+      backup.tables[t] = db.prepare(`SELECT * FROM "${t}"`).all();
+    } catch(e) {
+      backup.tables[t] = [];
+    }
+  }
+  return backup;
+}
+
+function v552BackupFilename() {
+  return `marfan-crew-hours-backup-${new Date().toISOString().replace(/[:.]/g,'-')}.json`;
+}
+
+function v552RestoreBackupObject(backup) {
+  if (!backup || !backup.tables || typeof backup.tables !== 'object') throw new Error('Backup no válido');
+  const imported = [];
+  const skipped = [];
+  const tx = db.transaction(() => {
+    for (const [table, rows] of Object.entries(backup.tables)) {
+      if (!Array.isArray(rows)) { skipped.push(table); continue; }
+      const exists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
+      if (!exists) { skipped.push(table); continue; }
+      try {
+        db.prepare(`DELETE FROM "${table}"`).run();
+        if (rows.length) {
+          const tableCols = db.prepare(`PRAGMA table_info("${table}")`).all().map(c => c.name);
+          const cols = Object.keys(rows[0]).filter(c => tableCols.includes(c));
+          if (cols.length) {
+            const stmt = db.prepare(`INSERT INTO "${table}" (${cols.map(c=>`"${c}"`).join(',')}) VALUES (${cols.map(()=>'?').join(',')})`);
+            for (const r of rows) stmt.run(...cols.map(c => r[c]));
+          }
+        }
+        imported.push(table);
+      } catch(e) {
+        skipped.push(table);
+      }
+    }
+  });
+  tx();
+  return { imported, skipped };
+}
+
+app.get('/api/backup/status-v552', requireAdmin, (req,res)=>{
+  const migrated = v552MigrateLegacyBackups();
+  let backups = [];
+  try {
+    backups = fs.readdirSync(V552_BACKUP_DIR).filter(f=>f.endsWith('.json'));
+  } catch(e) {}
+  res.json({
+    ok:true,
+    persistent_mounted:v552IsPersistentMounted(),
+    data_dir:V552_DATA_DIR,
+    backup_dir:V552_BACKUP_DIR,
+    backups_count:backups.length,
+    migrated_now:migrated,
+    google_target_calendar_name:process.env.GOOGLE_TARGET_CALENDAR_NAME || 'MARFAN',
+    message: v552IsPersistentMounted()
+      ? 'Persistencia OK: backups y datos se conservarán entre versiones.'
+      : 'ATENCIÓN: no se detecta /data escribible. Revisa el Volume de Railway.'
+  });
+});
+
+app.get('/api/backup/list-online-v552', requireAdmin, (req,res)=>{
+  v552MigrateLegacyBackups();
+  v552EnsurePersistentDirs();
+  const files = fs.existsSync(V552_BACKUP_DIR)
+    ? fs.readdirSync(V552_BACKUP_DIR).filter(f=>f.endsWith('.json')).map(f=>{
+        const p = path.join(V552_BACKUP_DIR, f);
+        const st = fs.statSync(p);
+        return { filename:f, size_bytes:st.size, created_at:st.mtime.toISOString(), path:V552_BACKUP_DIR };
+      }).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)))
+    : [];
+  res.json({ ok:true, backups:files, backup_dir:V552_BACKUP_DIR, persistent_mounted:v552IsPersistentMounted() });
+});
+
+app.post('/api/backup/save-online-v552', requireAdmin, (req,res)=>{
+  v552EnsurePersistentDirs();
+  const backup = v552CreateBackupObject();
+  const filename = v552BackupFilename();
+  fs.writeFileSync(path.join(V552_BACKUP_DIR, filename), JSON.stringify(backup, null, 2));
+  res.json({ ok:true, filename, backup_dir:V552_BACKUP_DIR });
+});
+
+app.get('/api/backup/export-v552', requireAdmin, (req,res)=>{
+  const backup = v552CreateBackupObject();
+  const filename = `marfan-crew-hours-backup-${new Date().toISOString().slice(0,10)}.json`;
+  res.status(200);
+  res.setHeader('Content-Type','application/json; charset=utf-8');
+  res.setHeader('Content-Disposition',`attachment; filename="${filename}"`);
+  res.send(JSON.stringify(backup, null, 2));
+});
+
+app.post('/api/backup/import-v552', requireAdmin, (req,res)=>{
+  try {
+    const result = v552RestoreBackupObject(req.body || {});
+    res.json({ ok:true, ...result });
+  } catch(e) {
+    res.status(400).json({ error:e.message || 'No se pudo restaurar backup' });
+  }
+});
+
+app.post('/api/backup/restore-online-v552', requireAdmin, (req,res)=>{
+  try {
+    const filename = String((req.body||{}).filename||'');
+    if (!filename || filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+      return res.status(400).json({ error:'Nombre de backup inválido' });
+    }
+    const filepath = path.join(V552_BACKUP_DIR, filename);
+    if (!fs.existsSync(filepath)) return res.status(404).json({ error:'Backup no encontrado en '+V552_BACKUP_DIR });
+    const backup = JSON.parse(fs.readFileSync(filepath, 'utf8'));
+    const result = v552RestoreBackupObject(backup);
+    res.json({ ok:true, ...result });
+  } catch(e) {
+    res.status(400).json({ error:e.message || 'No se pudo restaurar backup online' });
+  }
+});
+
+
+// ---------- V55.3 AUTO MARFAN CALENDAR VIEW ----------
+app.get('/api/google/marfan-events', requireAdmin, async (req,res)=>{
+  try {
+    const status = v55CalendarStatus();
+    if (!status.configured || !status.connected) {
+      return res.json({ ok:true, connected:false, events:[], message:'Google Calendar no conectado todavía.' });
+    }
+
+    const calendar = await v55GoogleCalendarClient();
+    const targetCalendarId = await v551ResolveTargetCalendarId(calendar);
+
+    const now = new Date();
+    const min = new Date(now.getFullYear(), now.getMonth()-2, 1);
+    const max = new Date(now.getFullYear(), now.getMonth()+12, 1);
+
+    const response = await calendar.events.list({
+      calendarId: targetCalendarId,
+      timeMin: min.toISOString(),
+      timeMax: max.toISOString(),
+      singleEvents:true,
+      orderBy:'startTime',
+      maxResults:250
+    });
+
+    const googleEvents = (response.data.items || []).map(item=>{
+      const startRaw = item.start.dateTime || item.start.date;
+      const endRaw = item.end.dateTime || item.end.date;
+      const sd = new Date(startRaw);
+      const ed = new Date(endRaw);
+      return {
+        id:'g_'+item.id,
+        google_event_id:item.id,
+        name:item.summary || 'Evento MARFAN',
+        location:item.location || '',
+        event_date:item.start.date || sd.toISOString().slice(0,10),
+        start_time:item.start.date ? '' : String(sd.toTimeString().slice(0,5)),
+        end_time:item.end.date ? '' : String(ed.toTimeString().slice(0,5)),
+        status:'google',
+        operational_status:'google_marfan',
+        source:'google',
+        htmlLink:item.htmlLink || ''
+      };
+    });
+
+    res.json({
+      ok:true,
+      connected:true,
+      calendar_id:targetCalendarId,
+      calendar_name:process.env.GOOGLE_TARGET_CALENDAR_NAME || 'MARFAN',
+      events:googleEvents
+    });
+  } catch(e) {
+    res.json({ ok:false, connected:false, events:[], error:e.message });
+  }
+});
+
 // Settings
 app.get('/api/settings', requireAuth, (req, res) => {
   res.json(getSettings());
@@ -2811,222 +3313,4 @@ app.get('/api/backup/status', requireAdmin, (req, res) => {
     railway_volume_required:true,
     note:'Para conservar datos entre versiones, Railway debe tener un Volume montado en /data.'
   });
-});
-
-
-// ---------- V54 ENTERPRISE FULL OPS / BACKUP PRO ----------
-function v54EnsureDir(dir){
-  fs.mkdirSync(dir, { recursive:true });
-  return dir;
-}
-function v54UploadsDir(){
-  const dir = path.join((typeof PERSISTENT_DATA_DIR !== 'undefined' ? PERSISTENT_DATA_DIR : path.join(__dirname,'data')), 'uploads');
-  return v54EnsureDir(dir);
-}
-function v54PublicUploadsDir(){
-  const dir = path.join(__dirname, 'public', 'uploads');
-  return v54EnsureDir(dir);
-}
-function v54CreateBackupObject(){
-  const backup = {
-    meta:{ app:'Marfan Crew Hours', version:'54.0.0', exported_at:new Date().toISOString() },
-    tables:{}
-  };
-  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(t=>t.name);
-  for(const t of tables){
-    try{ backup.tables[t]=db.prepare(`SELECT * FROM "${t}"`).all(); }
-    catch(e){ backup.tables[t]=[]; }
-  }
-  return backup;
-}
-function v54BackupDir(){
-  const dir = (typeof PERSISTENT_BACKUP_DIR !== 'undefined') ? PERSISTENT_BACKUP_DIR : path.join(__dirname,'data','backups');
-  return v54EnsureDir(dir);
-}
-function v54SaveBackupFile(backup){
-  const filename = `marfan-backup-v54-${new Date().toISOString().replace(/[:.]/g,'-')}.json`;
-  const filepath = path.join(v54BackupDir(), filename);
-  fs.writeFileSync(filepath, JSON.stringify(backup,null,2));
-  return { filename, filepath };
-}
-function v54RestoreBackupObject(backup){
-  if(!backup || !backup.tables || typeof backup.tables !== 'object') throw new Error('Backup no válido');
-  const imported=[], skipped=[];
-  const tx = db.transaction(()=>{
-    for(const [table, rows] of Object.entries(backup.tables)){
-      if(!Array.isArray(rows)){ skipped.push(table); continue; }
-      const exists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
-      if(!exists){ skipped.push(table); continue; }
-      try{
-        db.prepare(`DELETE FROM "${table}"`).run();
-        if(rows.length){
-          const tableCols = db.prepare(`PRAGMA table_info("${table}")`).all().map(c=>c.name);
-          const cols = Object.keys(rows[0]).filter(c=>tableCols.includes(c));
-          if(cols.length){
-            const ph = cols.map(()=>'?').join(',');
-            const stmt = db.prepare(`INSERT INTO "${table}" (${cols.map(c=>`"${c}"`).join(',')}) VALUES (${ph})`);
-            for(const r of rows) stmt.run(...cols.map(c=>r[c]));
-          }
-        }
-        imported.push(table);
-      }catch(e){ console.error('v54 restore skip', table, e.message); skipped.push(table); }
-    }
-  });
-  tx();
-  return { imported, skipped };
-}
-function v54SaveDataUrl(dataUrl, fileName='archivo'){
-  if(!dataUrl || !String(dataUrl).startsWith('data:')) return '';
-  const m = String(dataUrl).match(/^data:([^;]+);base64,(.+)$/);
-  if(!m) return '';
-  const mime = m[1];
-  const extMap = {'image/jpeg':'jpg','image/png':'png','image/webp':'webp','application/pdf':'pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document':'docx'};
-  const ext = extMap[mime] || 'bin';
-  const safe = String(fileName||'archivo').replace(/[^a-z0-9._-]/gi,'_').slice(0,80);
-  const filename = `${Date.now()}-${Math.random().toString(16).slice(2)}-${safe}.${ext}`.replace(/(\.jpg|\.png|\.webp|\.pdf|\.docx)\.\1$/i,'$1');
-  const pubDir = v54PublicUploadsDir();
-  fs.writeFileSync(path.join(pubDir, filename), Buffer.from(m[2], 'base64'));
-  return `/uploads/${filename}`;
-}
-function v54EnsureUserColumns(){
-  try{ addColumn('users','photo_url TEXT DEFAULT ""'); }catch(e){}
-  try{ addColumn('users','dni TEXT DEFAULT ""'); }catch(e){}
-  try{ addColumn('users','address TEXT DEFAULT ""'); }catch(e){}
-  try{ addColumn('users','city TEXT DEFAULT ""'); }catch(e){}
-  try{ addColumn('users','postal_code TEXT DEFAULT ""'); }catch(e){}
-  try{ addColumn('users','emergency_contact TEXT DEFAULT ""'); }catch(e){}
-  try{ addColumn('users','emergency_phone TEXT DEFAULT ""'); }catch(e){}
-  try{ addColumn('users','shirt_size TEXT DEFAULT ""'); }catch(e){}
-  try{ addColumn('users','shoe_size TEXT DEFAULT ""'); }catch(e){}
-  try{ addColumn('users','bank_account TEXT DEFAULT ""'); }catch(e){}
-}
-function v54EnsureRatesSeed(){
-  try{
-    const count = db.prepare('SELECT COUNT(*) c FROM rates').get().c;
-    if(count < 8){
-      const roles = [
-        ['Stagehand / Carga y descarga',18.5,23.5,15],
-        ['Jefe de equipo',22,28,15],
-        ['Técnico de sonido',24,30,15],
-        ['Técnico de iluminación',24,30,15],
-        ['Técnico de vídeo / LED',24,30,15],
-        ['Runner',18.5,23.5,15],
-        ['Limpieza',18.5,23.5,15],
-        ['Auxiliar de limpieza',18.5,23.5,15],
-        ['Carretillero',22,28,15],
-        ['Operador plataforma elevadora',22,28,15],
-        ['Producción / Regiduría',24,30,15],
-        ['Montador truss / rigging básico',22,28,15]
-      ];
-      const existing = db.prepare('SELECT role FROM rates').all().map(r=>String(r.role||'').toLowerCase());
-      const stmt = db.prepare('INSERT INTO rates (role,hourly_rate,night_rate,diet,active) VALUES (?,?,?,?,1)');
-      for(const r of roles){ if(!existing.includes(r[0].toLowerCase())) stmt.run(...r); }
-    }
-  }catch(e){}
-}
-v54EnsureUserColumns();
-v54EnsureRatesSeed();
-
-app.get('/api/backup/download-v54', requireAdmin, (req,res)=>{
-  try{
-    const backup = v54CreateBackupObject();
-    const saved = v54SaveBackupFile(backup);
-    const data = JSON.stringify(backup,null,2);
-    const filename = `marfan-crew-hours-backup-v54-${new Date().toISOString().slice(0,10)}.json`;
-    res.status(200);
-    res.setHeader('Content-Type','application/json; charset=utf-8');
-    res.setHeader('Content-Length', Buffer.byteLength(data));
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(data);
-  }catch(e){
-    console.error('backup download v54', e);
-    res.status(500).json({error:'No se pudo generar el backup'});
-  }
-});
-app.post('/api/backup/import-v54', requireAdmin, (req,res)=>{
-  try{
-    const result = v54RestoreBackupObject(req.body);
-    res.json({ok:true,...result});
-  }catch(e){ res.status(400).json({error:e.message}); }
-});
-app.get('/api/backup/list-v54', requireAdmin, (req,res)=>{
-  try{
-    const files = fs.readdirSync(v54BackupDir()).filter(f=>f.endsWith('.json')).map(f=>{
-      const p=path.join(v54BackupDir(),f); const st=fs.statSync(p);
-      return {filename:f,size_bytes:st.size,created_at:st.mtime.toISOString()};
-    }).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
-    res.json({ok:true,backups:files});
-  }catch(e){ res.json({ok:true,backups:[]}); }
-});
-app.post('/api/backup/save-v54', requireAdmin, (req,res)=>{
-  const saved = v54SaveBackupFile(v54CreateBackupObject());
-  res.json({ok:true,filename:saved.filename});
-});
-app.post('/api/backup/restore-v54', requireAdmin, (req,res)=>{
-  try{
-    const filename = String((req.body||{}).filename||'');
-    if(!filename || filename.includes('..') || filename.includes('/') || filename.includes('\\')) return res.status(400).json({error:'Archivo no válido'});
-    const p = path.join(v54BackupDir(), filename);
-    if(!fs.existsSync(p)) return res.status(404).json({error:'Backup no encontrado'});
-    const result = v54RestoreBackupObject(JSON.parse(fs.readFileSync(p,'utf8')));
-    res.json({ok:true,...result});
-  }catch(e){ res.status(400).json({error:e.message}); }
-});
-
-app.post('/api/users-v54', requireAdmin, (req,res)=>{
-  try{
-    v54EnsureUserColumns();
-    const b=req.body||{};
-    const photo = b.photo_data ? v54SaveDataUrl(b.photo_data, 'photo-'+(b.phone||Date.now())+'.jpg') : '';
-    const cols = db.prepare("PRAGMA table_info(users)").all().map(c=>c.name);
-    const data = {
-      first_name:b.first_name||'', last_name:b.last_name||'', phone:b.phone||'', email:b.email||'',
-      role:b.role||'operario', services:b.services||'', active:1, availability:'disponible',
-      photo_url:photo, dni:b.dni||'', address:b.address||'', city:b.city||'', postal_code:b.postal_code||'',
-      emergency_contact:b.emergency_contact||'', emergency_phone:b.emergency_phone||'', shirt_size:b.shirt_size||'',
-      shoe_size:b.shoe_size||'', bank_account:b.bank_account||''
-    };
-    const keys = Object.keys(data).filter(k=>cols.includes(k));
-    const stmt = db.prepare(`INSERT INTO users (${keys.map(k=>`"${k}"`).join(',')}) VALUES (${keys.map(()=>'?').join(',')})`);
-    const info = stmt.run(...keys.map(k=>data[k]));
-    res.json({ok:true,id:info.lastInsertRowid});
-  }catch(e){ console.error('users-v54',e); res.status(500).json({error:'No se pudo crear operario'}); }
-});
-
-app.get('/api/finance/events-v54', requireAdmin, (req,res)=>{
-  const from = req.query.from || '';
-  const to = req.query.to || '';
-  let sql = 'SELECT id FROM events WHERE 1=1';
-  const params=[];
-  if(from){ sql += ' AND event_date>=?'; params.push(from); }
-  if(to){ sql += ' AND event_date<=?'; params.push(to); }
-  sql += ' ORDER BY event_date DESC';
-  const ids = db.prepare(sql).all(...params);
-  const rows = ids.map(e=>auditEventFinancial(e.id)).filter(Boolean);
-  const totals = rows.reduce((a,r)=>{a.revenue+=Number(r.revenue||0);a.cost+=Number(r.totalCost||0);a.profit+=Number(r.profit||0);return a;},{revenue:0,cost:0,profit:0});
-  totals.margin = totals.revenue ? Math.round((totals.profit/totals.revenue)*10000)/100 : 0;
-  res.json({rows,totals});
-});
-
-app.post('/api/events/:id/complete-v54', requireAdmin, (req,res)=>{
-  const id = Number(req.params.id);
-  const event = db.prepare('SELECT * FROM events WHERE id=?').get(id);
-  if(!event) return res.status(404).json({error:'Evento no encontrado'});
-  try{ db.prepare("UPDATE events SET status='realizado', operational_status='finalizado' WHERE id=?").run(id); }catch(e){}
-  try{
-    const fin = auditEventFinancial(id) || {};
-    const existsClient = db.prepare("SELECT id FROM delivery_notes WHERE event_id=? AND title LIKE 'Albarán cliente%'").get(id);
-    if(!existsClient){
-      db.prepare("INSERT INTO delivery_notes (event_id,title,content,created_at,signed) VALUES (?,?,?,?,0)").run(
-        id, 'Albarán cliente · '+event.name, JSON.stringify({type:'cliente',event:event.name,date:event.event_date,location:event.location}), new Date().toISOString()
-      );
-    }
-    const existsInternal = db.prepare("SELECT id FROM delivery_notes WHERE event_id=? AND title LIKE 'Albarán interno%'").get(id);
-    if(!existsInternal){
-      db.prepare("INSERT INTO delivery_notes (event_id,title,content,created_at,signed) VALUES (?,?,?,?,0)").run(
-        id, 'Albarán interno financiero · '+event.name, JSON.stringify({type:'interno',revenue:fin.revenue||0,cost:fin.totalCost||0,profit:fin.profit||0,margin:fin.margin||0}), new Date().toISOString()
-      );
-    }
-  }catch(e){ console.error('complete-v54 notes',e.message); }
-  res.json({ok:true});
 });

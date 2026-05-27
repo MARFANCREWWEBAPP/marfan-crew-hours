@@ -153,14 +153,89 @@ Aparecerá:
 - Lista de backups online disponibles.
 - Restaurar cualquier backup guardado.
 
-# V54 Enterprise Full Ops Backup Pro
-- Backup con progreso y descarga automática.
-- Control diario KPIs compactos.
-- Calendario limpio + botón Google Calendar.
-- Eventos realizados: albarán con proceso visual.
-- Operarios avanzados con foto reescalada.
-- Tarifas completas restauradas.
-- GPS Live por colores.
-- Finanzas Pro con buscador por fechas y PDF A4.
-- Documentación en operario/jefe.
-- Ajustes ERP con backup persistente.
+
+# V55 Google Sync Full
+
+## Incluye
+- OAuth Google Calendar real.
+- Endpoint /auth/google.
+- Callback /auth/google/callback.
+- Estado de conexión Google.
+- Calendario visual tipo Google:
+  - Mes
+  - Semana
+  - Día
+- Exportar evento individual a Google.
+- Exportar todos los eventos activos.
+- Importar próximos eventos desde Google Calendar.
+- Guardado de tokens en SQLite.
+- Compatible con Railway Variables:
+  - GOOGLE_CLIENT_ID
+  - GOOGLE_CLIENT_SECRET
+  - GOOGLE_CALLBACK_URL
+
+## Redirect URI
+https://marfan-crew-hours-production-ef76.up.railway.app/auth/google/callback
+
+
+# V55.1 MARFAN Calendar Only
+
+## Cambio importante
+La sincronización Google Calendar queda limitada al calendario llamado:
+
+MARFAN
+
+## Variables opcionales en Railway
+GOOGLE_TARGET_CALENDAR_NAME=MARFAN
+
+Si quieres máxima precisión, puedes usar el ID exacto del calendario MARFAN:
+GOOGLE_TARGET_CALENDAR_ID=<id_del_calendario_marfan>
+
+## Comportamiento
+- Exportar eventos: solo al calendario MARFAN.
+- Importar eventos: solo desde el calendario MARFAN.
+- No aparecerán eventos de otros calendarios personales.
+
+
+# V55.2 Persistent Recovery Lock
+
+## Objetivo
+Que al actualizar la app NO desaparezcan:
+- Copias online.
+- Base de datos.
+- Configuración Google Calendar MARFAN.
+
+## Requisitos Railway
+Volume montado en:
+/data
+
+## Rutas internas
+- Backups online: /data/backups
+- Estado persistencia: /api/backup/status-v552
+- Listado robusto: /api/backup/list-online-v552
+- Guardar backup: /api/backup/save-online-v552
+- Restaurar backup: /api/backup/restore-online-v552
+
+## Google Calendar
+Mantiene por variables:
+- GOOGLE_CLIENT_ID
+- GOOGLE_CLIENT_SECRET
+- GOOGLE_CALLBACK_URL
+- GOOGLE_TARGET_CALENDAR_NAME=MARFAN
+
+
+# V55.3 Calendar Auto View
+
+## Cambio principal
+Se elimina la confusión del botón de vinculación dentro del calendario.
+
+## Comportamiento
+Al entrar en Calendario eventos:
+- Aparece directamente la vista tipo Google.
+- Carga eventos locales.
+- Si Google está conectado, carga también eventos del calendario MARFAN.
+- Al crear evento en la app, se exporta automáticamente al calendario MARFAN.
+- No se muestran eventos de otros calendarios.
+
+## Requisito
+GOOGLE_TARGET_CALENDAR_NAME=MARFAN

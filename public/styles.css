@@ -558,19 +558,97 @@ button.warn{background:#f59e0b;color:#111}
 }
 
 
-/* V54 Enterprise Full Ops */
-.v54-progress-back{position:fixed;inset:0;background:rgba(0,0,0,.55);display:grid;place-items:center;z-index:999999}
-.v54-progress-box{background:#fff;color:#111;border-radius:22px;padding:24px;max-width:460px;width:92%;box-shadow:0 20px 70px rgba(0,0,0,.35)}
-.v54-progress-bar{height:14px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin:12px 0}
-.v54-progress-fill{height:100%;background:#111;width:0%;transition:.15s}
-.v54-small-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;margin-bottom:14px}
-.v54-small-kpi{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:12px;box-shadow:0 3px 14px rgba(0,0,0,.045)}
-.v54-small-kpi .num{font-size:24px;font-weight:950}
-.v54-small-kpi .txt{font-size:12px;color:#667085;text-transform:uppercase;font-weight:850}
-.v54-gps-dot{display:inline-block;width:11px;height:11px;border-radius:999px;margin-right:6px}
-.v54-in{background:#16a34a}.v54-out{background:#dc2626}.v54-warn{background:#f59e0b}
-.v54-profile{display:grid;grid-template-columns:120px 1fr;gap:14px;align-items:start}
-.v54-photo{width:96px;height:96px;border-radius:18px;object-fit:cover;background:#eee;border:1px solid #ddd}
-.v54-doc-folder{border:1px solid #e5e7eb;border-radius:16px;padding:14px;margin:10px 0;background:#fff}
-.v54-google-btn{background:#4285f4!important;color:#fff!important}
-@media(max-width:700px){.v54-profile{grid-template-columns:1fr}.v54-small-kpis{grid-template-columns:1fr 1fr}}
+/* V55 Google Sync Full Calendar */
+.v55-google-panel{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+  align-items:center;
+}
+.v55-calendar-toolbar{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+  align-items:center;
+}
+.v55-view-tabs{
+  display:flex;
+  gap:6px;
+}
+.v55-view-tabs button.active{
+  background:#2563eb !important;
+}
+.v55-calendar-grid{
+  display:grid;
+  grid-template-columns:repeat(7,1fr);
+  gap:8px;
+}
+.v55-week-grid{
+  display:grid;
+  grid-template-columns:repeat(7,1fr);
+  gap:8px;
+}
+.v55-day-card{
+  min-height:132px;
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:16px;
+  padding:10px;
+  box-shadow:0 3px 12px rgba(0,0,0,.035);
+}
+.v55-day-card.other{opacity:.45}
+.v55-day-number{
+  font-weight:950;
+  font-size:13px;
+  margin-bottom:7px;
+}
+.v55-event{
+  display:block;
+  border-radius:10px;
+  padding:6px 7px;
+  margin:4px 0;
+  color:#fff;
+  background:#111;
+  font-size:11px;
+  cursor:pointer;
+  line-height:1.25;
+}
+.v55-event.google{background:#2563eb}
+.v55-event.done{background:#16a34a}
+.v55-event.cancel{background:#dc2626}
+.v55-day-view{
+  display:grid;
+  gap:8px;
+}
+.v55-hour{
+  display:grid;
+  grid-template-columns:70px 1fr;
+  border-bottom:1px solid #eee;
+  min-height:44px;
+}
+.v55-hour-time{
+  color:#667085;
+  font-size:12px;
+  padding-top:8px;
+}
+.v55-hour-events{
+  padding:4px;
+}
+@media(max-width:850px){
+  .v55-calendar-grid,.v55-week-grid{grid-template-columns:1fr}
+}
+
+
+/* V55.3 Calendar Auto View */
+.v553-sync-info{
+  padding:10px 12px;
+  border-radius:14px;
+  background:#eff6ff;
+  border:1px solid #bfdbfe;
+  color:#1e40af;
+  font-size:13px;
+  font-weight:800;
+}
+.v55-event.local{background:#111}
+.v55-event.google{background:#2563eb}

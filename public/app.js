@@ -2191,187 +2191,433 @@ async function refreshOnlineBackupsV533(){
 }
 
 
-// ---------- V54 ENTERPRISE FULL OPS UI ----------
-function v54Progress(title='Procesando...'){
-  let el=document.getElementById('v54Progress');
-  if(!el){
-    el=document.createElement('div');
-    el.id='v54Progress';
-    el.className='v54-progress-back';
-    el.innerHTML=`<div class="v54-progress-box"><h3 id="v54ProgressTitle"></h3><p id="v54ProgressText" class="muted"></p><div class="v54-progress-bar"><div id="v54ProgressFill" class="v54-progress-fill"></div></div><b id="v54ProgressPct">0%</b></div>`;
-    document.body.appendChild(el);
+// ---------- V55 GOOGLE SYNC FULL FRONTEND ----------
+let v55CalDate = new Date();
+let v55CalView = localStorage.getItem('v55CalView') || 'month';
+
+function v55DateKey(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function v55AddDays(d,n){
+  const x=new Date(d);
+  x.setDate(x.getDate()+n);
+  return x;
+}
+function v55StartOfWeek(d){
+  const x=new Date(d);
+  const day=(x.getDay()+6)%7;
+  x.setDate(x.getDate()-day);
+  return x;
+}
+function v55CalendarTitle(){
+  if(v55CalView==='day') return v55CalDate.toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  if(v55CalView==='week'){
+    const s=v55StartOfWeek(v55CalDate), e=v55AddDays(s,6);
+    return `${s.toLocaleDateString('es-ES',{day:'numeric',month:'short'})} - ${e.toLocaleDateString('es-ES',{day:'numeric',month:'short',year:'numeric'})}`;
   }
-  document.getElementById('v54ProgressTitle').innerText=title;
-  document.getElementById('v54ProgressText').innerText='Preparando...';
-  document.getElementById('v54ProgressFill').style.width='0%';
-  document.getElementById('v54ProgressPct').innerText='0%';
-  el.style.display='grid';
+  return v55CalDate.toLocaleDateString('es-ES',{month:'long',year:'numeric'});
 }
-function v54SetProgress(p,msg){
-  p=Math.max(0,Math.min(100,Math.round(p||0)));
-  const f=document.getElementById('v54ProgressFill'); if(f)f.style.width=p+'%';
-  const t=document.getElementById('v54ProgressPct'); if(t)t.innerText=p+'%';
-  const m=document.getElementById('v54ProgressText'); if(m)m.innerText=msg||'';
+function v55MoveCalendar(n){
+  if(v55CalView==='day') v55CalDate=v55AddDays(v55CalDate,n);
+  else if(v55CalView==='week') v55CalDate=v55AddDays(v55CalDate,n*7);
+  else v55CalDate=new Date(v55CalDate.getFullYear(), v55CalDate.getMonth()+n, 1);
+  viewCalendar();
 }
-function v54HideProgress(){const el=document.getElementById('v54Progress'); if(el)el.style.display='none'}
-function v54Toast(msg){ if(typeof v534Toast==='function') return v534Toast(msg); alert(msg); }
-
-function v54DownloadWithProgress(url, filename){
-  return new Promise((resolve,reject)=>{
-    v54Progress('Generando descarga');
-    const xhr = new XMLHttpRequest();
-    xhr.open('GET', url, true);
-    xhr.responseType='blob';
-    xhr.setRequestHeader('Authorization', token ? 'Bearer '+token : '');
-    xhr.onprogress = e=>{
-      if(e.lengthComputable) v54SetProgress((e.loaded/e.total)*100,'Descargando archivo...');
-      else v54SetProgress(45,'Generando archivo...');
-    };
-    xhr.onload = ()=>{
-      if(xhr.status>=200 && xhr.status<300){
-        v54SetProgress(100,'Descarga lista');
-        const blob=xhr.response;
-        const a=document.createElement('a');
-        const objectUrl=URL.createObjectURL(blob);
-        a.href=objectUrl;
-        a.download=filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(objectUrl);
-        setTimeout(()=>{v54HideProgress();v54Toast('Descarga completada correctamente')},800);
-        resolve();
-      }else{
-        v54HideProgress();
-        reject(new Error('Error descargando archivo'));
-      }
-    };
-    xhr.onerror=()=>{v54HideProgress();reject(new Error('Error de red'))};
-    xhr.send();
-  });
+function v55SetView(v){
+  v55CalView=v;
+  localStorage.setItem('v55CalView',v);
+  viewCalendar();
+}
+async function v55ConnectGoogle(){
+  location.href='/auth/google';
+}
+async function v55DisconnectGoogle(){
+  if(!confirm('¿Desconectar Google Calendar?')) return;
+  await api('/api/google/disconnect',{method:'POST'});
+  viewCalendar();
+}
+async function v55ExportAll(){
+  if(!confirm('¿Exportar a MARFANs los eventos activos a Google Calendar?')) return;
+  const r=await api('/api/google/export-all',{method:'POST'});
+  alert('Exportación terminada. Eventos procesados: '+(r.results||[]).length);
+  viewCalendar();
+}
+async function v55ImportGoogle(){
+  if(!confirm('¿Importar próximos eventos SOLO del calendario MARFAN?')) return;
+  const r=await api('/api/google/import-upcoming',{method:'POST'});
+  alert('Importados: '+(r.imported||[]).length);
+  viewCalendar();
+}
+async function v55ExportOne(id){
+  const r=await api('/api/google/export-event/'+id,{method:'POST'});
+  alert('Evento sincronizado con Google Calendar.');
+  if(r.htmlLink) window.open(r.htmlLink,'_blank');
 }
 
-async function downloadBackupV531(){
-  await v54DownloadWithProgress('/api/backup/download-v54', `marfan-crew-hours-backup-v54-${new Date().toISOString().slice(0,10)}.json`);
+function v55RenderMonth(events){
+  const first=new Date(v55CalDate.getFullYear(), v55CalDate.getMonth(), 1);
+  const start=v55StartOfWeek(first);
+  const days=[];
+  for(let i=0;i<42;i++) days.push(v55AddDays(start,i));
+  return `<div class="v55-calendar-grid">
+    ${days.map(day=>{
+      const key=v55DateKey(day);
+      const evs=events.filter(e=>e.event_date===key);
+      const other=day.getMonth()!==v55CalDate.getMonth();
+      return `<div class="v55-day-card ${other?'other':''}">
+        <div class="v55-day-number">${day.getDate()}</div>
+        ${evs.map(e=>`<span class="v55-event ${e.operational_status==='importado_google'?'google':''} ${e.status==='realizado'?'done':''} ${e.status==='cancelado'?'cancel':''}" onclick="openEventDetail(${e.id})">${esc(e.start_time||'')} ${esc(e.name||'Evento')}</span>`).join('')}
+      </div>`;
+    }).join('')}
+  </div>`;
 }
-async function saveOnlineBackupV533(){
-  v54Progress('Guardando backup online');
-  v54SetProgress(35,'Preparando datos...');
-  await api('/api/backup/save-v54',{method:'POST'});
-  v54SetProgress(100,'Backup guardado');
-  setTimeout(()=>{v54HideProgress();v54Toast('Backup online guardado correctamente');viewConfig()},700);
+function v55RenderWeek(events){
+  const start=v55StartOfWeek(v55CalDate);
+  const days=[0,1,2,3,4,5,6].map(i=>v55AddDays(start,i));
+  return `<div class="v55-week-grid">
+    ${days.map(day=>{
+      const key=v55DateKey(day);
+      const evs=events.filter(e=>e.event_date===key);
+      return `<div class="v55-day-card">
+        <div class="v55-day-number">${day.toLocaleDateString('es-ES',{weekday:'short',day:'numeric'})}</div>
+        ${evs.map(e=>`<span class="v55-event ${e.operational_status==='importado_google'?'google':''}" onclick="openEventDetail(${e.id})">${esc(e.start_time||'')} ${esc(e.name||'Evento')}</span>`).join('') || '<p class="muted">Sin eventos</p>'}
+      </div>`;
+    }).join('')}
+  </div>`;
 }
-async function refreshOnlineBackupsV533(){
-  const box=document.getElementById('onlineBackupsBox'); if(!box)return;
-  const d=await api('/api/backup/list-v54').catch(()=>({backups:[]}));
-  box.innerHTML=`<div class="v533-backup-list">${(d.backups||[]).map(b=>`<div class="v533-backup-item"><div><b>${esc(b.filename)}</b><br><span class="muted">${new Date(b.created_at).toLocaleString('es-ES')} · ${(b.size_bytes/1024).toFixed(1)} KB</span></div><button onclick="restoreOnlineBackupV533('${esc(b.filename).replace(/'/g,"\\'")}')">Restaurar</button></div>`).join('')||'<p class="muted">No hay backups guardados.</p>'}</div>`;
-}
-async function restoreOnlineBackupV533(filename){
-  if(!confirm('¿Restaurar backup '+filename+'?'))return;
-  v54Progress('Restaurando backup');
-  v54SetProgress(35,'Cargando archivo...');
-  await api('/api/backup/restore-v54',{method:'POST',body:JSON.stringify({filename})});
-  v54SetProgress(100,'Restaurado');
-  setTimeout(()=>location.reload(),900);
-}
-async function uploadBackupV531(ev){
-  const file=ev.target.files[0]; if(!file)return;
-  if(!confirm('Esto restaurará toda la información del backup. ¿Continuar?'))return;
-  v54Progress('Restaurando backup');
-  v54SetProgress(20,'Leyendo archivo...');
-  const text=await file.text();
-  v54SetProgress(55,'Importando datos...');
-  await api('/api/backup/import-v54',{method:'POST',body:text,headers:{'Content-Type':'application/json'}});
-  v54SetProgress(100,'Restaurado');
-  setTimeout(()=>location.reload(),900);
-}
-
-async function viewDailyControl(){
-  const data = await api('/api/control/daily').catch(()=>({assigned:0,checkins:0,checkouts:0,pending:0,rows:[]}));
-  $('#content').innerHTML=`
-    <div class="v54-small-kpis">
-      <div class="v54-small-kpi"><div class="txt">Operarios asignados</div><div class="num">${data.assigned||0}</div></div>
-      <div class="v54-small-kpi"><div class="txt">Entradas fichadas</div><div class="num">${data.checkins||0}</div></div>
-      <div class="v54-small-kpi"><div class="txt">Salidas</div><div class="num">${data.checkouts||0}</div></div>
-      <div class="v54-small-kpi"><div class="txt">Pendientes</div><div class="num">${data.pending||0}</div></div>
-    </div>
-    <div class="card"><h3>Control diario</h3><p class="muted">Resumen compacto estilo dashboard.</p></div>
-  `;
+function v55RenderDay(events){
+  const key=v55DateKey(v55CalDate);
+  const evs=events.filter(e=>e.event_date===key);
+  return `<div class="v55-day-view">
+    ${Array.from({length:24}).map((_,h)=>{
+      const hh=String(h).padStart(2,'0');
+      const hourEvents=evs.filter(e=>String(e.start_time||'').startsWith(hh+':'));
+      return `<div class="v55-hour">
+        <div class="v55-hour-time">${hh}:00</div>
+        <div class="v55-hour-events">${hourEvents.map(e=>`<span class="v55-event ${e.operational_status==='importado_google'?'google':''}" onclick="openEventDetail(${e.id})">${esc(e.start_time||'')} ${esc(e.name||'Evento')}</span>`).join('')}</div>
+      </div>`;
+    }).join('')}
+  </div>`;
 }
 
 async function viewCalendar(){
-  const events=await api('/api/events');
-  const clients=await api('/api/clients').catch(()=>[]);
-  const googleUrl='https://calendar.google.com/calendar/u/0/r/settings/export';
-  $('#content').innerHTML=`
+  const events = await api('/api/events');
+  const clients = await api('/api/clients').catch(()=>[]);
+  const googleStatus = await api('/api/google/status').catch(()=>({configured:false,connected:false}));
+
+  const body = v55CalView==='week' ? v55RenderWeek(events) : v55CalView==='day' ? v55RenderDay(events) : v55RenderMonth(events);
+
+  $('#content').innerHTML = `
     <div class="card">
-      <div class="v52-head"><div><h3>Calendario de eventos</h3></div><div class="actions"><a href="${googleUrl}" target="_blank"><button class="v54-google-btn">Vincular Google Calendar</button></a></div></div>
-      <p class="muted">La sincronización completa con inicio de sesión Google requiere OAuth/API. Este botón abre Google Calendar para vinculación/importación.</p>
+      <div class="v55-calendar-toolbar">
+        <div>
+          <h3>Calendario eventos</h3>
+          <p class="v52-sub">Vista tipo Google Calendar. Solo sincroniza con el calendario MARFAN.</p>
+        </div>
+        <div class="v55-google-panel">
+          ${googleStatus.connected
+            ? `<span class="status-badge status-ok">Google conectado</span><button class="secondary" onclick="v55DisconnectGoogle()">Desconectar</button>`
+            : `<span class="status-badge status-warn">Google no conectado</span><button onclick="v55ConnectGoogle()">Google MARFAN</button>`}
+          <button class="secondary" onclick="v55ImportGoogle()">Importar MARFAN</button>
+          <button class="secondary" onclick="v55ExportAll()">Exportar a MARFAN</button>
+        </div>
+      </div>
+      ${!googleStatus.configured ? '<p class="status-badge status-bad">Faltan variables GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_CALLBACK_URL en Railway.</p>' : ''}
     </div>
-    <div class="card"><h3>Crear evento rápido</h3><form id="eventForm" class="grid">
-      <input class="field" name="name" placeholder="Nombre evento" required>
-      <select class="field" name="client_id"><option value="">Cliente</option>${clients.map(c=>`<option value="${c.id}">${esc(c.name||c.legal_name||'Cliente')}</option>`).join('')}</select>
-      <input class="field" name="location" placeholder="Localización"><input class="field" name="event_date" type="date" value="${new Date().toISOString().slice(0,10)}"><input class="field" name="start_time" type="time"><input class="field" name="end_time" type="time"><button>Crear evento</button></form></div>
-    <div class="card"><table class="table"><thead><tr><th>Fecha</th><th>Evento</th><th>Cliente</th><th>Acciones</th></tr></thead><tbody>${events.map(e=>`<tr><td>${esc(e.event_date)}<br>${esc(e.start_time||'')}</td><td><b>${esc(e.name||'')}</b><br>${esc(e.location||'')}</td><td>${esc(e.client||'')}</td><td><button onclick="openEventDetail(${e.id})">Abrir</button><button onclick="finalizarEventoV54(${e.id})">Finalizar</button></td></tr>`).join('')}</tbody></table></div>`;
-  $('#eventForm').onsubmit=async e=>{e.preventDefault();await api('/api/events',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});v54Toast('Evento guardado');viewCalendar()};
-}
 
-async function finalizarEventoV54(id){
-  if(!confirm('¿Finalizar evento y generar albarán cliente + interno financiero?'))return;
-  await api('/api/events/'+id+'/complete-v54',{method:'POST'});
-  v54Toast('Evento finalizado y albaranes generados');
-}
+    <div class="card">
+      <h3>Crear evento rápido</h3>
+      <form id="eventForm" class="grid">
+        <input class="field" name="name" placeholder="Nombre evento" required>
+        <select class="field" name="client_id"><option value="">Cliente</option>${clients.map(c=>`<option value="${c.id}">${esc(c.name||c.legal_name||'Cliente')}</option>`).join('')}</select>
+        <input class="field" name="location" placeholder="Localización">
+        <input class="field" name="event_date" type="date" value="${v55DateKey(v55CalDate)}">
+        <input class="field" name="start_time" type="time" value="09:00">
+        <input class="field" name="end_time" type="time" value="10:00">
+        <button>Crear evento</button>
+      </form>
+    </div>
 
-async function viewRealizados(){
-  const events=(await api('/api/events')).filter(e=>e.status==='realizado');
-  $('#content').innerHTML=`<div class="card"><h3>Eventos realizados</h3><table class="table"><thead><tr><th>Fecha</th><th>Evento</th><th>Cliente</th><th>Albarán</th></tr></thead><tbody>${events.map(e=>`<tr><td>${esc(e.event_date)}</td><td>${esc(e.name)}</td><td>${esc(e.client||'')}</td><td><button onclick="downloadAlbaranV54(${e.id})">Albarán PDF</button></td></tr>`).join('')||'<tr><td>Sin eventos realizados.</td></tr>'}</tbody></table></div>`;
-}
-async function downloadAlbaranV54(id){
-  v54Progress('Generando albarán PDF');
-  v54SetProgress(35,'Preparando documento...');
-  openA4Window('Albarán evento', `<h1>Albarán evento</h1><p>Evento ID: ${id}</p><p>Formato A4 vertical.</p>`);
-  v54SetProgress(100,'Documento abierto');
-  setTimeout(()=>{v54HideProgress();v54Toast('Albarán generado correctamente')},800);
-}
-
-async function viewUsers(){
-  const users=await api('/api/users');
-  $('#content').innerHTML=`<div class="card"><h3>Crear operario avanzado</h3><form id="userForm" class="grid">
-    <input class="field" name="first_name" placeholder="Nombre"><input class="field" name="last_name" placeholder="Apellidos"><input class="field" name="dni" placeholder="DNI/NIE"><input class="field" name="phone" placeholder="Teléfono"><input class="field" name="email" placeholder="Email"><input class="field" name="address" placeholder="Dirección"><input class="field" name="city" placeholder="Ciudad"><input class="field" name="postal_code" placeholder="CP"><input class="field" name="emergency_contact" placeholder="Contacto emergencia"><input class="field" name="emergency_phone" placeholder="Teléfono emergencia"><input class="field" name="shirt_size" placeholder="Talla camiseta"><input class="field" name="shoe_size" placeholder="Talla calzado"><input class="field" name="bank_account" placeholder="IBAN"><select class="field" name="role"><option value="operario">Operario</option><option value="jefe">Jefe equipo</option></select><input class="field" name="services" placeholder="Servicios / cargo"><input class="field" id="userPhotoV54" type="file" accept="image/*"><button>Crear operario</button></form></div>
-    <div class="card"><h3>Operarios</h3>${users.filter(u=>u.role!=='admin').map(u=>`<div class="v54-profile"><img class="v54-photo" src="${u.photo_url||'/logo-marfan.png'}"><div><b>${esc(fullName(u))}</b><br>${esc(u.phone||'')} · ${esc(u.services||'')}<br><span class="muted">${esc(u.email||'')}</span></div></div><hr>`).join('')}</div>`;
-  $('#userForm').onsubmit=async e=>{
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div class="actions">
+          <button class="secondary" onclick="v55MoveCalendar(-1)">← Anterior</button>
+          <button onclick="v55CalDate=new Date();viewCalendar()">Hoy</button>
+          <button class="secondary" onclick="v55MoveCalendar(1)">Siguiente →</button>
+        </div>
+        <h2 style="text-transform:capitalize">${v55CalendarTitle()}</h2>
+        <div class="v55-view-tabs">
+          <button class="${v55CalView==='month'?'active':''}" onclick="v55SetView('month')">Mes</button>
+          <button class="${v55CalView==='week'?'active':''}" onclick="v55SetView('week')">Semana</button>
+          <button class="${v55CalView==='day'?'active':''}" onclick="v55SetView('day')">Día</button>
+        </div>
+      </div>
+      <br>
+      ${body}
+    </div>
+  `;
+  const f=$('#eventForm');
+  if(f) f.onsubmit=async e=>{
     e.preventDefault();
-    const payload=Object.fromEntries(new FormData(e.target));
-    const file=document.getElementById('userPhotoV54').files[0];
-    if(file) payload.photo_data=await resizeImageV54(file, 480, 0.78);
-    await api('/api/users-v54',{method:'POST',body:JSON.stringify(payload)});
-    v54Toast('Operario guardado');
-    viewUsers();
+    const created = await api('/api/events',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});
+    if(confirm('Evento creado. ¿Quieres exportarlo a Google Calendar ahora?')){
+      try { await v55ExportOne(created.id || created.event_id); } catch(err){ alert('Evento creado, pero no se pudo exportar: '+err.message); }
+    }
+    viewCalendar();
   };
 }
-function resizeImageV54(file,max=480,quality=.78){
-  return new Promise((resolve,reject)=>{
-    const img=new Image(); const r=new FileReader();
-    r.onload=()=>{img.onload=()=>{const c=document.createElement('canvas');let w=img.width,h=img.height;if(w>h&&w>max){h=Math.round(h*max/w);w=max}else if(h>=w&&h>max){w=Math.round(w*max/h);h=max}c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);resolve(c.toDataURL('image/jpeg',quality));};img.src=r.result};
-    r.onerror=reject; r.readAsDataURL(file);
+
+
+// ---------- V55.2 PERSISTENT RECOVERY UI ----------
+async function downloadBackupV531(){
+  const res = await fetch('/api/backup/export-v552', {
+    method:'GET',
+    headers:{ Authorization: token ? 'Bearer '+token : '' }
   });
+  if(!res.ok){
+    alert('No se pudo descargar la copia de seguridad.');
+    return;
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `marfan-crew-hours-backup-${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
-async function viewRates(){
-  const rates=await api('/api/rates');
-  $('#content').innerHTML=`<div class="card"><h3>Tarifas completas</h3><p class="muted">Tipos de trabajo precargados para uso diario.</p></div><div class="card"><table class="table"><thead><tr><th>Trabajo</th><th>D</th><th>N</th><th>Dieta</th></tr></thead><tbody>${rates.map(r=>`<tr><td><b>${esc(r.role||'')}</b></td><td>${v53Money(r.hourly_rate||0)}</td><td>${v53Money(r.night_rate||0)}</td><td>${v53Money(r.diet||0)}</td></tr>`).join('')}</tbody></table></div>`;
+async function uploadBackupV531(ev){
+  const file = ev.target.files[0];
+  if(!file) return;
+  if(!confirm('ATENCIÓN: vas a restaurar una copia completa. Esto reemplazará los datos actuales. ¿Confirmas?')) return;
+  const text = await file.text();
+  let data;
+  try { data = JSON.parse(text); } catch(e){ alert('Archivo JSON no válido'); return; }
+  const r = await api('/api/backup/import-v552',{method:'POST',body:JSON.stringify(data)});
+  alert(`Copia restaurada.\nTablas importadas: ${r.imported.length}\nSaltadas: ${r.skipped.length}`);
+  location.reload();
 }
 
-async function viewGpsLive(radius=Number(localStorage.getItem('gpsRadius')||300)){
-  localStorage.setItem('gpsRadius',radius);
-  const date=new Date().toISOString().slice(0,10);
-  const data=await api('/api/gps/live?date='+date+'&radius='+radius);
-  $('#content').innerHTML=`<div class="card"><h3>GPS Live</h3><div class="v53-radio-row">${[50,100,200,300,500].map(r=>`<button class="${Number(radius)===r?'active':''}" onclick="viewGpsLive(${r})">${r}m</button>`).join('')}</div></div><div class="card"><table class="table"><thead><tr><th>Operario</th><th>Evento</th><th>Estado</th><th>Distancia</th></tr></thead><tbody>${data.rows.map(r=>`<tr><td><span class="v54-gps-dot ${r.gps_status==='en_evento'?'v54-in':r.gps_status==='fuera_radio'?'v54-out':'v54-warn'}"></span><b>${esc((r.first_name||'')+' '+(r.last_name||''))}</b></td><td>${esc(r.event_name||'')}</td><td>${esc(r.gps_status||'')}</td><td>${r.distance_m??'—'} m</td></tr>`).join('')||'<tr><td>Sin datos</td></tr>'}</tbody></table></div>`;
+async function saveOnlineBackupV533(){
+  const r = await api('/api/backup/save-online-v552',{method:'POST'});
+  alert('Backup guardado en volumen persistente: '+r.filename);
+  refreshOnlineBackupsV533();
 }
 
-async function viewFinancePro(){
-  const from=document.getElementById('finFrom')?.value||''; const to=document.getElementById('finTo')?.value||'';
-  const data=await api('/api/finance/events-v54?from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to));
-  $('#content').innerHTML=`<div class="card"><h3>Finanzas Pro</h3><div class="grid"><input class="field" id="finFrom" type="date" value="${esc(from)}"><input class="field" id="finTo" type="date" value="${esc(to)}"><button onclick="viewFinancePro()">Buscar por fechas</button></div></div><div class="card"><table class="table"><thead><tr><th>Evento</th><th>Ingresos</th><th>Costes</th><th>Beneficio</th><th>PDF</th></tr></thead><tbody>${data.rows.map(r=>`<tr><td>${esc(r.event.name)}</td><td>${v53Money(r.revenue)}</td><td>${v53Money(r.totalCost)}</td><td>${v53Money(r.profit)}</td><td><button onclick="printFinancePdfV54(${r.event.id})">PDF A4</button></td></tr>`).join('')}</tbody></table></div>`;
+async function restoreOnlineBackupV533(filename){
+  if(!confirm(`Restaurar backup online:\n${filename}\n\n¿Confirmas?`)) return;
+  const r = await api('/api/backup/restore-online-v552',{method:'POST',body:JSON.stringify({filename})});
+  alert(`Backup restaurado.\nTablas importadas: ${r.imported.length}\nSaltadas: ${r.skipped.length}`);
+  location.reload();
 }
-function printFinancePdfV54(id){openA4Window('Finanzas evento',`<h1>Informe financiero A4</h1><p>Evento ID: ${id}</p>`)}
+
+async function refreshOnlineBackupsV533(){
+  const box = document.getElementById('onlineBackupsBox');
+  if(!box) return;
+  try{
+    const status = await api('/api/backup/status-v552');
+    const d = await api('/api/backup/list-online-v552');
+    box.innerHTML = `
+      <div class="v533-backup-item">
+        <div>
+          <b>Estado persistencia</b><br>
+          <span class="muted">Datos: ${esc(status.data_dir)} · Backups: ${esc(status.backup_dir)}</span><br>
+          <span class="${status.persistent_mounted?'status-badge status-ok':'status-badge status-bad'}">${esc(status.message)}</span><br>
+          <span class="muted">Calendario Google objetivo: ${esc(status.google_target_calendar_name || 'MARFAN')}</span>
+        </div>
+      </div>
+      <div class="v533-backup-list">${
+        d.backups.map(b=>`
+          <div class="v533-backup-item">
+            <div>
+              <b>${esc(b.filename)}</b><br>
+              <span class="muted">${new Date(b.created_at).toLocaleString('es-ES')} · ${(b.size_bytes/1024).toFixed(1)} KB</span><br>
+              <span class="muted">Ruta: ${esc(b.path || d.backup_dir || '')}</span>
+            </div>
+            <button onclick="restoreOnlineBackupV533('${esc(b.filename).replace(/'/g,"\\'")}')">Restaurar</button>
+          </div>
+        `).join('') || '<p class="muted">No hay backups online en el volumen persistente. Pulsa “Guardar backup online ahora”.</p>'
+      }</div>`;
+  }catch(e){
+    box.innerHTML = '<p class="status-badge status-bad">No se pudieron listar backups: '+esc(e.message)+'</p>';
+  }
+}
+
+async function viewConfig(){
+  let settings = {};
+  try { settings = await api('/api/settings'); } catch(e) {}
+  $('#content').innerHTML = `
+    <div class="card">
+      <h3>Ajustes generales</h3>
+      <form id="settingsForm" class="grid">
+        <input class="field" name="company_name" value="${esc(settings.company_name||settings.company||'MARFAN CREW')}" placeholder="Empresa">
+        <input class="field" name="vat" value="${esc(settings.vat||21)}" placeholder="IVA">
+        <input class="field" name="geo_check_radius_m" value="${esc(settings.geo_check_radius_m||settings.gpsRadius||300)}" placeholder="Radio GPS">
+        <button>Guardar ajustes</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Copia de seguridad completa</h3>
+      <p class="muted">La lista se lee desde /data/backups. Si al actualizar no aparece, es que Railway no está montando bien el Volume en /data.</p>
+      <div class="actions">
+        <button onclick="downloadBackupV531()">Descargar backup JSON</button>
+        <label class="secondary" style="display:inline-block;padding:12px 16px;border-radius:11px;font-weight:900;cursor:pointer">
+          Cargar backup JSON
+          <input id="backupFileV531" type="file" accept=".json" style="display:none" onchange="uploadBackupV531(event)">
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Backups online persistentes</h3>
+      <p class="muted">Estos backups permanecen entre versiones SI el Volume está montado en /data.</p>
+      <div class="actions">
+        <button onclick="saveOnlineBackupV533()">Guardar backup online ahora</button>
+        <button class="secondary" onclick="refreshOnlineBackupsV533()">Actualizar lista</button>
+      </div>
+      <div id="onlineBackupsBox" style="margin-top:14px"></div>
+    </div>
+  `;
+  const f=$('#settingsForm');
+  if(f) f.onsubmit=async e=>{
+    e.preventDefault();
+    await api('/api/settings',{method:'PUT',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});
+    alert('Ajustes guardados.');
+  };
+  refreshOnlineBackupsV533();
+}
+
+
+// ---------- V55.3 CALENDAR AUTO VIEW - NO CONFUSION BUTTON ----------
+async function viewCalendar(){
+  const localEvents = await api('/api/events');
+  const clients = await api('/api/clients').catch(()=>[]);
+  const googleStatus = await api('/api/google/status').catch(()=>({configured:false,connected:false,target_calendar_name:'MARFAN'}));
+  const googleData = await api('/api/google/marfan-events').catch(()=>({connected:false,events:[],message:'Sin conexión Google'}));
+
+  const googleEvents = googleData.events || [];
+  const events = [
+    ...localEvents.map(e=>({...e, source:'local'})),
+    ...googleEvents
+  ];
+
+  const body = v55CalView==='week' ? v55RenderWeekAuto(events) : v55CalView==='day' ? v55RenderDayAuto(events) : v55RenderMonthAuto(events);
+
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div>
+          <h3>Calendario eventos · MARFAN</h3>
+          <p class="v52-sub">Vista tipo Google Calendar sincronizada automáticamente con el calendario MARFAN.</p>
+        </div>
+        <div class="v55-google-panel">
+          ${googleStatus.connected
+            ? `<span class="status-badge status-ok">Google MARFAN conectado</span>`
+            : `<span class="status-badge status-warn">Google no conectado</span>`}
+          <button class="secondary" onclick="v55ImportGoogle()">Importar MARFAN</button>
+          <button class="secondary" onclick="v55ExportAll()">Exportar a MARFAN</button>
+        </div>
+      </div>
+      <div class="v553-sync-info">
+        ${googleStatus.connected
+          ? `Mostrando eventos locales + eventos del calendario Google “MARFAN”.`
+          : `Para sincronizar con Google MARFAN, primero conecta OAuth en Variables Railway y entra una vez a /auth/google.`}
+      </div>
+      ${!googleStatus.configured ? '<br><p class="status-badge status-bad">Faltan variables GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_CALLBACK_URL en Railway.</p>' : ''}
+    </div>
+
+    <div class="card">
+      <h3>Crear evento rápido</h3>
+      <form id="eventForm" class="grid">
+        <input class="field" name="name" placeholder="Nombre evento" required>
+        <select class="field" name="client_id"><option value="">Cliente</option>${clients.map(c=>`<option value="${c.id}">${esc(c.name||c.legal_name||'Cliente')}</option>`).join('')}</select>
+        <input class="field" name="location" placeholder="Localización">
+        <input class="field" name="event_date" type="date" value="${v55DateKey(v55CalDate)}">
+        <input class="field" name="start_time" type="time" value="09:00">
+        <input class="field" name="end_time" type="time" value="10:00">
+        <button>Crear evento</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div class="actions">
+          <button class="secondary" onclick="v55MoveCalendar(-1)">← Anterior</button>
+          <button onclick="v55CalDate=new Date();viewCalendar()">Hoy</button>
+          <button class="secondary" onclick="v55MoveCalendar(1)">Siguiente →</button>
+        </div>
+        <h2 style="text-transform:capitalize">${v55CalendarTitle()}</h2>
+        <div class="v55-view-tabs">
+          <button class="${v55CalView==='month'?'active':''}" onclick="v55SetView('month')">Mes</button>
+          <button class="${v55CalView==='week'?'active':''}" onclick="v55SetView('week')">Semana</button>
+          <button class="${v55CalView==='day'?'active':''}" onclick="v55SetView('day')">Día</button>
+        </div>
+      </div>
+      <br>
+      ${body}
+    </div>
+  `;
+
+  const f=$('#eventForm');
+  if(f) f.onsubmit=async e=>{
+    e.preventDefault();
+    const created = await api('/api/events',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});
+    if(googleStatus.connected){
+      try { await v55ExportOne(created.id || created.event_id); } 
+      catch(err){ alert('Evento creado, pero no se pudo exportar a MARFAN: '+err.message); }
+    }
+    viewCalendar();
+  };
+}
+
+function v55RenderMonthAuto(events){
+  const first=new Date(v55CalDate.getFullYear(), v55CalDate.getMonth(), 1);
+  const start=v55StartOfWeek(first);
+  const days=[];
+  for(let i=0;i<42;i++) days.push(v55AddDays(start,i));
+  return `<div class="v55-calendar-grid">
+    ${days.map(day=>{
+      const key=v55DateKey(day);
+      const evs=events.filter(e=>e.event_date===key);
+      const other=day.getMonth()!==v55CalDate.getMonth();
+      return `<div class="v55-day-card ${other?'other':''}">
+        <div class="v55-day-number">${day.getDate()}</div>
+        ${evs.map(e=>`<span class="v55-event ${e.source==='google'?'google':'local'} ${e.status==='realizado'?'done':''} ${e.status==='cancelado'?'cancel':''}" onclick="${e.source==='google' && e.htmlLink ? `window.open('${e.htmlLink}','_blank')` : `openEventDetail(${e.id})`}">${e.source==='google'?'🔵':'⚫'} ${esc(e.start_time||'')} ${esc(e.name||'Evento')}</span>`).join('')}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function v55RenderWeekAuto(events){
+  const start=v55StartOfWeek(v55CalDate);
+  const days=[0,1,2,3,4,5,6].map(i=>v55AddDays(start,i));
+  return `<div class="v55-week-grid">
+    ${days.map(day=>{
+      const key=v55DateKey(day);
+      const evs=events.filter(e=>e.event_date===key);
+      return `<div class="v55-day-card">
+        <div class="v55-day-number">${day.toLocaleDateString('es-ES',{weekday:'short',day:'numeric'})}</div>
+        ${evs.map(e=>`<span class="v55-event ${e.source==='google'?'google':'local'}" onclick="${e.source==='google' && e.htmlLink ? `window.open('${e.htmlLink}','_blank')` : `openEventDetail(${e.id})`}">${e.source==='google'?'🔵':'⚫'} ${esc(e.start_time||'')} ${esc(e.name||'Evento')}</span>`).join('') || '<p class="muted">Sin eventos</p>'}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function v55RenderDayAuto(events){
+  const key=v55DateKey(v55CalDate);
+  const evs=events.filter(e=>e.event_date===key);
+  return `<div class="v55-day-view">
+    ${Array.from({length:24}).map((_,h)=>{
+      const hh=String(h).padStart(2,'0');
+      const hourEvents=evs.filter(e=>String(e.start_time||'').startsWith(hh+':'));
+      return `<div class="v55-hour">
+        <div class="v55-hour-time">${hh}:00</div>
+        <div class="v55-hour-events">${hourEvents.map(e=>`<span class="v55-event ${e.source==='google'?'google':'local'}" onclick="${e.source==='google' && e.htmlLink ? `window.open('${e.htmlLink}','_blank')` : `openEventDetail(${e.id})`}">${e.source==='google'?'🔵':'⚫'} ${esc(e.start_time||'')} ${esc(e.name||'Evento')}</span>`).join('')}</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}

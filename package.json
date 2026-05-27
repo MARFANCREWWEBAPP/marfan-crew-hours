@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "54.0.0",
-  "description": "Marfan Crew Hours V54 Enterprise Full Ops Backup Pro",
+  "version": "55.3.0",
+  "description": "Marfan Crew Hours V55.3 - Calendar Auto View",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -10,7 +10,8 @@
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^9.6.0",
     "express": "^4.19.2",
-    "express-session": "^1.18.0"
+    "express-session": "^1.18.0",
+    "googleapis": "^144.0.0"
   },
   "engines": {
     "node": ">=18"
