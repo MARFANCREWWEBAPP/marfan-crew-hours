@@ -4235,3 +4235,214 @@ async function viewCalendar(){
     </div>
   `;
 }
+
+
+// ---------- V56.6 V46 EVENT MODAL + TARIFAS ROLES PRO FRONTEND ----------
+let v566RatesCache = [];
+
+async function loadRatesV566(){
+  v566RatesCache = await api('/api/rates-pro').catch(()=>[]);
+  return v566RatesCache;
+}
+
+function rateOptionsV566(){
+  return v566RatesCache.map(r=>`<option value="${r.id}" data-day="${Number(r.hourly_rate||0)}" data-night="${Number(r.night_rate||0)}" data-diet="${Number(r.diet||0)}" data-role="${esc(r.role||r.name||'')}">${esc(r.role||r.name||'')}</option>`).join('');
+}
+
+function calcRoleLineV566(row){
+  const sel = row.querySelector('[name="rate_id"]');
+  const opt = sel.options[sel.selectedIndex];
+  const type = row.querySelector('[name="rate_type"]').value;
+  const qty = Number(row.querySelector('[name="quantity"]').value||1);
+  const hours = Number(row.querySelector('[name="hours"]').value||4);
+  const price = type === 'N' ? Number(opt.dataset.night||0) : Number(opt.dataset.day||0);
+  const diet = Number(opt.dataset.diet||0);
+  row.querySelector('[name="unit_price"]').value = price.toFixed(2);
+  row.querySelector('[name="diet"]').value = diet.toFixed(2);
+  row.querySelector('.line-total-v566').innerHTML = ((qty*hours*price)+(qty*diet)).toFixed(2)+' €';
+}
+
+function addRoleLineV566(){
+  const box = $('#roleLinesV566');
+  const div = document.createElement('div');
+  div.className = 'role-line-v566';
+  div.innerHTML = `
+    <select class="field" name="rate_id" onchange="calcRoleLineV566(this.closest('.role-line-v566'))">${rateOptionsV566()}</select>
+    <input class="field" name="quantity" type="number" value="1" min="1" onchange="calcRoleLineV566(this.closest('.role-line-v566'))" placeholder="Ud.">
+    <input class="field" name="hours" type="number" value="4" step="0.25" min="4" onchange="calcRoleLineV566(this.closest('.role-line-v566'))" placeholder="Horas">
+    <select class="field" name="rate_type" onchange="calcRoleLineV566(this.closest('.role-line-v566'))"><option value="D">D</option><option value="N">N</option></select>
+    <input class="field" name="unit_price" readonly placeholder="€/h">
+    <input class="field" name="diet" readonly placeholder="Dieta">
+    <div><b class="line-total-v566">0 €</b><br><button type="button" class="danger" onclick="this.closest('.role-line-v566').remove()">Quitar</button></div>
+  `;
+  box.appendChild(div);
+  calcRoleLineV566(div);
+}
+
+async function openCreateEventV559(){
+  await loadRatesV566();
+
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal v46-event-modal-v566">
+        <div class="modal-head">
+          <h2>Crear evento</h2>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+
+        <form id="eventFormV566" class="v46-event-form-v566">
+
+          <div class="v46-event-block-v566">
+            <h4>1. Datos del evento</h4>
+            <div class="v46-grid-v566">
+              <input class="field span-6" name="name" placeholder="Nombre del evento" required>
+              <input class="field span-3" name="event_code" placeholder="Referencia">
+              <select class="field span-3" name="status"><option value="programado">Programado</option><option value="confirmado">Confirmado</option><option value="pendiente">Pendiente</option><option value="realizado">Realizado</option></select>
+              <input class="field span-4" name="client" placeholder="Cliente">
+              <input class="field span-4" name="legal_name" placeholder="Razón social">
+              <input class="field span-4" name="cif" placeholder="CIF/NIF">
+            </div>
+          </div>
+
+          <div class="v46-event-block-v566">
+            <h4>2. Responsable y contacto</h4>
+            <div class="v46-grid-v566">
+              <input class="field span-4" name="contact_name" placeholder="Responsable del evento">
+              <input class="field span-3" name="contact_phone" placeholder="Teléfono">
+              <input class="field span-5" name="contact_email" placeholder="Email">
+            </div>
+          </div>
+
+          <div class="v46-event-block-v566">
+            <h4>3. Fecha, horarios y ubicación</h4>
+            <div class="v46-grid-v566">
+              <input class="field span-3" name="event_date" type="date" value="${v55DateKey ? v55DateKey(v55CalDate || new Date()) : new Date().toISOString().slice(0,10)}" required>
+              <input class="field span-2" name="start_time" type="time" value="09:00">
+              <input class="field span-2" name="end_time" type="time" value="10:00">
+              <input class="field span-2" name="load_in_time" type="time" title="Hora entrada">
+              <input class="field span-3" name="load_out_time" type="time" title="Hora salida">
+              <input class="field span-5" name="location" placeholder="Recinto / ubicación">
+              <input class="field span-7" name="address" placeholder="Dirección completa">
+              <input class="field span-6" name="access_notes" placeholder="Accesos / carga y descarga">
+              <input class="field span-6" name="parking_notes" placeholder="Parking / vehículos">
+            </div>
+          </div>
+
+          <div class="v46-event-block-v566">
+            <h4>4. Personal y tarifas automáticas</h4>
+            <p class="muted">El precio se toma automáticamente del tipo de operario configurado en Tarifas, como en V46.</p>
+            <div id="roleLinesV566"></div>
+            <button type="button" onclick="addRoleLineV566()">+ Añadir tipo de operario</button>
+          </div>
+
+          <div class="v46-event-block-v566">
+            <h4>5. Producción y operación</h4>
+            <div class="v46-grid-v566">
+              <input class="field span-4" name="service_type" placeholder="Tipo de servicio">
+              <input class="field span-4" name="required_workers" type="number" placeholder="Operarios necesarios">
+              <input class="field span-4" name="required_team_leads" type="number" value="1" placeholder="Jefes de equipo">
+              <input class="field span-6" name="material_notes" placeholder="Material / técnica">
+              <input class="field span-6" name="crew_notes" placeholder="Notas para crew">
+              <textarea class="field span-12" name="production_notes" placeholder="Notas producción"></textarea>
+            </div>
+          </div>
+
+          <div class="v46-event-block-v566">
+            <h4>6. Facturación y costes</h4>
+            <div class="v46-grid-v566">
+              <select class="field span-3" name="payment_status"><option value="pendiente">Pendiente</option><option value="facturado">Facturado</option><option value="cobrado">Cobrado</option><option value="impagado">Impagado</option></select>
+              <input class="field span-3" name="estimated_external_cost" type="number" step="0.01" placeholder="Coste externo">
+              <input class="field span-3" name="estimated_transport_cost" type="number" step="0.01" placeholder="Transporte">
+              <input class="field span-3" name="estimated_other_cost" type="number" step="0.01" placeholder="Otros">
+            </div>
+          </div>
+
+          <div class="v46-event-block-v566">
+            <h4>7. Notas internas</h4>
+            <textarea class="field span-12" name="notes" placeholder="Notas internas del evento"></textarea>
+          </div>
+
+          <div class="event-actions-v559">
+            <button type="button" class="secondary" onclick="closeWizard()">Cancelar</button>
+            <button>Guardar evento</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  addRoleLineV566();
+
+  $('#eventFormV566').onsubmit = async e => {
+    e.preventDefault();
+    const payload = Object.fromEntries(new FormData(e.target));
+    const created = await api('/api/events',{method:'POST',body:JSON.stringify(payload)});
+    const eventId = created.id || created.event_id || created.lastInsertRowid;
+
+    const lines = [...document.querySelectorAll('.role-line-v566')];
+    for(const row of lines){
+      const sel = row.querySelector('[name="rate_id"]');
+      const opt = sel.options[sel.selectedIndex];
+      await api('/api/event-role-lines',{
+        method:'POST',
+        body:JSON.stringify({
+          event_id:eventId,
+          rate_id:Number(sel.value),
+          role_name:opt.dataset.role,
+          quantity:Number(row.querySelector('[name="quantity"]').value||1),
+          hours:Number(row.querySelector('[name="hours"]').value||4),
+          rate_type:row.querySelector('[name="rate_type"]').value,
+          unit_price:Number(row.querySelector('[name="unit_price"]').value||0),
+          diet:Number(row.querySelector('[name="diet"]').value||0)
+        })
+      });
+    }
+
+    if(typeof v534Toast === 'function') v534Toast('Evento creado correctamente');
+    try { await api('/api/google/export-event-v563/'+eventId,{method:'POST'}); } catch(err){}
+    closeWizard();
+    viewCalendar();
+  };
+}
+
+async function viewRates(){
+  const rates = await api('/api/rates-pro').catch(()=>[]);
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="v52-head">
+        <div>
+          <h3>Tarifas y roles de operarios</h3>
+          <p class="muted">Roles claros para administración. Estos precios se usan automáticamente al crear eventos.</p>
+        </div>
+        <button class="secondary" onclick="resetRatesV566()">Restaurar roles V46 Pro</button>
+      </div>
+      <div class="v53-rate-help">
+        <div class="v53-help-chip"><b>D</b>Tarifa diurna</div>
+        <div class="v53-help-chip"><b>N</b>Tarifa nocturna</div>
+        <div class="v53-help-chip"><b>Dieta</b>Importe por operario</div>
+        <div class="v53-help-chip"><b>Activo</b>Disponible al crear evento</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <table class="table">
+        <thead><tr><th>Rol administración</th><th>Descripción</th><th>D / Diurno</th><th>N / Nocturno</th><th>Dieta</th><th>Estado</th></tr></thead>
+        <tbody>${rates.map(r=>`
+          <tr>
+            <td><b>${esc(r.role||r.name||'')}</b></td>
+            <td>${esc(r.notes||'')}</td>
+            <td>${Number(r.hourly_rate||0).toFixed(2)} €</td>
+            <td>${Number(r.night_rate||0).toFixed(2)} €</td>
+            <td>${Number(r.diet||0).toFixed(2)} €</td>
+            <td>${Number(r.active)!==0?'<span class="status-badge status-ok">Activo</span>':'<span class="status-badge status-bad">Inactivo</span>'}</td>
+          </tr>
+        `).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+async function resetRatesV566(){
+  if(!confirm('¿Restaurar roles/tarifas profesionales por defecto?')) return;
+  await api('/api/rates-pro/seed',{method:'POST'});
+  viewRates();
+}

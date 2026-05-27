@@ -1029,3 +1029,46 @@ button.warn{background:#f59e0b;color:#111}
   padding:10px;
   border-radius:10px;
 }
+
+
+/* V56.6 V46 Event Modal + Tarifas Roles Pro */
+.v46-event-modal-v566{max-width:1240px!important}
+.v46-event-form-v566{display:grid;gap:16px}
+.v46-event-block-v566{
+  background:#f8fafc;
+  border:1px solid #e5e7eb;
+  border-radius:18px;
+  padding:16px;
+}
+.v46-event-block-v566 h4{
+  margin:0 0 12px 0;
+  font-size:15px;
+  font-weight:950;
+}
+.v46-grid-v566{
+  display:grid;
+  grid-template-columns:repeat(12,minmax(0,1fr));
+  gap:14px;
+}
+.role-line-v566{
+  display:grid;
+  grid-template-columns:3fr 1fr 1fr 1fr 1fr 1fr auto;
+  gap:8px;
+  align-items:center;
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:14px;
+  padding:10px;
+  margin-top:8px;
+}
+.rate-admin-grid-v566{
+  display:grid;
+  grid-template-columns:2.2fr 1fr 1fr 1fr 1.5fr auto;
+  gap:8px;
+  align-items:center;
+}
+@media(max-width:980px){
+  .v46-grid-v566{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .role-line-v566,.rate-admin-grid-v566{grid-template-columns:1fr}
+  .span-12,.span-9,.span-8,.span-6,.span-4,.span-3,.span-2{grid-column:span 2!important}
+}

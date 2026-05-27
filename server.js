@@ -3134,7 +3134,7 @@ function v552CreateBackupObject() {
   const backup = {
     meta: {
       app: 'Marfan Crew Hours',
-      version: '56.5.0',
+      version: '56.6.0',
       exported_at: new Date().toISOString(),
       data_dir: V552_DATA_DIR,
       backup_dir: V552_BACKUP_DIR,
@@ -4202,6 +4202,125 @@ app.post('/api/google/force-sync-v565', requireAdmin, async (req,res)=>{
     console.error('force-sync-v565', e);
     res.status(500).json({ ok:false, error:e.message });
   }
+});
+
+
+// ---------- V56.6 TARIFAS ROLES PRO + EVENT V46 SUPPORT ----------
+function v566EnsureRateColumns() {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS rates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        role TEXT,
+        name TEXT,
+        hourly_rate REAL DEFAULT 0,
+        night_rate REAL DEFAULT 0,
+        diet REAL DEFAULT 0,
+        active INTEGER DEFAULT 1,
+        notes TEXT DEFAULT '',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+  } catch(e) {}
+  try {
+    addColumn('rates','role TEXT DEFAULT ""');
+    addColumn('rates','name TEXT DEFAULT ""');
+    addColumn('rates','hourly_rate REAL DEFAULT 0');
+    addColumn('rates','night_rate REAL DEFAULT 0');
+    addColumn('rates','diet REAL DEFAULT 0');
+    addColumn('rates','active INTEGER DEFAULT 1');
+    addColumn('rates','notes TEXT DEFAULT ""');
+  } catch(e) {}
+}
+
+function v566SeedDefaultRates() {
+  v566EnsureRateColumns();
+  const count = db.prepare('SELECT COUNT(*) c FROM rates').get().c;
+  if (count > 0) return;
+  const rows = [
+    ['Operario de carga y descarga','Carga/descarga, apoyo general, movimiento de material',18.50,23.50,15],
+    ['Técnico de sonido','Montaje, ajuste y operación de sonido',25.00,30.00,15],
+    ['Técnico de iluminación','Montaje, direccionamiento y operación de iluminación',25.00,30.00,15],
+    ['Técnico de vídeo / LED','Montaje, procesado y operación de pantalla LED/vídeo',28.00,34.00,15],
+    ['Jefe de equipo','Coordinación de crew, trato con cliente y cierre de servicio',30.00,38.00,15],
+    ['Runner / conductor','Traslados, recados de producción y apoyo logístico',18.50,23.50,15],
+    ['Carretillero','Operario con carretilla elevadora',24.00,30.00,15],
+    ['Operador plataforma elevadora','Operador de plataforma/cherry picker',24.00,30.00,15],
+    ['Montador de escenario','Montaje de tarimas, estructuras y apoyo escénico',22.00,28.00,15],
+    ['Auxiliar de producción','Apoyo a producción, acreditaciones y coordinación básica',18.50,23.50,15],
+    ['Especialista rigging','Trabajo en altura, rigging y puntos de suspensión',35.00,45.00,15],
+    ['Técnico backline DJ','Montaje y asistencia CDJ, mixer y cabina DJ',25.00,32.00,15]
+  ];
+  const stmt = db.prepare('INSERT INTO rates (role,name,hourly_rate,night_rate,diet,active,notes) VALUES (?,?,?,?,?,?,?)');
+  rows.forEach(r=>stmt.run(r[0], r[0], r[2], r[3], r[4], 1, r[1]));
+}
+
+v566SeedDefaultRates();
+
+app.get('/api/rates-pro', requireAdmin, (req,res)=>{
+  v566SeedDefaultRates();
+  const rows = db.prepare('SELECT * FROM rates ORDER BY active DESC, role COLLATE NOCASE').all();
+  res.json(rows);
+});
+
+app.post('/api/rates-pro/seed', requireAdmin, (req,res)=>{
+  v566EnsureRateColumns();
+  db.prepare('DELETE FROM rates').run();
+  v566SeedDefaultRates();
+  res.json({ok:true});
+});
+
+app.post('/api/event-role-lines', requireAdmin, (req,res)=>{
+  try{
+    const b = req.body || {};
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS event_role_lines (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id INTEGER NOT NULL,
+        rate_id INTEGER DEFAULT NULL,
+        role_name TEXT DEFAULT '',
+        quantity INTEGER DEFAULT 1,
+        hours REAL DEFAULT 4,
+        rate_type TEXT DEFAULT 'D',
+        unit_price REAL DEFAULT 0,
+        diet REAL DEFAULT 0,
+        total REAL DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    const total = Number(b.quantity||1) * Number(b.hours||4) * Number(b.unit_price||0) + Number(b.quantity||1) * Number(b.diet||0);
+    const info = db.prepare(`
+      INSERT INTO event_role_lines
+      (event_id,rate_id,role_name,quantity,hours,rate_type,unit_price,diet,total)
+      VALUES (?,?,?,?,?,?,?,?,?)
+    `).run(
+      b.event_id, b.rate_id||null, b.role_name||'', Number(b.quantity||1),
+      Number(b.hours||4), b.rate_type||'D', Number(b.unit_price||0), Number(b.diet||0), total
+    );
+    res.json({ok:true,id:info.lastInsertRowid,total});
+  }catch(e){
+    res.status(500).json({error:e.message});
+  }
+});
+
+app.get('/api/event-role-lines/:eventId', requireAdmin, (req,res)=>{
+  try{
+    db.exec(`CREATE TABLE IF NOT EXISTS event_role_lines (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id INTEGER NOT NULL,
+      rate_id INTEGER DEFAULT NULL,
+      role_name TEXT DEFAULT '',
+      quantity INTEGER DEFAULT 1,
+      hours REAL DEFAULT 4,
+      rate_type TEXT DEFAULT 'D',
+      unit_price REAL DEFAULT 0,
+      diet REAL DEFAULT 0,
+      total REAL DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );`);
+    const rows = db.prepare('SELECT * FROM event_role_lines WHERE event_id=? ORDER BY id').all(req.params.eventId);
+    res.json(rows);
+  }catch(e){res.json([])}
 });
 
 // Settings

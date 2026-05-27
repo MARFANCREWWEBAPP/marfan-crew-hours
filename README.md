@@ -415,3 +415,20 @@ No modifica el modal de crear evento, que se mantiene igual que V56.3/V56.4.
 - Guarda eventos de Google en la base local.
 - El calendario se alimenta de la base local después de sincronizar.
 - Popup con resultados reales.
+
+
+# V56.6 V46 Event Modal + Tarifas Roles Pro
+
+## Crear evento
+- Recupera enfoque V46.
+- Personal por tipo de operario.
+- Precio automático según tarifa configurada:
+  - D = diurno
+  - N = nocturno
+  - Dieta
+- Guarda líneas de roles del evento.
+
+## Tarifas
+- Roles profesionales precargados.
+- Nombres claros para administración.
+- Botón para restaurar roles V46 Pro.
