@@ -652,3 +652,44 @@ button.warn{background:#f59e0b;color:#111}
 }
 .v55-event.local{background:#111}
 .v55-event.google{background:#2563eb}
+
+
+/* V55.5 Operarios Pro */
+.operator-avatar{
+  width:54px;
+  height:54px;
+  border-radius:14px;
+  object-fit:cover;
+  background:#e5e7eb;
+  display:inline-block;
+  vertical-align:middle;
+  margin-right:10px;
+}
+.operator-avatar-lg{
+  width:110px;
+  height:110px;
+  border-radius:24px;
+  object-fit:cover;
+  background:#e5e7eb;
+}
+.operator-name-line{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+.operator-nickname{
+  display:inline-block;
+  font-size:12px;
+  font-weight:900;
+  background:#111;
+  color:#fff;
+  border-radius:999px;
+  padding:4px 8px;
+  margin-left:4px;
+}
+.operator-folder-head{
+  display:flex;
+  gap:18px;
+  align-items:center;
+  flex-wrap:wrap;
+}

@@ -3133,7 +3133,7 @@ function v552CreateBackupObject() {
   const backup = {
     meta: {
       app: 'Marfan Crew Hours',
-      version: '55.4.0',
+      version: '55.5.0',
       exported_at: new Date().toISOString(),
       data_dir: V552_DATA_DIR,
       backup_dir: V552_BACKUP_DIR,
@@ -3314,6 +3314,80 @@ app.get('/api/google/marfan-events', requireAdmin, async (req,res)=>{
   } catch(e) {
     res.json({ ok:false, connected:false, events:[], error:e.message });
   }
+});
+
+
+// ---------- V55.5 OPERARIOS PRO ----------
+function v555EnsureOperatorColumns() {
+  try {
+    addColumn('users', 'nickname TEXT DEFAULT ""');
+    addColumn('users', 'dni TEXT DEFAULT ""');
+    addColumn('users', 'address TEXT DEFAULT ""');
+    addColumn('users', 'city TEXT DEFAULT ""');
+    addColumn('users', 'province TEXT DEFAULT ""');
+    addColumn('users', 'postal_code TEXT DEFAULT ""');
+    addColumn('users', 'emergency_contact TEXT DEFAULT ""');
+    addColumn('users', 'emergency_phone TEXT DEFAULT ""');
+    addColumn('users', 'birth_date TEXT DEFAULT ""');
+    addColumn('users', 'shirt_size TEXT DEFAULT ""');
+    addColumn('users', 'shoe_size TEXT DEFAULT ""');
+    addColumn('users', 'vehicle TEXT DEFAULT ""');
+    addColumn('users', 'license_type TEXT DEFAULT ""');
+    addColumn('users', 'iban TEXT DEFAULT ""');
+    addColumn('users', 'notes TEXT DEFAULT ""');
+    addColumn('users', 'photo_url TEXT DEFAULT ""');
+    addColumn('users', 'skills TEXT DEFAULT ""');
+    addColumn('users', 'documents_notes TEXT DEFAULT ""');
+  } catch(e) {}
+}
+
+function v555UploadDir() {
+  const dir = path.join(__dirname, 'public', 'uploads', 'operators');
+  fs.mkdirSync(dir, { recursive:true });
+  return dir;
+}
+
+function v555SaveBase64Image(dataUrl, prefix='operator') {
+  if (!dataUrl || !String(dataUrl).startsWith('data:image/')) return '';
+  const m = String(dataUrl).match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+  if (!m) return '';
+  const mime = m[1];
+  const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+  const filename = `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}.${ext}`;
+  const filepath = path.join(v555UploadDir(), filename);
+  fs.writeFileSync(filepath, Buffer.from(m[2], 'base64'));
+  return `/uploads/operators/${filename}`;
+}
+
+v555EnsureOperatorColumns();
+
+app.post('/api/users/:id/photo', requireAdmin, (req,res)=>{
+  try {
+    const id = Number(req.params.id);
+    const photo = v555SaveBase64Image((req.body||{}).dataUrl, 'operator-'+id);
+    if (!photo) return res.status(400).json({error:'Imagen no válida'});
+    db.prepare('UPDATE users SET photo_url=? WHERE id=?').run(photo, id);
+    res.json({ok:true, photo_url:photo});
+  } catch(e) {
+    res.status(500).json({error:e.message});
+  }
+});
+
+app.get('/api/users/:id/folder', requireAdmin, (req,res)=>{
+  const id = Number(req.params.id);
+  const user = db.prepare('SELECT * FROM users WHERE id=?').get(id);
+  if (!user) return res.status(404).json({error:'Operario no encontrado'});
+  let docs = [];
+  try {
+    docs = db.prepare(`
+      SELECT d.*, u.first_name,u.last_name,u.nickname,u.phone
+      FROM worker_documents d
+      JOIN users u ON u.id=d.user_id
+      WHERE d.user_id=?
+      ORDER BY d.expiry_date
+    `).all(id).map(d => ({...d, computed_status: typeof auditDocStatus==='function' ? auditDocStatus(d.expiry_date) : ''}));
+  } catch(e) {}
+  res.json({user, docs});
 });
 
 // Settings

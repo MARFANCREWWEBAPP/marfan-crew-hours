@@ -2621,3 +2621,186 @@ function v55RenderDayAuto(events){
     }).join('')}
   </div>`;
 }
+
+
+// ---------- V55.5 OPERARIOS PRO FRONTEND ----------
+function resizeImageV555(file, maxSize=420, quality=.78){
+  return new Promise((resolve,reject)=>{
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = e => { img.src = e.target.result; };
+    reader.onerror = reject;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let w = img.width, h = img.height;
+      if(w > h && w > maxSize){ h = Math.round(h * maxSize / w); w = maxSize; }
+      else if(h >= w && h > maxSize){ w = Math.round(w * maxSize / h); h = maxSize; }
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img,0,0,w,h);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function operatorAvatarV555(u, cls='operator-avatar'){
+  return u.photo_url 
+    ? `<img class="${cls}" src="${esc(u.photo_url)}" alt="">`
+    : `<span class="${cls}" style="display:inline-flex;align-items:center;justify-content:center;font-weight:900;color:#667085">${esc((u.first_name||'?').slice(0,1))}</span>`;
+}
+
+function operatorDisplayNameV555(u){
+  const base = `${u.first_name||''} ${u.last_name||''}`.trim() || u.email || u.phone || 'Operario';
+  return `${esc(base)} ${u.nickname ? `<span class="operator-nickname">${esc(u.nickname)}</span>` : ''}`;
+}
+
+async function viewUsers(){
+  const users = await api('/api/users');
+  $('#content').innerHTML = `
+    <div class="card">
+      <h3>Crear operario · ficha completa</h3>
+      <form id="userForm" class="grid">
+        <input class="field" name="first_name" placeholder="Nombre">
+        <input class="field" name="last_name" placeholder="Apellidos">
+        <input class="field" name="nickname" placeholder="Apodo / mote">
+        <input class="field" name="dni" placeholder="DNI / NIE">
+        <input class="field" name="phone" placeholder="Teléfono">
+        <input class="field" name="email" placeholder="Email">
+        <input class="field" name="birth_date" type="date" title="Fecha nacimiento">
+        <select class="field" name="role">
+          <option value="operario">Operario</option>
+          <option value="jefe">Jefe equipo</option>
+        </select>
+        <input class="field" name="services" placeholder="Servicios / cargo principal">
+        <input class="field" name="skills" placeholder="Skills: carga, sonido, luces, runner...">
+        <input class="field" name="address" placeholder="Dirección">
+        <input class="field" name="city" placeholder="Ciudad">
+        <input class="field" name="province" placeholder="Provincia">
+        <input class="field" name="postal_code" placeholder="Código postal">
+        <input class="field" name="emergency_contact" placeholder="Contacto emergencia">
+        <input class="field" name="emergency_phone" placeholder="Teléfono emergencia">
+        <input class="field" name="shirt_size" placeholder="Talla camiseta">
+        <input class="field" name="shoe_size" placeholder="Número calzado">
+        <input class="field" name="vehicle" placeholder="Vehículo propio / matrícula">
+        <input class="field" name="license_type" placeholder="Carnet / permisos">
+        <input class="field" name="iban" placeholder="IBAN">
+        <input class="field" name="internal_hour_cost" type="number" step="0.01" placeholder="Coste interno hora">
+        <input class="field" name="internal_night_cost" type="number" step="0.01" placeholder="Coste interno nocturno">
+        <input class="field" id="operatorPhotoNew" type="file" accept="image/*">
+        <textarea class="field" name="notes" placeholder="Notas internas" style="grid-column:1/-1"></textarea>
+        <button style="grid-column:1/-1">Crear operario</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Operarios</h3>
+      <table class="table">
+        <thead><tr><th>Operario</th><th>Contacto</th><th>Rol / Skills</th><th>Estado</th><th>Acciones</th></tr></thead>
+        <tbody>
+          ${users.filter(u=>u.role!=='admin').map(u=>`
+            <tr>
+              <td>
+                <div class="operator-name-line">
+                  ${operatorAvatarV555(u)}
+                  <div><b>${operatorDisplayNameV555(u)}</b><br><span class="muted">${esc(u.dni||'')}</span></div>
+                </div>
+              </td>
+              <td>${esc(u.phone||'')}<br><span class="muted">${esc(u.email||'')}</span></td>
+              <td>${esc(u.role||'')}<br><span class="muted">${esc(u.services||u.skills||'')}</span></td>
+              <td>${Number(u.active)===0 || String(u.availability||'').toLowerCase()==='suspendido'
+                ? '<span class="status-badge status-bad">Suspendido</span>'
+                : '<span class="status-badge status-ok">Activo</span>'}</td>
+              <td>
+                <button onclick="openOperatorFolderV555(${u.id})">Carpeta</button>
+                ${Number(u.active)===0 || String(u.availability||'').toLowerCase()==='suspendido'
+                  ? `<button class="ok" onclick="suspendUserV531(${u.id},0)">Reactivar</button>`
+                  : `<button class="secondary" onclick="suspendUserV531(${u.id},1)">Suspender</button>`}
+                <button class="danger" onclick="deleteUserV531(${u.id}, '${esc((u.first_name||'Operario')).replace(/'/g, "\\'")}')">Borrar</button>
+              </td>
+            </tr>
+          `).join('') || '<tr><td colspan="5">Sin operarios.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
+  const f=$('#userForm');
+  if(f) f.onsubmit=async e=>{
+    e.preventDefault();
+    const payload={...Object.fromEntries(new FormData(e.target)), active:1, availability:'disponible'};
+    const created = await api('/api/users',{method:'POST',body:JSON.stringify(payload)});
+    const file=$('#operatorPhotoNew').files[0];
+    if(file && (created.id || created.user_id)){
+      const dataUrl=await resizeImageV555(file);
+      await api('/api/users/'+(created.id||created.user_id)+'/photo',{method:'POST',body:JSON.stringify({dataUrl})});
+    }
+    v534Toast ? v534Toast('Operario creado correctamente') : alert('Operario creado correctamente');
+    viewUsers();
+  };
+}
+
+async function openOperatorFolderV555(id){
+  const data = await api('/api/users/'+id+'/folder');
+  const u = data.user;
+  const docs = data.docs || [];
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal">
+        <div class="modal-head">
+          <h2>Carpeta operario</h2>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+
+        <div class="operator-folder-head">
+          ${operatorAvatarV555(u,'operator-avatar-lg')}
+          <div>
+            <h2>${operatorDisplayNameV555(u)}</h2>
+            <p class="muted">${esc(u.phone||'')} · ${esc(u.email||'')}</p>
+            <p>${esc(u.services||'')} ${u.skills ? '· '+esc(u.skills) : ''}</p>
+          </div>
+        </div>
+
+        <hr>
+
+        <h3>Subir / cambiar fotografía</h3>
+        <input id="operatorPhotoEdit" class="field" type="file" accept="image/*">
+        <button onclick="uploadOperatorPhotoV555(${u.id})">Guardar fotografía</button>
+
+        <hr>
+
+        <h3>Datos completos</h3>
+        <div class="grid">
+          <p><b>DNI/NIE:</b><br>${esc(u.dni||'—')}</p>
+          <p><b>Dirección:</b><br>${esc(u.address||'—')}</p>
+          <p><b>Ciudad:</b><br>${esc(u.city||'—')}</p>
+          <p><b>Provincia:</b><br>${esc(u.province||'—')}</p>
+          <p><b>Emergencia:</b><br>${esc(u.emergency_contact||'—')} · ${esc(u.emergency_phone||'')}</p>
+          <p><b>Tallas:</b><br>Camiseta ${esc(u.shirt_size||'—')} · Calzado ${esc(u.shoe_size||'—')}</p>
+          <p><b>Vehículo:</b><br>${esc(u.vehicle||'—')}</p>
+          <p><b>Carnet:</b><br>${esc(u.license_type||'—')}</p>
+        </div>
+
+        <hr>
+
+        <h3>Documentos subidos</h3>
+        ${docs.map(d=>`
+          <div class="v53-doc-card">
+            <b>${esc(d.title||'Documento')}</b><br>
+            ${esc(d.doc_type||'')} · Validez: ${esc(d.expiry_date||'—')} · Estado: ${esc(d.computed_status||'')}<br><br>
+            ${d.file_url ? `<a target="_blank" href="${esc(d.file_url)}"><button>Ver documento</button></a>` : ''}
+            <button class="secondary" onclick="printDocA4(${d.id})">PDF A4</button>
+          </div>
+        `).join('') || '<p class="muted">Este operario todavía no tiene documentos subidos.</p>'}
+      </div>
+    </div>
+  `;
+}
+
+async function uploadOperatorPhotoV555(id){
+  const file = $('#operatorPhotoEdit').files[0];
+  if(!file){ alert('Selecciona una imagen.'); return; }
+  const dataUrl = await resizeImageV555(file);
+  await api('/api/users/'+id+'/photo',{method:'POST',body:JSON.stringify({dataUrl})});
+  v534Toast ? v534Toast('Fotografía guardada y redimensionada') : alert('Fotografía guardada');
+  openOperatorFolderV555(id);
+}

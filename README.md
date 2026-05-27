@@ -254,3 +254,15 @@ GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET
 GOOGLE_CALLBACK_URL=https://marfan-crew-hours-production-ef76.up.railway.app/auth/google/callback
 GOOGLE_TARGET_CALENDAR_NAME=MARFAN
+
+
+# V55.5 Operarios Pro
+
+## Añadido
+- Ficha completa de operario.
+- Apodo / mote.
+- Fotografía del operario.
+- Redimensionado automático en navegador antes de subir.
+- Listado con foto, nombre y mote.
+- Botón Carpeta por operario.
+- Carpeta con datos completos y documentos del operario.
