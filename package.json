@@ -1,12 +1,15 @@
-
 {
-  "name":"marfan-crew-hours",
-  "version":"48.2.6",
-  "main":"server.js",
-  "scripts":{
-    "start":"node server.js"
+  "name": "marfan-crew-hours",
+  "version": "48.2.7",
+  "description": "Marfan Crew Hours V48.2.7 Premium Login Railway Stable",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
   },
-  "dependencies":{
-    "express":"^4.19.2"
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

@@ -1,5 +1,11 @@
+# Marfan Crew Hours V48.2.7 Premium Login
 
-V48.2.6 FULL CLEAN
-Admin:
-admin@marfancrew.local
-Admin1234*
+## Credenciales Admin
+Usuario: admin@marfancrew.local
+Contraseña: Admin1234*
+
+## Operario demo
+666111222
+
+## Railway
+/health debe responder OK.
