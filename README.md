@@ -24,3 +24,19 @@
 - Operarios: carpeta documental.
 - Eventos: albarán.
 - Finanzas Pro: informe financiero interno.
+
+
+# V57.4 Calendar Sync No Pattern Fix
+
+## Corrección del error:
+"The string did not match the expected pattern"
+
+Esta versión crea un endpoint nuevo:
+POST /api/google/sync-no-pattern-v574
+
+No usa:
+- timeMin
+- timeMax
+- orderBy
+
+Así evitamos el error de patrón en Google Calendar API y sincronizamos de forma simple.

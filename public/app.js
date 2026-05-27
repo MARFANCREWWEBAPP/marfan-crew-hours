@@ -5680,3 +5680,73 @@ if(__openEventDetailV573){
     },300);
   };
 }
+
+
+// ---------- V57.4 CALENDAR SYNC NO PATTERN FIX FRONTEND ----------
+async function forceGoogleSyncNoPatternV574(){
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back"><div class="modal">
+      <div class="modal-head"><h2>Forzar sincronización Google MARFAN</h2><button class="secondary" onclick="closeWizard()">Cerrar</button></div>
+      <div class="sync-v574">Sincronizando sin filtros de fecha para evitar error de patrón...</div>
+    </div></div>`;
+
+  try{
+    const headers = {'Content-Type':'application/json'};
+    if(typeof token !== 'undefined' && token) headers.Authorization = 'Bearer ' + token;
+
+    const res = await fetch('/api/google/sync-no-pattern-v574', {method:'POST', headers});
+    const txt = await res.text();
+    let data;
+    try{ data = JSON.parse(txt); }catch(e){ data = {ok:false,error:txt}; }
+
+    if(!res.ok || !data.ok){
+      $('#modalRoot').innerHTML = `
+        <div class="modal-back"><div class="modal">
+          <div class="modal-head"><h2>Error sincronizando</h2><button class="secondary" onclick="closeWizard()">Cerrar</button></div>
+          <div class="sync-v574 bad">
+            <b>${esc(data.error || 'Error desconocido')}</b>
+            <pre>${esc(JSON.stringify(data.debug || data,null,2))}</pre>
+          </div>
+        </div></div>`;
+      return;
+    }
+
+    $('#modalRoot').innerHTML = `
+      <div class="modal-back"><div class="modal">
+        <div class="modal-head"><h2>Sincronización completada ✅</h2><button class="secondary" onclick="closeWizard();viewCalendar()">Cerrar</button></div>
+        <div class="sync-v574 ok">
+          <b>Calendario:</b> ${esc((data.debug.calendar||{}).summary || 'MARFAN')}<br>
+          <b>Eventos leídos:</b> ${data.read}<br>
+          <b>Creados:</b> ${data.created}<br>
+          <b>Actualizados:</b> ${data.updated}<br>
+          <b>Errores:</b> ${data.errors}
+        </div>
+        <div class="sync-v574"><pre>${esc(JSON.stringify(data.debug,null,2))}</pre></div>
+        <button onclick="closeWizard();viewCalendar()">Ver calendario actualizado</button>
+      </div></div>`;
+  }catch(e){
+    $('#modalRoot').innerHTML = `
+      <div class="modal-back"><div class="modal">
+        <div class="modal-head"><h2>Error sincronizando</h2><button class="secondary" onclick="closeWizard()">Cerrar</button></div>
+        <div class="sync-v574 bad">${esc(e.message)}</div>
+      </div></div>`;
+  }
+}
+
+// override final para que el botón aparezca SIEMPRE
+const __viewCalendarBeforeV574 = typeof viewCalendar === 'function' ? viewCalendar : null;
+viewCalendar = async function(){
+  if(__viewCalendarBeforeV574) await __viewCalendarBeforeV574();
+
+  setTimeout(()=>{
+    const panel = document.querySelector('.v55-google-panel');
+    if(panel && !document.getElementById('forceGoogleSyncNoPatternV574')){
+      const btn = document.createElement('button');
+      btn.id = 'forceGoogleSyncNoPatternV574';
+      btn.className = 'force-sync-v574';
+      btn.innerText = 'FORZAR SINCRONIZACIÓN GOOGLE SIN ERROR';
+      btn.onclick = forceGoogleSyncNoPatternV574;
+      panel.prepend(btn);
+    }
+  },200);
+};

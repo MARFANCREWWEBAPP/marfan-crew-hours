@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "57.3.0",
-  "description": "V57.3 PDF A4 Ver e Imprimir Buttons",
+  "version": "57.4.0",
+  "description": "V57.4 Calendar Sync No Pattern Error Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

@@ -5307,3 +5307,184 @@ app.post('/api/google/force-sync-v572', requireAdmin, async (req,res)=>{
     res.status(500).json({ok:false,error:e.message});
   }
 });
+
+
+// ---------- V57.4 CALENDAR SYNC NO PATTERN ERROR FIX ----------
+function v574TokenFile(){
+  return path.join((typeof V552_DATA_DIR !== 'undefined' ? V552_DATA_DIR : (process.env.DATA_DIR || '/data')), 'google-token.json');
+}
+function v574GetTokens(){
+  const sources = [
+    ()=> typeof v557GetTokensAny === 'function' ? v557GetTokensAny() : null,
+    ()=> typeof v567GetTokens === 'function' ? v567GetTokens() : null,
+    ()=> typeof v572GetTokens === 'function' ? v572GetTokens() : null,
+    ()=> fs.existsSync(v574TokenFile()) ? JSON.parse(fs.readFileSync(v574TokenFile(),'utf8')) : null
+  ];
+  for(const fn of sources){
+    try{
+      const t = fn();
+      if(t && (t.access_token || t.refresh_token)) return t;
+    }catch(e){}
+  }
+  return null;
+}
+function v574OAuthClient(){
+  const clientId = String(process.env.GOOGLE_CLIENT_ID || '').trim();
+  const clientSecret = String(process.env.GOOGLE_CLIENT_SECRET || '').trim();
+  const callbackUrl = String(process.env.GOOGLE_CALLBACK_URL || '').trim();
+  if(!clientId || !clientSecret || !callbackUrl){
+    throw new Error('Faltan variables Railway: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_CALLBACK_URL');
+  }
+  return new google.auth.OAuth2(clientId, clientSecret, callbackUrl);
+}
+async function v574CalendarClient(){
+  const tokens = v574GetTokens();
+  if(!tokens) throw new Error('No hay token Google guardado. Pulsa Conectar Google otra vez.');
+  const oauth2 = v574OAuthClient();
+  oauth2.setCredentials(tokens);
+  return google.calendar({version:'v3', auth:oauth2});
+}
+function v574Norm(s){
+  return String(s||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+}
+async function v574ResolveCalendar(calendar){
+  const targetId = String(process.env.GOOGLE_TARGET_CALENDAR_ID || '').trim();
+  const targetName = String(process.env.GOOGLE_TARGET_CALENDAR_NAME || 'MARFAN').trim();
+  const list = await calendar.calendarList.list({maxResults:250, showHidden:true});
+  const calendars = list.data.items || [];
+
+  if(targetId){
+    const byId = calendars.find(c=>c.id === targetId);
+    if(byId) return {calendar:byId, calendars, match:'GOOGLE_TARGET_CALENDAR_ID'};
+  }
+
+  let found = calendars.find(c=>v574Norm(c.summary) === v574Norm(targetName));
+  if(found) return {calendar:found, calendars, match:'nombre exacto'};
+
+  found = calendars.find(c=>v574Norm(c.summary).includes('marfan') || v574Norm(c.id).includes('marfan'));
+  if(found) return {calendar:found, calendars, match:'flexible marfan'};
+
+  throw new Error('No encuentro calendario MARFAN. Calendarios visibles: ' + calendars.map(c=>c.summary + ' [' + c.accessRole + ']').join(', '));
+}
+function v574DateParts(raw){
+  if(!raw) return {date:'', time:''};
+  raw = String(raw);
+  if(/^\d{4}-\d{2}-\d{2}$/.test(raw)) return {date:raw, time:''};
+  const d = new Date(raw);
+  if(!Number.isNaN(d.getTime())){
+    const p = new Intl.DateTimeFormat('sv-SE', {
+      timeZone:'Europe/Madrid',
+      year:'numeric', month:'2-digit', day:'2-digit',
+      hour:'2-digit', minute:'2-digit',
+      hour12:false
+    }).formatToParts(d).reduce((a,x)=>{a[x.type]=x.value; return a;}, {});
+    return {date:`${p.year}-${p.month}-${p.day}`, time:`${p.hour}:${p.minute}`};
+  }
+  return {date:raw.slice(0,10), time:raw.slice(11,16)};
+}
+function v574Cols(table){
+  try{return db.prepare(`PRAGMA table_info("${table}")`).all().map(c=>c.name);}catch(e){return [];}
+}
+function v574EnsureLinks(){
+  db.exec(`CREATE TABLE IF NOT EXISTS google_event_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL,
+    google_event_id TEXT NOT NULL,
+    calendar_id TEXT DEFAULT '',
+    synced_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );`);
+}
+function v574Upsert(item, calendarId){
+  v574EnsureLinks();
+  const start = v574DateParts((item.start||{}).dateTime || (item.start||{}).date);
+  const end = v574DateParts((item.end||{}).dateTime || (item.end||{}).date);
+  if(!start.date) throw new Error('Evento sin fecha válida: ' + (item.summary || item.id));
+
+  const data = {
+    name:item.summary || 'Evento MARFAN',
+    client:'MARFAN',
+    location:item.location || '',
+    notes:item.description || '',
+    event_date:start.date,
+    start_time:start.time || '09:00',
+    end_time:end.time || '10:00',
+    status:'programado',
+    operational_status:'google_marfan'
+  };
+
+  const cols = v574Cols('events');
+  const keys = Object.keys(data).filter(k=>cols.includes(k));
+  if(!keys.length) throw new Error('La tabla events no tiene columnas compatibles.');
+
+  const existing = db.prepare('SELECT * FROM google_event_links WHERE google_event_id=?').get(item.id);
+  if(existing){
+    db.prepare(`UPDATE events SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>data[k]), existing.event_id);
+    db.prepare('UPDATE google_event_links SET calendar_id=?, synced_at=CURRENT_TIMESTAMP WHERE id=?').run(calendarId, existing.id);
+    return {action:'updated', event_id:existing.event_id, summary:data.name};
+  }
+
+  const info = db.prepare(`INSERT INTO events (${keys.map(k=>`"${k}"`).join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>data[k]));
+  db.prepare('INSERT INTO google_event_links (event_id,google_event_id,calendar_id) VALUES (?,?,?)').run(info.lastInsertRowid, item.id, calendarId);
+  return {action:'created', event_id:info.lastInsertRowid, summary:data.name};
+}
+
+// Este endpoint NO usa timeMin/timeMax/orderBy para evitar "The string did not match the expected pattern".
+app.post('/api/google/sync-no-pattern-v574', requireAdmin, async (req,res)=>{
+  const debug = {
+    step:'start',
+    has_token:!!v574GetTokens(),
+    has_client_id:!!process.env.GOOGLE_CLIENT_ID,
+    has_client_secret:!!process.env.GOOGLE_CLIENT_SECRET,
+    callback_url:process.env.GOOGLE_CALLBACK_URL || '',
+    target_name:process.env.GOOGLE_TARGET_CALENDAR_NAME || 'MARFAN',
+    target_id:process.env.GOOGLE_TARGET_CALENDAR_ID || ''
+  };
+
+  try{
+    debug.step = 'calendar_client';
+    const calendar = await v574CalendarClient();
+
+    debug.step = 'calendar_list';
+    const resolved = await v574ResolveCalendar(calendar);
+    debug.calendar = {id:resolved.calendar.id, summary:resolved.calendar.summary, accessRole:resolved.calendar.accessRole};
+    debug.match = resolved.match;
+
+    debug.step = 'events_list_no_filters';
+
+    let pageToken = undefined;
+    const items = [];
+    do{
+      const params = {
+        calendarId: resolved.calendar.id,
+        maxResults: 250,
+        singleEvents: true
+      };
+      if(pageToken) params.pageToken = pageToken;
+
+      const response = await calendar.events.list(params);
+      items.push(...(response.data.items || []).filter(i=>i.status !== 'cancelled'));
+      pageToken = response.data.nextPageToken || undefined;
+    }while(pageToken && items.length < 2500);
+
+    debug.step = 'upsert';
+    const results = [];
+    for(const item of items){
+      try{ results.push(v574Upsert(item, resolved.calendar.id)); }
+      catch(e){ results.push({action:'error', summary:item.summary || item.id, error:e.message}); }
+    }
+
+    res.json({
+      ok:true,
+      debug,
+      read:items.length,
+      created:results.filter(r=>r.action==='created').length,
+      updated:results.filter(r=>r.action==='updated').length,
+      errors:results.filter(r=>r.action==='error').length,
+      results:results.slice(0,100)
+    });
+  }catch(e){
+    debug.error = e.message;
+    debug.stack = e.stack;
+    res.status(500).json({ok:false,error:e.message,debug});
+  }
+});
