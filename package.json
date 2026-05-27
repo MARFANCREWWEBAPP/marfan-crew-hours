@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "55.9.0",
-  "description": "Marfan Crew Hours V55.9 - Calendar UX + Event Modal V46",
+  "version": "56.0.0",
+  "description": "Marfan Crew Hours V56 - Operarios Smart Layout",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

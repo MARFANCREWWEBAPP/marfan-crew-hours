@@ -3079,39 +3079,41 @@ function openCreateOperatorV558(){
 
           <div class="operator-block-v558">
             <h4>Datos principales</h4>
-            <div class="grid">
-              <input class="field" name="first_name" placeholder="Nombre" required>
-              <input class="field" name="last_name" placeholder="Apellidos" required>
-              <input class="field" name="nickname" placeholder="Apodo / mote">
-              <input class="field" name="dni" placeholder="DNI / NIE">
-              <input class="field" name="birth_date" type="date" title="Fecha de nacimiento">
-              <input class="field" name="phone" placeholder="Teléfono">
-              <input class="field" name="email" placeholder="Email">
-              <input class="field" name="full_address" placeholder="Dirección completa" style="grid-column:1/-1">
-              <input class="field" id="operatorPhotoV558" type="file" accept="image/*" title="Fotografía">
+            <div class="operator-grid-v56">
+              <input class="field span-3" name="first_name" placeholder="Nombre" required>
+              <input class="field span-4" name="last_name" placeholder="Apellidos" required>
+              <input class="field span-2" name="nickname" placeholder="Apodo / mote">
+              <input class="field span-3" name="dni" placeholder="DNI / NIE">
+
+              <input class="field span-3" name="birth_date" type="date" title="Fecha de nacimiento">
+              <input class="field span-3" name="phone" placeholder="Teléfono">
+              <input class="field span-6" name="email" placeholder="Email">
+
+              <input class="field span-9" name="full_address" placeholder="Dirección completa">
+              <input class="field span-3" id="operatorPhotoV558" type="file" accept="image/*" title="Fotografía">
             </div>
           </div>
 
           <div class="operator-block-v558">
             <h4>Datos bancarios</h4>
-            <div class="grid">
-              <input class="field" name="bank_name" placeholder="Nombre del banco">
-              <input class="field" name="iban" placeholder="Número de cuenta / IBAN">
+            <div class="operator-grid-v56">
+              <input class="field span-4" name="bank_name" placeholder="Nombre del banco">
+              <input class="field span-8" name="iban" placeholder="Número de cuenta / IBAN">
             </div>
           </div>
 
           <div class="operator-block-v558">
             <h4>Perfil laboral</h4>
-            <div class="grid">
-              <select class="field" name="role">
+            <div class="operator-grid-v56">
+              <select class="field span-3" name="role">
                 <option value="operario">Operario</option>
                 <option value="jefe">Jefe de equipo</option>
               </select>
-              <input class="field" name="services" placeholder="Cargo / servicios principales">
-              <input class="field" name="skills" placeholder="Skills / especialidades">
-              <input class="field" name="vehicle_licenses" placeholder="Carnets: coche, camión, carretilla, plataforma...">
-              <input class="field" name="vehicle" placeholder="Vehículo propio / matrícula">
-              <select class="field" name="availability">
+              <input class="field span-4" name="services" placeholder="Cargo / servicios principales">
+              <input class="field span-5" name="skills" placeholder="Skills / especialidades">
+              <input class="field span-12" name="vehicle_licenses" placeholder="Carnets: coche, camión, carretilla, plataforma...">
+              <input class="field span-6" name="vehicle" placeholder="Vehículo propio / matrícula">
+              <select class="field span-3" name="availability">
                 <option value="disponible">Disponible</option>
                 <option value="parcial">Parcial</option>
                 <option value="no_disponible">No disponible</option>
@@ -3121,18 +3123,18 @@ function openCreateOperatorV558(){
 
           <div class="operator-block-v558">
             <h4>Contacto de emergencia</h4>
-            <div class="grid">
-              <input class="field" name="emergency_contact" placeholder="Contacto de emergencia">
-              <input class="field" name="emergency_phone" placeholder="Teléfono de emergencia">
+            <div class="operator-grid-v56">
+              <input class="field span-8" name="emergency_contact" placeholder="Contacto de emergencia">
+              <input class="field span-4" name="emergency_phone" placeholder="Teléfono de emergencia">
             </div>
           </div>
 
           <div class="operator-block-v558">
             <h4>Tallas</h4>
-            <div class="grid">
-              <input class="field" name="shirt_size" placeholder="Talla camiseta">
-              <input class="field" name="pants_size" placeholder="Talla pantalón">
-              <input class="field" name="shoe_size" placeholder="Talla zapatos">
+            <div class="operator-grid-v56">
+              <input class="field span-4" name="shirt_size" placeholder="Talla camiseta">
+              <input class="field span-4" name="pants_size" placeholder="Talla pantalón">
+              <input class="field span-4" name="shoe_size" placeholder="Talla zapatos">
             </div>
           </div>
 
@@ -3149,8 +3151,8 @@ function openCreateOperatorV558(){
               </label>
             </div>
             <br>
-            <div class="grid">
-              <select class="field" name="doc_type">
+            <div class="operator-grid-v56">
+              <select class="field span-3" name="doc_type">
                 <option value="PRL">PRL / Riesgos laborales</option>
                 <option value="EPIs">Entrega EPIs</option>
                 <option value="DNI/NIE">DNI/NIE</option>
@@ -3159,24 +3161,24 @@ function openCreateOperatorV558(){
                 <option value="Carnet">Carnet vehículo/camión</option>
                 <option value="Otros">Otros</option>
               </select>
-              <input class="field" name="doc_title" placeholder="Título del documento">
-              <input class="field" name="doc_expiry_date" type="date" title="Fecha validez / caducidad">
-              <input class="field" id="operatorDocV558" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx">
+              <input class="field span-5" name="doc_title" placeholder="Título del documento">
+              <input class="field span-2" name="doc_expiry_date" type="date" title="Fecha validez / caducidad">
+              <input class="field span-12" id="operatorDocV558" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx">
             </div>
             <p class="muted">El documento se subirá automáticamente a la carpeta personal del operario.</p>
           </div>
 
           <div class="operator-block-v558">
             <h4>Costes internos</h4>
-            <div class="grid">
-              <input class="field" name="internal_hour_cost" type="number" step="0.01" placeholder="Coste interno hora">
-              <input class="field" name="internal_night_cost" type="number" step="0.01" placeholder="Coste interno nocturno">
+            <div class="operator-grid-v56">
+              <input class="field span-6" name="internal_hour_cost" type="number" step="0.01" placeholder="Coste interno hora">
+              <input class="field span-6" name="internal_night_cost" type="number" step="0.01" placeholder="Coste interno nocturno">
             </div>
           </div>
 
           <div class="operator-block-v558">
             <h4>Notas internas</h4>
-            <textarea class="field" name="notes" placeholder="Notas internas"></textarea>
+            <textarea class="field span-12" name="notes" placeholder="Notas internas"></textarea>
           </div>
 
           <div class="operator-action-row-v558">

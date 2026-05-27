@@ -3134,7 +3134,7 @@ function v552CreateBackupObject() {
   const backup = {
     meta: {
       app: 'Marfan Crew Hours',
-      version: '55.9.0',
+      version: '56.0.0',
       exported_at: new Date().toISOString(),
       data_dir: V552_DATA_DIR,
       backup_dir: V552_BACKUP_DIR,
