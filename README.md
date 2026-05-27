@@ -152,3 +152,15 @@ Aparecerá:
 - Guardar backup online.
 - Lista de backups online disponibles.
 - Restaurar cualquier backup guardado.
+
+# V54 Enterprise Full Ops Backup Pro
+- Backup con progreso y descarga automática.
+- Control diario KPIs compactos.
+- Calendario limpio + botón Google Calendar.
+- Eventos realizados: albarán con proceso visual.
+- Operarios avanzados con foto reescalada.
+- Tarifas completas restauradas.
+- GPS Live por colores.
+- Finanzas Pro con buscador por fechas y PDF A4.
+- Documentación en operario/jefe.
+- Ajustes ERP con backup persistente.

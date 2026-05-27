@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "53.5.0",
-  "description": "Marfan Crew Hours V53.5 - Persistent Backup Ready",
+  "version": "54.0.0",
+  "description": "Marfan Crew Hours V54 Enterprise Full Ops Backup Pro",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

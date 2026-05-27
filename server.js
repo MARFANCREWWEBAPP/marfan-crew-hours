@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const zlib = require('zlib');
 
 const app = express();
 
@@ -2810,4 +2811,222 @@ app.get('/api/backup/status', requireAdmin, (req, res) => {
     railway_volume_required:true,
     note:'Para conservar datos entre versiones, Railway debe tener un Volume montado en /data.'
   });
+});
+
+
+// ---------- V54 ENTERPRISE FULL OPS / BACKUP PRO ----------
+function v54EnsureDir(dir){
+  fs.mkdirSync(dir, { recursive:true });
+  return dir;
+}
+function v54UploadsDir(){
+  const dir = path.join((typeof PERSISTENT_DATA_DIR !== 'undefined' ? PERSISTENT_DATA_DIR : path.join(__dirname,'data')), 'uploads');
+  return v54EnsureDir(dir);
+}
+function v54PublicUploadsDir(){
+  const dir = path.join(__dirname, 'public', 'uploads');
+  return v54EnsureDir(dir);
+}
+function v54CreateBackupObject(){
+  const backup = {
+    meta:{ app:'Marfan Crew Hours', version:'54.0.0', exported_at:new Date().toISOString() },
+    tables:{}
+  };
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(t=>t.name);
+  for(const t of tables){
+    try{ backup.tables[t]=db.prepare(`SELECT * FROM "${t}"`).all(); }
+    catch(e){ backup.tables[t]=[]; }
+  }
+  return backup;
+}
+function v54BackupDir(){
+  const dir = (typeof PERSISTENT_BACKUP_DIR !== 'undefined') ? PERSISTENT_BACKUP_DIR : path.join(__dirname,'data','backups');
+  return v54EnsureDir(dir);
+}
+function v54SaveBackupFile(backup){
+  const filename = `marfan-backup-v54-${new Date().toISOString().replace(/[:.]/g,'-')}.json`;
+  const filepath = path.join(v54BackupDir(), filename);
+  fs.writeFileSync(filepath, JSON.stringify(backup,null,2));
+  return { filename, filepath };
+}
+function v54RestoreBackupObject(backup){
+  if(!backup || !backup.tables || typeof backup.tables !== 'object') throw new Error('Backup no válido');
+  const imported=[], skipped=[];
+  const tx = db.transaction(()=>{
+    for(const [table, rows] of Object.entries(backup.tables)){
+      if(!Array.isArray(rows)){ skipped.push(table); continue; }
+      const exists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
+      if(!exists){ skipped.push(table); continue; }
+      try{
+        db.prepare(`DELETE FROM "${table}"`).run();
+        if(rows.length){
+          const tableCols = db.prepare(`PRAGMA table_info("${table}")`).all().map(c=>c.name);
+          const cols = Object.keys(rows[0]).filter(c=>tableCols.includes(c));
+          if(cols.length){
+            const ph = cols.map(()=>'?').join(',');
+            const stmt = db.prepare(`INSERT INTO "${table}" (${cols.map(c=>`"${c}"`).join(',')}) VALUES (${ph})`);
+            for(const r of rows) stmt.run(...cols.map(c=>r[c]));
+          }
+        }
+        imported.push(table);
+      }catch(e){ console.error('v54 restore skip', table, e.message); skipped.push(table); }
+    }
+  });
+  tx();
+  return { imported, skipped };
+}
+function v54SaveDataUrl(dataUrl, fileName='archivo'){
+  if(!dataUrl || !String(dataUrl).startsWith('data:')) return '';
+  const m = String(dataUrl).match(/^data:([^;]+);base64,(.+)$/);
+  if(!m) return '';
+  const mime = m[1];
+  const extMap = {'image/jpeg':'jpg','image/png':'png','image/webp':'webp','application/pdf':'pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document':'docx'};
+  const ext = extMap[mime] || 'bin';
+  const safe = String(fileName||'archivo').replace(/[^a-z0-9._-]/gi,'_').slice(0,80);
+  const filename = `${Date.now()}-${Math.random().toString(16).slice(2)}-${safe}.${ext}`.replace(/(\.jpg|\.png|\.webp|\.pdf|\.docx)\.\1$/i,'$1');
+  const pubDir = v54PublicUploadsDir();
+  fs.writeFileSync(path.join(pubDir, filename), Buffer.from(m[2], 'base64'));
+  return `/uploads/${filename}`;
+}
+function v54EnsureUserColumns(){
+  try{ addColumn('users','photo_url TEXT DEFAULT ""'); }catch(e){}
+  try{ addColumn('users','dni TEXT DEFAULT ""'); }catch(e){}
+  try{ addColumn('users','address TEXT DEFAULT ""'); }catch(e){}
+  try{ addColumn('users','city TEXT DEFAULT ""'); }catch(e){}
+  try{ addColumn('users','postal_code TEXT DEFAULT ""'); }catch(e){}
+  try{ addColumn('users','emergency_contact TEXT DEFAULT ""'); }catch(e){}
+  try{ addColumn('users','emergency_phone TEXT DEFAULT ""'); }catch(e){}
+  try{ addColumn('users','shirt_size TEXT DEFAULT ""'); }catch(e){}
+  try{ addColumn('users','shoe_size TEXT DEFAULT ""'); }catch(e){}
+  try{ addColumn('users','bank_account TEXT DEFAULT ""'); }catch(e){}
+}
+function v54EnsureRatesSeed(){
+  try{
+    const count = db.prepare('SELECT COUNT(*) c FROM rates').get().c;
+    if(count < 8){
+      const roles = [
+        ['Stagehand / Carga y descarga',18.5,23.5,15],
+        ['Jefe de equipo',22,28,15],
+        ['Técnico de sonido',24,30,15],
+        ['Técnico de iluminación',24,30,15],
+        ['Técnico de vídeo / LED',24,30,15],
+        ['Runner',18.5,23.5,15],
+        ['Limpieza',18.5,23.5,15],
+        ['Auxiliar de limpieza',18.5,23.5,15],
+        ['Carretillero',22,28,15],
+        ['Operador plataforma elevadora',22,28,15],
+        ['Producción / Regiduría',24,30,15],
+        ['Montador truss / rigging básico',22,28,15]
+      ];
+      const existing = db.prepare('SELECT role FROM rates').all().map(r=>String(r.role||'').toLowerCase());
+      const stmt = db.prepare('INSERT INTO rates (role,hourly_rate,night_rate,diet,active) VALUES (?,?,?,?,1)');
+      for(const r of roles){ if(!existing.includes(r[0].toLowerCase())) stmt.run(...r); }
+    }
+  }catch(e){}
+}
+v54EnsureUserColumns();
+v54EnsureRatesSeed();
+
+app.get('/api/backup/download-v54', requireAdmin, (req,res)=>{
+  try{
+    const backup = v54CreateBackupObject();
+    const saved = v54SaveBackupFile(backup);
+    const data = JSON.stringify(backup,null,2);
+    const filename = `marfan-crew-hours-backup-v54-${new Date().toISOString().slice(0,10)}.json`;
+    res.status(200);
+    res.setHeader('Content-Type','application/json; charset=utf-8');
+    res.setHeader('Content-Length', Buffer.byteLength(data));
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(data);
+  }catch(e){
+    console.error('backup download v54', e);
+    res.status(500).json({error:'No se pudo generar el backup'});
+  }
+});
+app.post('/api/backup/import-v54', requireAdmin, (req,res)=>{
+  try{
+    const result = v54RestoreBackupObject(req.body);
+    res.json({ok:true,...result});
+  }catch(e){ res.status(400).json({error:e.message}); }
+});
+app.get('/api/backup/list-v54', requireAdmin, (req,res)=>{
+  try{
+    const files = fs.readdirSync(v54BackupDir()).filter(f=>f.endsWith('.json')).map(f=>{
+      const p=path.join(v54BackupDir(),f); const st=fs.statSync(p);
+      return {filename:f,size_bytes:st.size,created_at:st.mtime.toISOString()};
+    }).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
+    res.json({ok:true,backups:files});
+  }catch(e){ res.json({ok:true,backups:[]}); }
+});
+app.post('/api/backup/save-v54', requireAdmin, (req,res)=>{
+  const saved = v54SaveBackupFile(v54CreateBackupObject());
+  res.json({ok:true,filename:saved.filename});
+});
+app.post('/api/backup/restore-v54', requireAdmin, (req,res)=>{
+  try{
+    const filename = String((req.body||{}).filename||'');
+    if(!filename || filename.includes('..') || filename.includes('/') || filename.includes('\\')) return res.status(400).json({error:'Archivo no válido'});
+    const p = path.join(v54BackupDir(), filename);
+    if(!fs.existsSync(p)) return res.status(404).json({error:'Backup no encontrado'});
+    const result = v54RestoreBackupObject(JSON.parse(fs.readFileSync(p,'utf8')));
+    res.json({ok:true,...result});
+  }catch(e){ res.status(400).json({error:e.message}); }
+});
+
+app.post('/api/users-v54', requireAdmin, (req,res)=>{
+  try{
+    v54EnsureUserColumns();
+    const b=req.body||{};
+    const photo = b.photo_data ? v54SaveDataUrl(b.photo_data, 'photo-'+(b.phone||Date.now())+'.jpg') : '';
+    const cols = db.prepare("PRAGMA table_info(users)").all().map(c=>c.name);
+    const data = {
+      first_name:b.first_name||'', last_name:b.last_name||'', phone:b.phone||'', email:b.email||'',
+      role:b.role||'operario', services:b.services||'', active:1, availability:'disponible',
+      photo_url:photo, dni:b.dni||'', address:b.address||'', city:b.city||'', postal_code:b.postal_code||'',
+      emergency_contact:b.emergency_contact||'', emergency_phone:b.emergency_phone||'', shirt_size:b.shirt_size||'',
+      shoe_size:b.shoe_size||'', bank_account:b.bank_account||''
+    };
+    const keys = Object.keys(data).filter(k=>cols.includes(k));
+    const stmt = db.prepare(`INSERT INTO users (${keys.map(k=>`"${k}"`).join(',')}) VALUES (${keys.map(()=>'?').join(',')})`);
+    const info = stmt.run(...keys.map(k=>data[k]));
+    res.json({ok:true,id:info.lastInsertRowid});
+  }catch(e){ console.error('users-v54',e); res.status(500).json({error:'No se pudo crear operario'}); }
+});
+
+app.get('/api/finance/events-v54', requireAdmin, (req,res)=>{
+  const from = req.query.from || '';
+  const to = req.query.to || '';
+  let sql = 'SELECT id FROM events WHERE 1=1';
+  const params=[];
+  if(from){ sql += ' AND event_date>=?'; params.push(from); }
+  if(to){ sql += ' AND event_date<=?'; params.push(to); }
+  sql += ' ORDER BY event_date DESC';
+  const ids = db.prepare(sql).all(...params);
+  const rows = ids.map(e=>auditEventFinancial(e.id)).filter(Boolean);
+  const totals = rows.reduce((a,r)=>{a.revenue+=Number(r.revenue||0);a.cost+=Number(r.totalCost||0);a.profit+=Number(r.profit||0);return a;},{revenue:0,cost:0,profit:0});
+  totals.margin = totals.revenue ? Math.round((totals.profit/totals.revenue)*10000)/100 : 0;
+  res.json({rows,totals});
+});
+
+app.post('/api/events/:id/complete-v54', requireAdmin, (req,res)=>{
+  const id = Number(req.params.id);
+  const event = db.prepare('SELECT * FROM events WHERE id=?').get(id);
+  if(!event) return res.status(404).json({error:'Evento no encontrado'});
+  try{ db.prepare("UPDATE events SET status='realizado', operational_status='finalizado' WHERE id=?").run(id); }catch(e){}
+  try{
+    const fin = auditEventFinancial(id) || {};
+    const existsClient = db.prepare("SELECT id FROM delivery_notes WHERE event_id=? AND title LIKE 'Albarán cliente%'").get(id);
+    if(!existsClient){
+      db.prepare("INSERT INTO delivery_notes (event_id,title,content,created_at,signed) VALUES (?,?,?,?,0)").run(
+        id, 'Albarán cliente · '+event.name, JSON.stringify({type:'cliente',event:event.name,date:event.event_date,location:event.location}), new Date().toISOString()
+      );
+    }
+    const existsInternal = db.prepare("SELECT id FROM delivery_notes WHERE event_id=? AND title LIKE 'Albarán interno%'").get(id);
+    if(!existsInternal){
+      db.prepare("INSERT INTO delivery_notes (event_id,title,content,created_at,signed) VALUES (?,?,?,?,0)").run(
+        id, 'Albarán interno financiero · '+event.name, JSON.stringify({type:'interno',revenue:fin.revenue||0,cost:fin.totalCost||0,profit:fin.profit||0,margin:fin.margin||0}), new Date().toISOString()
+      );
+    }
+  }catch(e){ console.error('complete-v54 notes',e.message); }
+  res.json({ok:true});
 });

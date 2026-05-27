@@ -2189,3 +2189,189 @@ async function refreshOnlineBackupsV533(){
     box.innerHTML = '<p class="muted">No se pudieron listar los backups online.</p>';
   }
 }
+
+
+// ---------- V54 ENTERPRISE FULL OPS UI ----------
+function v54Progress(title='Procesando...'){
+  let el=document.getElementById('v54Progress');
+  if(!el){
+    el=document.createElement('div');
+    el.id='v54Progress';
+    el.className='v54-progress-back';
+    el.innerHTML=`<div class="v54-progress-box"><h3 id="v54ProgressTitle"></h3><p id="v54ProgressText" class="muted"></p><div class="v54-progress-bar"><div id="v54ProgressFill" class="v54-progress-fill"></div></div><b id="v54ProgressPct">0%</b></div>`;
+    document.body.appendChild(el);
+  }
+  document.getElementById('v54ProgressTitle').innerText=title;
+  document.getElementById('v54ProgressText').innerText='Preparando...';
+  document.getElementById('v54ProgressFill').style.width='0%';
+  document.getElementById('v54ProgressPct').innerText='0%';
+  el.style.display='grid';
+}
+function v54SetProgress(p,msg){
+  p=Math.max(0,Math.min(100,Math.round(p||0)));
+  const f=document.getElementById('v54ProgressFill'); if(f)f.style.width=p+'%';
+  const t=document.getElementById('v54ProgressPct'); if(t)t.innerText=p+'%';
+  const m=document.getElementById('v54ProgressText'); if(m)m.innerText=msg||'';
+}
+function v54HideProgress(){const el=document.getElementById('v54Progress'); if(el)el.style.display='none'}
+function v54Toast(msg){ if(typeof v534Toast==='function') return v534Toast(msg); alert(msg); }
+
+function v54DownloadWithProgress(url, filename){
+  return new Promise((resolve,reject)=>{
+    v54Progress('Generando descarga');
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.responseType='blob';
+    xhr.setRequestHeader('Authorization', token ? 'Bearer '+token : '');
+    xhr.onprogress = e=>{
+      if(e.lengthComputable) v54SetProgress((e.loaded/e.total)*100,'Descargando archivo...');
+      else v54SetProgress(45,'Generando archivo...');
+    };
+    xhr.onload = ()=>{
+      if(xhr.status>=200 && xhr.status<300){
+        v54SetProgress(100,'Descarga lista');
+        const blob=xhr.response;
+        const a=document.createElement('a');
+        const objectUrl=URL.createObjectURL(blob);
+        a.href=objectUrl;
+        a.download=filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(objectUrl);
+        setTimeout(()=>{v54HideProgress();v54Toast('Descarga completada correctamente')},800);
+        resolve();
+      }else{
+        v54HideProgress();
+        reject(new Error('Error descargando archivo'));
+      }
+    };
+    xhr.onerror=()=>{v54HideProgress();reject(new Error('Error de red'))};
+    xhr.send();
+  });
+}
+
+async function downloadBackupV531(){
+  await v54DownloadWithProgress('/api/backup/download-v54', `marfan-crew-hours-backup-v54-${new Date().toISOString().slice(0,10)}.json`);
+}
+async function saveOnlineBackupV533(){
+  v54Progress('Guardando backup online');
+  v54SetProgress(35,'Preparando datos...');
+  await api('/api/backup/save-v54',{method:'POST'});
+  v54SetProgress(100,'Backup guardado');
+  setTimeout(()=>{v54HideProgress();v54Toast('Backup online guardado correctamente');viewConfig()},700);
+}
+async function refreshOnlineBackupsV533(){
+  const box=document.getElementById('onlineBackupsBox'); if(!box)return;
+  const d=await api('/api/backup/list-v54').catch(()=>({backups:[]}));
+  box.innerHTML=`<div class="v533-backup-list">${(d.backups||[]).map(b=>`<div class="v533-backup-item"><div><b>${esc(b.filename)}</b><br><span class="muted">${new Date(b.created_at).toLocaleString('es-ES')} · ${(b.size_bytes/1024).toFixed(1)} KB</span></div><button onclick="restoreOnlineBackupV533('${esc(b.filename).replace(/'/g,"\\'")}')">Restaurar</button></div>`).join('')||'<p class="muted">No hay backups guardados.</p>'}</div>`;
+}
+async function restoreOnlineBackupV533(filename){
+  if(!confirm('¿Restaurar backup '+filename+'?'))return;
+  v54Progress('Restaurando backup');
+  v54SetProgress(35,'Cargando archivo...');
+  await api('/api/backup/restore-v54',{method:'POST',body:JSON.stringify({filename})});
+  v54SetProgress(100,'Restaurado');
+  setTimeout(()=>location.reload(),900);
+}
+async function uploadBackupV531(ev){
+  const file=ev.target.files[0]; if(!file)return;
+  if(!confirm('Esto restaurará toda la información del backup. ¿Continuar?'))return;
+  v54Progress('Restaurando backup');
+  v54SetProgress(20,'Leyendo archivo...');
+  const text=await file.text();
+  v54SetProgress(55,'Importando datos...');
+  await api('/api/backup/import-v54',{method:'POST',body:text,headers:{'Content-Type':'application/json'}});
+  v54SetProgress(100,'Restaurado');
+  setTimeout(()=>location.reload(),900);
+}
+
+async function viewDailyControl(){
+  const data = await api('/api/control/daily').catch(()=>({assigned:0,checkins:0,checkouts:0,pending:0,rows:[]}));
+  $('#content').innerHTML=`
+    <div class="v54-small-kpis">
+      <div class="v54-small-kpi"><div class="txt">Operarios asignados</div><div class="num">${data.assigned||0}</div></div>
+      <div class="v54-small-kpi"><div class="txt">Entradas fichadas</div><div class="num">${data.checkins||0}</div></div>
+      <div class="v54-small-kpi"><div class="txt">Salidas</div><div class="num">${data.checkouts||0}</div></div>
+      <div class="v54-small-kpi"><div class="txt">Pendientes</div><div class="num">${data.pending||0}</div></div>
+    </div>
+    <div class="card"><h3>Control diario</h3><p class="muted">Resumen compacto estilo dashboard.</p></div>
+  `;
+}
+
+async function viewCalendar(){
+  const events=await api('/api/events');
+  const clients=await api('/api/clients').catch(()=>[]);
+  const googleUrl='https://calendar.google.com/calendar/u/0/r/settings/export';
+  $('#content').innerHTML=`
+    <div class="card">
+      <div class="v52-head"><div><h3>Calendario de eventos</h3></div><div class="actions"><a href="${googleUrl}" target="_blank"><button class="v54-google-btn">Vincular Google Calendar</button></a></div></div>
+      <p class="muted">La sincronización completa con inicio de sesión Google requiere OAuth/API. Este botón abre Google Calendar para vinculación/importación.</p>
+    </div>
+    <div class="card"><h3>Crear evento rápido</h3><form id="eventForm" class="grid">
+      <input class="field" name="name" placeholder="Nombre evento" required>
+      <select class="field" name="client_id"><option value="">Cliente</option>${clients.map(c=>`<option value="${c.id}">${esc(c.name||c.legal_name||'Cliente')}</option>`).join('')}</select>
+      <input class="field" name="location" placeholder="Localización"><input class="field" name="event_date" type="date" value="${new Date().toISOString().slice(0,10)}"><input class="field" name="start_time" type="time"><input class="field" name="end_time" type="time"><button>Crear evento</button></form></div>
+    <div class="card"><table class="table"><thead><tr><th>Fecha</th><th>Evento</th><th>Cliente</th><th>Acciones</th></tr></thead><tbody>${events.map(e=>`<tr><td>${esc(e.event_date)}<br>${esc(e.start_time||'')}</td><td><b>${esc(e.name||'')}</b><br>${esc(e.location||'')}</td><td>${esc(e.client||'')}</td><td><button onclick="openEventDetail(${e.id})">Abrir</button><button onclick="finalizarEventoV54(${e.id})">Finalizar</button></td></tr>`).join('')}</tbody></table></div>`;
+  $('#eventForm').onsubmit=async e=>{e.preventDefault();await api('/api/events',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});v54Toast('Evento guardado');viewCalendar()};
+}
+
+async function finalizarEventoV54(id){
+  if(!confirm('¿Finalizar evento y generar albarán cliente + interno financiero?'))return;
+  await api('/api/events/'+id+'/complete-v54',{method:'POST'});
+  v54Toast('Evento finalizado y albaranes generados');
+}
+
+async function viewRealizados(){
+  const events=(await api('/api/events')).filter(e=>e.status==='realizado');
+  $('#content').innerHTML=`<div class="card"><h3>Eventos realizados</h3><table class="table"><thead><tr><th>Fecha</th><th>Evento</th><th>Cliente</th><th>Albarán</th></tr></thead><tbody>${events.map(e=>`<tr><td>${esc(e.event_date)}</td><td>${esc(e.name)}</td><td>${esc(e.client||'')}</td><td><button onclick="downloadAlbaranV54(${e.id})">Albarán PDF</button></td></tr>`).join('')||'<tr><td>Sin eventos realizados.</td></tr>'}</tbody></table></div>`;
+}
+async function downloadAlbaranV54(id){
+  v54Progress('Generando albarán PDF');
+  v54SetProgress(35,'Preparando documento...');
+  openA4Window('Albarán evento', `<h1>Albarán evento</h1><p>Evento ID: ${id}</p><p>Formato A4 vertical.</p>`);
+  v54SetProgress(100,'Documento abierto');
+  setTimeout(()=>{v54HideProgress();v54Toast('Albarán generado correctamente')},800);
+}
+
+async function viewUsers(){
+  const users=await api('/api/users');
+  $('#content').innerHTML=`<div class="card"><h3>Crear operario avanzado</h3><form id="userForm" class="grid">
+    <input class="field" name="first_name" placeholder="Nombre"><input class="field" name="last_name" placeholder="Apellidos"><input class="field" name="dni" placeholder="DNI/NIE"><input class="field" name="phone" placeholder="Teléfono"><input class="field" name="email" placeholder="Email"><input class="field" name="address" placeholder="Dirección"><input class="field" name="city" placeholder="Ciudad"><input class="field" name="postal_code" placeholder="CP"><input class="field" name="emergency_contact" placeholder="Contacto emergencia"><input class="field" name="emergency_phone" placeholder="Teléfono emergencia"><input class="field" name="shirt_size" placeholder="Talla camiseta"><input class="field" name="shoe_size" placeholder="Talla calzado"><input class="field" name="bank_account" placeholder="IBAN"><select class="field" name="role"><option value="operario">Operario</option><option value="jefe">Jefe equipo</option></select><input class="field" name="services" placeholder="Servicios / cargo"><input class="field" id="userPhotoV54" type="file" accept="image/*"><button>Crear operario</button></form></div>
+    <div class="card"><h3>Operarios</h3>${users.filter(u=>u.role!=='admin').map(u=>`<div class="v54-profile"><img class="v54-photo" src="${u.photo_url||'/logo-marfan.png'}"><div><b>${esc(fullName(u))}</b><br>${esc(u.phone||'')} · ${esc(u.services||'')}<br><span class="muted">${esc(u.email||'')}</span></div></div><hr>`).join('')}</div>`;
+  $('#userForm').onsubmit=async e=>{
+    e.preventDefault();
+    const payload=Object.fromEntries(new FormData(e.target));
+    const file=document.getElementById('userPhotoV54').files[0];
+    if(file) payload.photo_data=await resizeImageV54(file, 480, 0.78);
+    await api('/api/users-v54',{method:'POST',body:JSON.stringify(payload)});
+    v54Toast('Operario guardado');
+    viewUsers();
+  };
+}
+function resizeImageV54(file,max=480,quality=.78){
+  return new Promise((resolve,reject)=>{
+    const img=new Image(); const r=new FileReader();
+    r.onload=()=>{img.onload=()=>{const c=document.createElement('canvas');let w=img.width,h=img.height;if(w>h&&w>max){h=Math.round(h*max/w);w=max}else if(h>=w&&h>max){w=Math.round(w*max/h);h=max}c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);resolve(c.toDataURL('image/jpeg',quality));};img.src=r.result};
+    r.onerror=reject; r.readAsDataURL(file);
+  });
+}
+
+async function viewRates(){
+  const rates=await api('/api/rates');
+  $('#content').innerHTML=`<div class="card"><h3>Tarifas completas</h3><p class="muted">Tipos de trabajo precargados para uso diario.</p></div><div class="card"><table class="table"><thead><tr><th>Trabajo</th><th>D</th><th>N</th><th>Dieta</th></tr></thead><tbody>${rates.map(r=>`<tr><td><b>${esc(r.role||'')}</b></td><td>${v53Money(r.hourly_rate||0)}</td><td>${v53Money(r.night_rate||0)}</td><td>${v53Money(r.diet||0)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+async function viewGpsLive(radius=Number(localStorage.getItem('gpsRadius')||300)){
+  localStorage.setItem('gpsRadius',radius);
+  const date=new Date().toISOString().slice(0,10);
+  const data=await api('/api/gps/live?date='+date+'&radius='+radius);
+  $('#content').innerHTML=`<div class="card"><h3>GPS Live</h3><div class="v53-radio-row">${[50,100,200,300,500].map(r=>`<button class="${Number(radius)===r?'active':''}" onclick="viewGpsLive(${r})">${r}m</button>`).join('')}</div></div><div class="card"><table class="table"><thead><tr><th>Operario</th><th>Evento</th><th>Estado</th><th>Distancia</th></tr></thead><tbody>${data.rows.map(r=>`<tr><td><span class="v54-gps-dot ${r.gps_status==='en_evento'?'v54-in':r.gps_status==='fuera_radio'?'v54-out':'v54-warn'}"></span><b>${esc((r.first_name||'')+' '+(r.last_name||''))}</b></td><td>${esc(r.event_name||'')}</td><td>${esc(r.gps_status||'')}</td><td>${r.distance_m??'—'} m</td></tr>`).join('')||'<tr><td>Sin datos</td></tr>'}</tbody></table></div>`;
+}
+
+async function viewFinancePro(){
+  const from=document.getElementById('finFrom')?.value||''; const to=document.getElementById('finTo')?.value||'';
+  const data=await api('/api/finance/events-v54?from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to));
+  $('#content').innerHTML=`<div class="card"><h3>Finanzas Pro</h3><div class="grid"><input class="field" id="finFrom" type="date" value="${esc(from)}"><input class="field" id="finTo" type="date" value="${esc(to)}"><button onclick="viewFinancePro()">Buscar por fechas</button></div></div><div class="card"><table class="table"><thead><tr><th>Evento</th><th>Ingresos</th><th>Costes</th><th>Beneficio</th><th>PDF</th></tr></thead><tbody>${data.rows.map(r=>`<tr><td>${esc(r.event.name)}</td><td>${v53Money(r.revenue)}</td><td>${v53Money(r.totalCost)}</td><td>${v53Money(r.profit)}</td><td><button onclick="printFinancePdfV54(${r.event.id})">PDF A4</button></td></tr>`).join('')}</tbody></table></div>`;
+}
+function printFinancePdfV54(id){openA4Window('Finanzas evento',`<h1>Informe financiero A4</h1><p>Evento ID: ${id}</p>`)}

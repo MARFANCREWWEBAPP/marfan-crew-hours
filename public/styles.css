@@ -556,3 +556,21 @@ button.warn{background:#f59e0b;color:#111}
   .v533-calendar,.v533-calendar-head{grid-template-columns:1fr}
   .v533-calendar-head{display:none}
 }
+
+
+/* V54 Enterprise Full Ops */
+.v54-progress-back{position:fixed;inset:0;background:rgba(0,0,0,.55);display:grid;place-items:center;z-index:999999}
+.v54-progress-box{background:#fff;color:#111;border-radius:22px;padding:24px;max-width:460px;width:92%;box-shadow:0 20px 70px rgba(0,0,0,.35)}
+.v54-progress-bar{height:14px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin:12px 0}
+.v54-progress-fill{height:100%;background:#111;width:0%;transition:.15s}
+.v54-small-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;margin-bottom:14px}
+.v54-small-kpi{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:12px;box-shadow:0 3px 14px rgba(0,0,0,.045)}
+.v54-small-kpi .num{font-size:24px;font-weight:950}
+.v54-small-kpi .txt{font-size:12px;color:#667085;text-transform:uppercase;font-weight:850}
+.v54-gps-dot{display:inline-block;width:11px;height:11px;border-radius:999px;margin-right:6px}
+.v54-in{background:#16a34a}.v54-out{background:#dc2626}.v54-warn{background:#f59e0b}
+.v54-profile{display:grid;grid-template-columns:120px 1fr;gap:14px;align-items:start}
+.v54-photo{width:96px;height:96px;border-radius:18px;object-fit:cover;background:#eee;border:1px solid #ddd}
+.v54-doc-folder{border:1px solid #e5e7eb;border-radius:16px;padding:14px;margin:10px 0;background:#fff}
+.v54-google-btn{background:#4285f4!important;color:#fff!important}
+@media(max-width:700px){.v54-profile{grid-template-columns:1fr}.v54-small-kpis{grid-template-columns:1fr 1fr}}
