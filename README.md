@@ -1,11 +1,28 @@
-# Marfan Crew Hours V48.2.7 Premium Login
+# Marfan Crew Hours V49 Full Restore Clean
 
-## Credenciales Admin
+## Importante
+No muestra credenciales en la pantalla principal.
+
+## Admin por defecto
 Usuario: admin@marfancrew.local
 Contraseña: Admin1234*
 
-## Operario demo
+## Operarios demo
 666111222
+666333444
 
-## Railway
-/health debe responder OK.
+## Incluye
+- Dashboard operativo
+- Eventos
+- Asignación de operarios
+- Operarios
+- Clientes
+- GPS Live
+- Producción Live
+- Finanzas Pro
+- Documentación
+- Albaranes A4
+- Ajustes
+- Vista operario
+- Login real por API con token
+- Railway estable

@@ -1,144 +1,42 @@
 
-let mode = 'admin';
-const ADMIN_EMAIL = 'admin@marfancrew.local';
-const ADMIN_PASS = 'Admin1234*';
-const EMPLOYEE_DEMO = '666111222';
-
-function setMode(next){
-  mode = next;
-  renderLogin();
-}
-
-function renderLogin(){
-  const app = document.getElementById('app');
-  app.innerHTML = `
-    <section class="login-wrap">
-      <div class="login-card">
-        <img class="logo" src="/logo-marfan.png" alt="Marfan Crew">
-        <h1 class="title">MARFAN CREW HOURS</h1>
-        <p class="subtitle">Crew · Producción técnica · GPS · Eventos</p>
-
-        <div class="credentials">
-          <b>Acceso administrador</b><br>
-          Usuario: <b>${ADMIN_EMAIL}</b><br>
-          Contraseña: <b>${ADMIN_PASS}</b><br><br>
-          <b>Operario demo</b>: <b>${EMPLOYEE_DEMO}</b>
-        </div>
-
-        <div class="tabs">
-          <button class="tab ${mode==='admin'?'active':''}" onclick="setMode('admin')">ADMIN</button>
-          <button class="tab ${mode==='employee'?'active':''}" onclick="setMode('employee')">OPERARIO</button>
-        </div>
-
-        ${mode === 'admin' ? `
-          <div class="form">
-            <input id="adminEmail" value="${ADMIN_EMAIL}" placeholder="Usuario admin">
-            <input id="adminPass" type="password" placeholder="Contraseña admin">
-            <button class="primary" onclick="loginAdmin()">Entrar como admin</button>
-          </div>
-        ` : `
-          <div class="form">
-            <input id="employeePhone" value="${EMPLOYEE_DEMO}" placeholder="Teléfono operario">
-            <button class="primary" onclick="loginEmployee()">Entrar como operario</button>
-          </div>
-        `}
-        <div id="result" class="result"></div>
-      </div>
-    </section>
-  `;
-}
-
-async function loginAdmin(){
-  const email = document.getElementById('adminEmail').value.trim();
-  const password = document.getElementById('adminPass').value;
-  const result = document.getElementById('result');
-
-  try{
-    const res = await fetch('/api/login',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({email,password})
-    });
-    const data = await res.json();
-    if(!res.ok) throw new Error(data.error || 'Error');
-    renderAdmin(data.user);
-  }catch(e){
-    result.innerHTML = `<span class="bad">❌ ${e.message}</span>`;
-  }
-}
-
-async function loginEmployee(){
-  const phone = document.getElementById('employeePhone').value.trim();
-  const result = document.getElementById('result');
-
-  try{
-    const res = await fetch('/api/login-phone',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({phone})
-    });
-    const data = await res.json();
-    if(!res.ok) throw new Error(data.error || 'Error');
-    renderEmployee(data.user);
-  }catch(e){
-    result.innerHTML = `<span class="bad">❌ ${e.message}</span>`;
-  }
-}
-
-function renderAdmin(user){
-  document.getElementById('app').innerHTML = `
-    <div class="app-shell">
-      <aside class="sidebar">
-        <img class="side-logo" src="/logo-marfan.png" alt="Marfan Crew">
-        <div style="text-align:center;margin-bottom:20px;color:#aaa">${user.email}</div>
-        <div class="nav">
-          <button>Dashboard</button>
-          <button>Eventos</button>
-          <button>Operarios</button>
-          <button>Clientes</button>
-          <button>GPS Live</button>
-          <button>Producción Live</button>
-          <button>Finanzas Pro</button>
-          <button onclick="renderLogin()">Salir</button>
-        </div>
-      </aside>
-      <main class="content">
-        <div class="card">
-          <h1>Dashboard Admin</h1>
-          <p>Login administrador correcto. Base Railway estable.</p>
-        </div>
-        <div class="grid">
-          <div class="card"><div>Eventos</div><div class="kpi">0</div></div>
-          <div class="card"><div>Operarios</div><div class="kpi">0</div></div>
-          <div class="card"><div>Clientes</div><div class="kpi">0</div></div>
-          <div class="card"><div>GPS Live</div><div class="kpi">OK</div></div>
-        </div>
-      </main>
-    </div>
-  `;
-}
-
-function renderEmployee(user){
-  document.getElementById('app').innerHTML = `
-    <div class="app-shell">
-      <aside class="sidebar">
-        <img class="side-logo" src="/logo-marfan.png" alt="Marfan Crew">
-        <div style="text-align:center;margin-bottom:20px;color:#aaa">${user.name}</div>
-        <div class="nav">
-          <button>Mi calendario</button>
-          <button>Fichaje GPS</button>
-          <button>Contactar oficina</button>
-          <button onclick="renderLogin()">Salir</button>
-        </div>
-      </aside>
-      <main class="content">
-        <div class="card">
-          <h1>Panel Operario</h1>
-          <p>Login operario correcto. Teléfono: ${user.phone}</p>
-        </div>
-      </main>
-    </div>
-  `;
-}
-
-renderLogin();
+let token = localStorage.getItem('mch_token') || '';
+const state = {user:null, view:'dashboard', data:{}};
+const $ = s => document.querySelector(s);
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function today(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
+async function api(url,opts={}){const r=await fetch(url,{...opts,headers:{'Content-Type':'application/json',Authorization:token?'Bearer '+token:'',...(opts.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Error');return d}
+function fullName(u){return `${u.first_name||''} ${u.last_name||''}`.trim()||u.name||u.email||u.phone||'Usuario'}
+function money(n){return Number(n||0).toFixed(2)+' €'}
+function logo(cls='login-logo'){return `<img class="${cls}" src="/logo-marfan.png" alt="Marfan Crew">`}
+async function init(){if(token){try{state.user=(await api('/api/me')).user}catch(e){token='';localStorage.removeItem('mch_token')}}render()}
+function render(){if(!state.user)return login();if(state.user.role!=='admin')state.view='operario';$('#app').innerHTML=`<div class="layout"><aside class="side">${logo('side-logo')}<div style="text-align:center;color:#aaa">${esc(state.user.email||state.user.phone||state.user.name)}</div><div class="nav">${menu()}</div><button class="secondary" onclick="logout()">Salir</button></aside><main class="main"><div class="top"><h1>${label(state.view)}</h1><span class="badge">${esc(state.user.role)}</span></div><div id="content"></div></main></div>`;route()}
+function login(mode='admin'){$('#app').innerHTML=`<section class="login"><div class="login-card">${logo()}<h1>MARFAN CREW HOURS</h1><p class="muted" style="text-align:center">Crew · Producción técnica · GPS · Eventos</p><div class="tabs"><button class="tab ${mode==='admin'?'active':''}" onclick="login('admin')">ADMIN</button><button class="tab ${mode==='op'?'active':''}" onclick="login('op')">OPERARIO</button></div>${mode==='admin'?`<input class="field" id="email" placeholder="Usuario administrador"><input class="field" id="pass" type="password" placeholder="Contraseña"><button style="width:100%;margin-top:10px" onclick="doAdmin()">Entrar</button>`:`<input class="field" id="phone" placeholder="Teléfono operario"><button style="width:100%;margin-top:10px" onclick="doPhone()">Entrar</button>`}<p id="loginMsg" class="muted" style="text-align:center"></p></div></section>`}
+async function doAdmin(){try{const d=await api('/api/login',{method:'POST',body:JSON.stringify({email:$('#email').value,password:$('#pass').value})});token=d.token;localStorage.setItem('mch_token',token);state.user=d.user;state.view='dashboard';render()}catch(e){$('#loginMsg').innerHTML='❌ '+esc(e.message)}}
+async function doPhone(){try{const d=await api('/api/login-phone',{method:'POST',body:JSON.stringify({phone:$('#phone').value})});token=d.token;localStorage.setItem('mch_token',token);state.user=d.user;state.view='operario';render()}catch(e){$('#loginMsg').innerHTML='❌ '+esc(e.message)}}
+async function logout(){try{await api('/api/logout',{method:'POST'})}catch(e){}token='';localStorage.removeItem('mch_token');state.user=null;render()}
+function menu(){const items=['dashboard','operaciones','eventos','operarios','clientes','gps','produccion','finanzas','documentacion','albaranes','ajustes'];return (state.user.role==='admin'?items:['operario']).map(i=>`<button class="${state.view===i?'active':''}" onclick="go('${i}')">${label(i)}</button>`).join('')}
+function label(v){return {dashboard:'Dashboard',operaciones:'Operaciones',eventos:'Eventos',operarios:'Operarios',clientes:'Clientes',gps:'GPS Live',produccion:'Producción Live',finanzas:'Finanzas Pro',documentacion:'Documentación',albaranes:'Albaranes',ajustes:'Ajustes',operario:'Mi zona'}[v]||v}
+function go(v){state.view=v;render()}
+function route(){({dashboard,operaciones,eventos,operarios,clientes,gps,produccion,finanzas,documentacion,albaranes,ajustes,operario}[state.view]||dashboard)().catch(e=>$('#content').innerHTML=`<div class="card"><h3>Error</h3>${esc(e.message)}</div>`)}
+async function dashboard(){const d=await api('/api/dashboard');$('#content').innerHTML=`<div class="cards"><div class="card"><div class="muted">Eventos</div><div class="kpi">${d.events}</div></div><div class="card"><div class="muted">Operarios</div><div class="kpi">${d.users}</div></div><div class="card"><div class="muted">Clientes</div><div class="kpi">${d.clients}</div></div><div class="card"><div class="muted">Facturación prevista</div><div class="kpi">${money(d.revenue)}</div></div><div class="card"><div class="muted">Beneficio previsto</div><div class="kpi">${money(d.profit)}</div></div></div><div class="card"><h3>Alertas operativas</h3>${d.alerts.length?d.alerts.map(a=>`<p><span class="badge orange">${a.type}</span> ${esc(a.text)}</p>`).join(''):'<p class="muted">Sin alertas.</p>'}</div><div class="card"><h3>Accesos rápidos</h3><div class="actions"><button onclick="go('eventos')">Crear evento</button><button onclick="go('operarios')">Crear operario</button><button onclick="go('clientes')">Crear cliente</button><button onclick="go('gps')">GPS Live</button><button onclick="go('produccion')">Producción Live</button></div></div>`}
+async function operaciones(){const ev=await api('/api/events');const users=await api('/api/users');$('#content').innerHTML=`<div class="cards"><div class="card"><div class="muted">Eventos activos</div><div class="kpi">${ev.filter(e=>e.status!=='cancelado').length}</div></div><div class="card"><div class="muted">Crew parcial</div><div class="kpi">${ev.filter(e=>e.operational_status==='crew_parcial').length}</div></div><div class="card"><div class="muted">Operarios disponibles</div><div class="kpi">${users.filter(u=>u.availability==='disponible').length}</div></div></div><div class="card"><h3>Panel operativo</h3><table><tr><th>Fecha</th><th>Evento</th><th>Estado</th><th>Requeridos</th></tr>${ev.map(e=>`<tr><td>${esc(e.event_date)}<br>${esc(e.start_time)}-${esc(e.end_time)}</td><td><b>${esc(e.name)}</b><br>${esc(e.location)}</td><td><span class="badge ${e.operational_status==='crew_completo'?'green':'orange'}">${esc(e.operational_status)}</span></td><td>${e.required_workers||0} operarios<br>${e.required_team_leads||1} jefe</td></tr>`).join('')}</table></div>`}
+async function eventos(){const ev=await api('/api/events'), cl=await api('/api/clients'), us=await api('/api/users');$('#content').innerHTML=`<div class="card"><h3>Crear evento</h3><form id="eventForm" class="grid"><input class="field" name="name" placeholder="Nombre evento" required><select class="field" name="client_id"><option value="">Cliente</option>${cl.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><input class="field" name="location" placeholder="Localización"><input class="field" name="event_date" type="date" value="${today()}"><input class="field" name="start_time" type="time"><input class="field" name="end_time" type="time"><input class="field" name="required_workers" type="number" placeholder="Operarios requeridos"><input class="field" name="required_team_leads" type="number" value="1"><button>Guardar</button></form></div><div class="card"><h3>Eventos</h3><table><tr><th>Fecha</th><th>Evento</th><th>Estado</th><th>Acciones</th></tr>${ev.map(e=>`<tr><td>${esc(e.event_date)}<br>${esc(e.start_time)}-${esc(e.end_time)}</td><td><b>${esc(e.name)}</b><br>${esc(e.client)} · ${esc(e.location)}</td><td>${esc(e.operational_status)}</td><td><button onclick="openAssign(${e.id})">Asignar</button><button onclick="makeNote(${e.id})">Albarán</button><button class="danger" onclick="delEvent(${e.id})">Borrar</button></td></tr>`).join('')}</table></div>`;$('#eventForm').onsubmit=async e=>{e.preventDefault();await api('/api/events',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});eventos()}}
+async function openAssign(event_id){const users=await api('/api/users'), ass=await api('/api/assignments/'+event_id);$('#modalRoot').innerHTML=`<div class="modalBack"><div class="modal"><div class="top"><h2>Asignar operarios</h2><button onclick="closeModal()">Cerrar</button></div><form id="assForm" class="grid"><select class="field" name="user_id">${users.map(u=>`<option value="${u.id}">${esc(fullName(u))} · ${esc(u.services)}</option>`).join('')}</select><input class="field" name="service_role" placeholder="Cargo"><input class="field" name="planned_start" type="time"><input class="field" name="planned_end" type="time"><label><input name="is_team_lead" type="checkbox"> Jefe equipo</label><label><input name="apply_night" type="checkbox" checked> Nocturnidad</label><label><input name="apply_diet" type="checkbox"> Dieta</label><button>Asignar</button></form><h3>Asignados</h3>${ass.map(a=>`<p>${a.user_id} · ${esc(a.service_role)} <button class="danger" onclick="delAss(${a.id},${event_id})">Borrar</button></p>`).join('')||'Sin asignados'}</div></div>`;$('#assForm').onsubmit=async e=>{e.preventDefault();let d=Object.fromEntries(new FormData(e.target));d.event_id=event_id;d.is_team_lead=!!d.is_team_lead;d.apply_night=!!d.apply_night;d.apply_diet=!!d.apply_diet;await api('/api/assignments',{method:'POST',body:JSON.stringify(d)});openAssign(event_id)}}
+function closeModal(){$('#modalRoot').innerHTML=''}
+async function delAss(id,eid){await api('/api/assignments/'+id,{method:'DELETE'});openAssign(eid)}
+async function delEvent(id){if(confirm('¿Borrar evento?')){await api('/api/events/'+id,{method:'DELETE'});eventos()}}
+async function makeNote(id){const n=await api('/api/delivery-notes/'+id,{method:'POST'});alert('Albarán generado: '+n.code);albaranes()}
+async function operarios(){const us=await api('/api/users');$('#content').innerHTML=`<div class="card"><h3>Crear operario</h3><form id="userForm" class="grid"><input class="field" name="first_name" placeholder="Nombre"><input class="field" name="last_name" placeholder="Apellidos"><input class="field" name="phone" placeholder="Teléfono"><select class="field" name="role"><option value="operario">Operario</option><option value="jefe">Jefe equipo</option></select><input class="field" name="services" placeholder="Cargo / skills"><input class="field" name="internal_hour_cost" type="number" step="0.01" placeholder="Coste interno €/h"><button>Guardar</button></form></div><div class="card"><h3>Operarios</h3><table><tr><th>Operario</th><th>Rol</th><th>Skills</th><th>Disponibilidad</th></tr>${us.map(u=>`<tr><td><b>${esc(fullName(u))}</b><br>${esc(u.phone)}</td><td>${esc(u.role)}</td><td>${esc(u.services)}</td><td>${esc(u.availability)}</td></tr>`).join('')}</table></div>`;$('#userForm').onsubmit=async e=>{e.preventDefault();await api('/api/users',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});operarios()}}
+async function clientes(){const cl=await api('/api/clients');$('#content').innerHTML=`<div class="card"><h3>Crear cliente</h3><form id="clientForm" class="grid"><input class="field" name="name" placeholder="Cliente" required><input class="field" name="legal_name" placeholder="Razón social"><input class="field" name="cif" placeholder="CIF"><input class="field" name="phone" placeholder="Teléfono"><input class="field" name="email" placeholder="Email"><button>Guardar</button></form></div><div class="card"><h3>Clientes</h3><table>${cl.map(c=>`<tr><td><b>${esc(c.name)}</b><br>${esc(c.legal_name)}</td><td>${esc(c.cif)}</td><td>${esc(c.phone)}</td></tr>`).join('')}</table></div>`;$('#clientForm').onsubmit=async e=>{e.preventDefault();await api('/api/clients',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});clientes()}}
+async function gps(){const d=await api('/api/gps/live?date='+today());$('#content').innerHTML=`<div class="card"><h3>GPS Live hoy</h3><table><tr><th>Operario</th><th>Evento</th><th>Estado</th><th>Último fichaje</th></tr>${d.rows.map(r=>`<tr><td>${esc(fullName(r.user))}</td><td>${esc(r.event.name)}</td><td><span class="badge ${r.gps_status==='fichado'?'green':'orange'}">${r.gps_status}</span></td><td>${r.last?esc(r.last.timestamp):'—'}</td></tr>`).join('')||'<tr><td>Sin datos</td></tr>'}</table></div>`}
+async function produccion(){const d=await api('/api/production/events');$('#content').innerHTML=`<div class="card"><h3>Producción Live</h3><form id="taskForm" class="grid"><select class="field" name="event_id">${d.events.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select><select class="field" name="phase"><option>carga</option><option>montaje</option><option>servicio</option><option>desmontaje</option></select><input class="field" name="title" placeholder="Tarea"><button>Añadir tarea</button></form></div><div class="card"><h3>Tareas</h3>${d.tasks.map(t=>`<p><span class="badge">${esc(t.phase)}</span> ${esc(t.title)} <button onclick="toggleTask(${t.id},${t.completed?0:1})">${t.completed?'Reabrir':'Completar'}</button></p>`).join('')||'Sin tareas'}</div>`;$('#taskForm').onsubmit=async e=>{e.preventDefault();await api('/api/production/tasks',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});produccion()}}
+async function toggleTask(id,completed){await api('/api/production/tasks/'+id,{method:'PUT',body:JSON.stringify({completed})});produccion()}
+async function finanzas(){const d=await api('/api/finance/events');$('#content').innerHTML=`<div class="card"><h3>Finanzas Pro</h3><table><tr><th>Evento</th><th>Ingresos</th><th>Costes</th><th>Beneficio</th><th>Margen</th></tr>${d.map(x=>`<tr><td>${esc(x.event.name)}</td><td>${money(x.revenue)}</td><td>${money(x.cost)}</td><td>${money(x.profit)}</td><td>${x.margin}%</td></tr>`).join('')}</table></div>`}
+async function documentacion(){const docs=await api('/api/documents'), us=await api('/api/users');$('#content').innerHTML=`<div class="card"><h3>Subir documento</h3><form id="docForm" class="grid"><select class="field" name="user_id">${us.map(u=>`<option value="${u.id}">${esc(fullName(u))}</option>`).join('')}</select><select class="field" name="doc_type"><option>PRL</option><option>DNI/NIE</option><option>Carretilla</option><option>Plataforma</option></select><input class="field" name="title" placeholder="Título"><input class="field" name="expiry_date" type="date"><button>Guardar</button></form></div><div class="card"><h3>Documentación</h3>${docs.map(d=>`<p>${esc(d.title)} · ${esc(d.expiry_date)} <button class="danger" onclick="delDoc(${d.id})">Borrar</button></p>`).join('')||'Sin documentos'}</div>`;$('#docForm').onsubmit=async e=>{e.preventDefault();await api('/api/documents',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});documentacion()}}
+async function delDoc(id){await api('/api/documents/'+id,{method:'DELETE'});documentacion()}
+async function albaranes(){const n=await api('/api/delivery-notes');$('#content').innerHTML=`<div class="card"><h3>Albaranes A4</h3><table><tr><th>Código</th><th>Cliente</th><th>Total</th><th>PDF</th></tr>${n.map(x=>`<tr><td>${esc(x.code)}</td><td>${esc(x.client)}</td><td>${money(x.total_with_vat)}</td><td><button onclick="printNote(${x.id})">PDF</button></td></tr>`).join('')||'<tr><td>Sin albaranes</td></tr>'}</table></div>`}
+async function printNote(id){const n=(await api('/api/delivery-notes')).find(x=>x.id==id);const w=window.open('','_blank');w.document.write(`<html><head><title>${n.code}</title><style>@page{size:A4 portrait;margin:12mm}body{font-family:Arial}table{width:100%;border-collapse:collapse}td{border-bottom:1px solid #ddd;padding:8px}</style></head><body><h1>${n.code}</h1><p>Cliente: ${esc(n.client)}</p><table><tr><td>Base</td><td>${money(n.total_amount)}</td></tr><tr><td>IVA</td><td>${money(n.vat_amount)}</td></tr><tr><td>Total</td><td>${money(n.total_with_vat)}</td></tr></table><button onclick="window.print()">Imprimir PDF</button></body></html>`);w.document.close()}
+async function ajustes(){const s=await api('/api/settings');$('#content').innerHTML=`<div class="card"><h3>Ajustes</h3><form id="setForm" class="grid"><input class="field" name="vat" value="${s.vat}" placeholder="IVA"><input class="field" name="hourlyRate" value="${s.hourlyRate}" placeholder="Tarifa hora"><input class="field" name="nightRate" value="${s.nightRate}" placeholder="Tarifa noche"><input class="field" name="kmPrice" value="${s.kmPrice}" placeholder="€/km"><button>Guardar</button></form></div>`;$('#setForm').onsubmit=async e=>{e.preventDefault();await api('/api/settings',{method:'PUT',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});alert('Guardado')}}
+async function operario(){const ev=await api('/api/events');$('#content').innerHTML=`<div class="card"><h3>Mis eventos asignados</h3><table>${ev.map(e=>`<tr><td>${esc(e.event_date)}<br>${esc(e.start_time)}-${esc(e.end_time)}</td><td><b>${esc(e.name)}</b><br>${esc(e.location)}</td><td><button onclick="clock(${e.id},'entrada')">Entrada</button><button class="danger" onclick="clock(${e.id},'salida')">Salida</button></td></tr>`).join('')||'<tr><td>Sin eventos</td></tr>'}</table></div>`}
+async function clock(event_id,type){const send=(coords={})=>api('/api/time-log',{method:'POST',body:JSON.stringify({event_id,type,latitude:coords.latitude,longitude:coords.longitude})}).then(()=>alert('Fichaje guardado')); if(navigator.geolocation)navigator.geolocation.getCurrentPosition(p=>send({latitude:p.coords.latitude,longitude:p.coords.longitude}),()=>send({}));else send({})}
+init();
