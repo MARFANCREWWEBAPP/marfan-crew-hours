@@ -4992,3 +4992,219 @@ function addAssignmentRowV569(userId='', roleId=''){
   box.appendChild(div);
   calcRolePriceDynamicV569(div);
 }
+
+
+// ---------- V57 PDF A4 BUTTONS + FRONTEND AUTOBACKUP ----------
+async function autoBackupV57(reason='frontend-change'){
+  try{ await api('/api/backup/manual-v57',{method:'POST',body:JSON.stringify({reason})}); }catch(e){}
+}
+
+// refuerzo frontend: cada POST/PUT/DELETE crea copia después
+if(!window.__v57ApiWrapped && typeof api === 'function'){
+  window.__v57ApiWrapped = true;
+  const __apiV57 = api;
+  api = async function(url, opts={}){
+    const r = await __apiV57(url, opts);
+    const method = String((opts||{}).method||'GET').toUpperCase();
+    if(['POST','PUT','DELETE'].includes(method) && !String(url).includes('/backup/') && !String(url).includes('/login') && !String(url).includes('/google/')){
+      setTimeout(()=>autoBackupV57(method+'_'+String(url).replace(/[^a-zA-Z0-9]/g,'_')),250);
+    }
+    return r;
+  };
+}
+
+function printHtmlV57(title, subtitle, body){
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal" style="max-width:980px">
+        <div class="modal-head no-print">
+          <h2>${esc(title)}</h2>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+        <div class="no-print actions" style="margin-bottom:12px">
+          <button class="pdf-btn-v57" onclick="window.print()">Descargar / Imprimir PDF A4</button>
+        </div>
+        <div id="printAreaV57" class="a4-print-v57">
+          <div class="a4-head-v57">
+            <div>
+              <div class="a4-title-v57">MARFAN CREW</div>
+              <div>${esc(subtitle||'')}</div>
+            </div>
+            <div>${new Date().toLocaleString('es-ES')}</div>
+          </div>
+          ${body}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function printOperatorDocumentV57(userId, docId=null){
+  const data = await api('/api/users/'+userId+'/folder');
+  const u = data.user;
+  const docs = data.docs || [];
+  const list = docId ? docs.filter(d=>Number(d.id)===Number(docId)) : docs;
+  printHtmlV57('Carpeta documentos operario','Base de datos documental del operario',`
+    <h1>${esc((u.first_name||'')+' '+(u.last_name||''))} ${u.nickname?'· '+esc(u.nickname):''}</h1>
+    <p><b>DNI:</b> ${esc(u.dni||'—')}<br><b>Teléfono:</b> ${esc(u.phone||'—')}<br><b>Email:</b> ${esc(u.email||'—')}</p>
+    <h2>Documentación</h2>
+    ${list.map(d=>`
+      <div style="border:1px solid #ddd;border-radius:12px;padding:10px;margin:8px 0">
+        <b>${esc(d.title||'Documento')}</b><br>
+        Tipo: ${esc(d.doc_type||'')}<br>
+        Validez: ${esc(d.expiry_date||'—')}<br>
+        Estado: ${esc(d.computed_status||'')}<br>
+        ${d.file_url?`Archivo: ${esc(d.file_url)}`:''}
+      </div>
+    `).join('') || '<p>Sin documentos.</p>'}
+  `);
+}
+
+async function printDeliveryNoteV57(eventId){
+  let event = (await api('/api/events')).find(e=>Number(e.id)===Number(eventId));
+  let notes = [];
+  try{ notes = await api('/api/delivery-notes?event_id='+eventId); }catch(e){}
+  printHtmlV57('Albarán de evento','Documento de servicio realizado',`
+    <h1>${esc(event?.name||'Evento')}</h1>
+    <p><b>Fecha:</b> ${esc(event?.event_date||'')}<br>
+    <b>Horario:</b> ${esc(event?.start_time||'')} - ${esc(event?.end_time||'')}<br>
+    <b>Cliente:</b> ${esc(event?.client||'')}<br>
+    <b>Ubicación:</b> ${esc(event?.location||'')}</p>
+    <h2>Albaranes / notas</h2>
+    ${(Array.isArray(notes)?notes:[]).map(n=>`
+      <div style="border:1px solid #ddd;border-radius:12px;padding:10px;margin:8px 0">
+        <b>${esc(n.title||'Albarán')}</b><br>
+        ${esc(n.content||n.notes||'')}
+      </div>
+    `).join('') || '<p>Albarán generado automáticamente al finalizar evento.</p>'}
+  `);
+}
+
+async function printFinanceEventV57(eventId){
+  let event = (await api('/api/events')).find(e=>Number(e.id)===Number(eventId));
+  let fin = null;
+  try{ fin = await api('/api/finance/event/'+eventId); }catch(e){}
+  printHtmlV57('Finanzas Pro · Evento','Informe financiero interno',`
+    <h1>${esc(event?.name||'Evento')}</h1>
+    <p><b>Fecha:</b> ${esc(event?.event_date||'')}<br><b>Cliente:</b> ${esc(event?.client||'')}</p>
+    <h2>Resumen financiero</h2>
+    <table style="width:100%;border-collapse:collapse">
+      <tr><td>Ingresos</td><td style="text-align:right">${Number(fin?.revenue||event?.total_amount||0).toFixed(2)} €</td></tr>
+      <tr><td>Costes</td><td style="text-align:right">${Number(fin?.totalCost||0).toFixed(2)} €</td></tr>
+      <tr><td><b>Beneficio</b></td><td style="text-align:right"><b>${Number(fin?.profit||0).toFixed(2)} €</b></td></tr>
+      <tr><td>Margen</td><td style="text-align:right">${Number(fin?.margin||0).toFixed(2)} %</td></tr>
+    </table>
+  `);
+}
+
+// Añadir botones PDF a carpeta de operario
+const __openOperatorFolderV555_V57 = typeof openOperatorFolderV555 === 'function' ? openOperatorFolderV555 : null;
+if(__openOperatorFolderV555_V57){
+  openOperatorFolderV555 = async function(id){
+    await __openOperatorFolderV555_V57(id);
+    setTimeout(()=>{
+      const modal = document.querySelector('.modal');
+      if(modal && !document.getElementById('printOperatorFolderV57')){
+        const btn = document.createElement('button');
+        btn.id='printOperatorFolderV57';
+        btn.className='pdf-btn-v57';
+        btn.innerText='Descargar / Imprimir carpeta PDF A4';
+        btn.onclick=()=>printOperatorDocumentV57(id);
+        const head = modal.querySelector('.modal-head') || modal;
+        head.appendChild(btn);
+      }
+      document.querySelectorAll('.v53-doc-card').forEach(card=>{
+        if(!card.querySelector('.pdf-btn-v57')){
+          const b=document.createElement('button');
+          b.className='pdf-btn-v57';
+          b.innerText='Descargar / Imprimir PDF A4';
+          b.onclick=()=>printOperatorDocumentV57(id);
+          card.appendChild(b);
+        }
+      });
+    },300);
+  };
+}
+
+// Añadir botón PDF en detalle evento/albarán
+const __openEventDetail_V57 = typeof openEventDetail === 'function' ? openEventDetail : null;
+if(__openEventDetail_V57){
+  openEventDetail = async function(id){
+    await __openEventDetail_V57(id);
+    setTimeout(()=>{
+      const box = document.querySelector('.modal .actions, .modal .modal-head, .modal');
+      if(box && !document.getElementById('printDeliveryV57')){
+        const btn = document.createElement('button');
+        btn.id='printDeliveryV57';
+        btn.className='pdf-btn-v57';
+        btn.innerText='Descargar / Imprimir albarán PDF A4';
+        btn.onclick=()=>printDeliveryNoteV57(id);
+        box.appendChild(btn);
+      }
+      if(box && !document.getElementById('printFinanceV57')){
+        const btn2 = document.createElement('button');
+        btn2.id='printFinanceV57';
+        btn2.className='pdf-btn-v57';
+        btn2.innerText='Finanzas Pro PDF A4';
+        btn2.onclick=()=>printFinanceEventV57(id);
+        box.appendChild(btn2);
+      }
+    },300);
+  };
+}
+
+async function backupCenterV57(){
+  const d = await api('/api/backup/list-v57');
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal" style="max-width:980px">
+        <div class="modal-head">
+          <h2>Copias de seguridad completas</h2>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+        <div class="backup-box-v57">
+          <b>Ruta:</b> ${esc(d.dir||'')}<br>
+          <button onclick="manualBackupV57()">Generar copia completa ahora</button>
+          <button onclick="downloadBackupV57()">Descargar copia completa</button>
+        </div>
+        ${(d.files||[]).map(f=>`
+          <div class="backup-box-v57">
+            <b>${esc(f.filename)}</b><br>
+            ${new Date(f.created_at).toLocaleString('es-ES')} · ${(f.size_bytes/1024).toFixed(1)} KB<br>
+            <button onclick="restoreBackupV57('${esc(f.filename).replace(/'/g,"\\'")}')">Restaurar esta copia</button>
+          </div>
+        `).join('') || '<p>No hay copias todavía.</p>'}
+      </div>
+    </div>
+  `;
+}
+
+async function manualBackupV57(){
+  await api('/api/backup/manual-v57',{method:'POST'});
+  if(typeof v534Toast==='function') v534Toast('Copia creada');
+  backupCenterV57();
+}
+function downloadBackupV57(){
+  window.open('/api/backup/export-v57','_blank');
+}
+async function restoreBackupV57(filename){
+  if(!confirm('¿Restaurar esta copia? Reemplazará la información actual.')) return;
+  await api('/api/backup/restore-v57',{method:'POST',body:JSON.stringify({filename})});
+  alert('Copia restaurada. Recarga la app.');
+  location.reload();
+}
+
+// Botón backup en Ajustes si existe
+const __viewConfigV57 = typeof viewConfig === 'function' ? viewConfig : null;
+if(__viewConfigV57){
+  viewConfig = async function(){
+    await __viewConfigV57();
+    const c = document.querySelector('#content');
+    if(c && !document.getElementById('backupCenterV57Btn')){
+      const div = document.createElement('div');
+      div.className='card';
+      div.innerHTML = `<h3>Copias de seguridad V57</h3><p class="muted">Copia completa automática en cada cambio y restauración manual.</p><button id="backupCenterV57Btn" onclick="backupCenterV57()">Abrir centro de backups</button>`;
+      c.appendChild(div);
+    }
+  };
+}

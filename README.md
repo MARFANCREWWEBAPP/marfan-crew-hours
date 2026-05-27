@@ -1,18 +1,21 @@
 
-# V56.9 Calendar Real Fix + Dynamic Event Roles
+# V57 A4 PDF + AutoBackup Restore Safe
 
-## Google Calendar
-- Botón real FORZAR SINCRONIZACIÓN
-- Diagnóstico de calendarios
-- Sincronización manual funcional
-- Refresco automático tras sincronizar
+## Botones PDF A4
+- Carpeta de documentos de cada operario.
+- Albarán de evento.
+- Finanzas Pro del evento.
 
-## Eventos
-- Operario + rol dinámico por evento
-- Un mismo operario puede trabajar:
-  - hoy de carga/descarga
-  - mañana de limpieza
-  - otro día de seguridad
+## Backup automático
+- Cada POST/PUT/DELETE importante crea copia.
+- Copia en /data/backups.
+- LATEST.json siempre actualizado.
 
-## V46
-- Recuperado sistema de lógica de transporte/localización.
+## Restauración automática
+- Al iniciar una versión nueva, si la base está vacía, intenta restaurar LATEST.json.
+
+## Backup manual
+- Ajustes > Copias de seguridad V57.
+- Generar copia completa.
+- Descargar copia completa.
+- Restaurar copia.

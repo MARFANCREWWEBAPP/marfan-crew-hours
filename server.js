@@ -1256,6 +1256,151 @@ async function geocodeAddressOSM(address) {
 }
 
 
+
+// ---------- V57 AUTO BACKUP + RESTORE SAFE ----------
+function v57BackupDir(){
+  const dir = process.env.BACKUP_DIR || path.join((typeof V552_DATA_DIR !== 'undefined' ? V552_DATA_DIR : (process.env.DATA_DIR || '/data')), 'backups');
+  fs.mkdirSync(dir,{recursive:true});
+  return dir;
+}
+
+function v57AllTables(){
+  return db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(x=>x.name);
+}
+
+function v57BackupObject(reason='manual'){
+  const backup = {
+    meta:{
+      app:'Marfan Crew Hours',
+      version:'57.0.0',
+      reason,
+      created_at:new Date().toISOString()
+    },
+    tables:{}
+  };
+  for(const t of v57AllTables()){
+    try{ backup.tables[t] = db.prepare(`SELECT * FROM "${t}"`).all(); }
+    catch(e){ backup.tables[t] = []; }
+  }
+  return backup;
+}
+
+function v57WriteBackup(reason='auto'){
+  try{
+    const dir = v57BackupDir();
+    const safeReason = String(reason||'auto').replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,40);
+    const filename = `marfan-autobackup-${safeReason}-${new Date().toISOString().replace(/[:.]/g,'-')}.json`;
+    const file = path.join(dir, filename);
+    fs.writeFileSync(file, JSON.stringify(v57BackupObject(reason), null, 2));
+    fs.writeFileSync(path.join(dir,'LATEST.json'), JSON.stringify(v57BackupObject(reason), null, 2));
+    return {ok:true, filename, file};
+  }catch(e){
+    console.error('v57 backup error', e);
+    return {ok:false,error:e.message};
+  }
+}
+
+function v57RestoreObject(backup){
+  if(!backup || !backup.tables) throw new Error('Backup inválido');
+  const imported = [], skipped = [];
+  const tx = db.transaction(()=>{
+    for(const [table, rows] of Object.entries(backup.tables)){
+      if(!Array.isArray(rows)) { skipped.push(table); continue; }
+      const exists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
+      if(!exists){ skipped.push(table); continue; }
+      try{
+        db.prepare(`DELETE FROM "${table}"`).run();
+        if(rows.length){
+          const tableCols = db.prepare(`PRAGMA table_info("${table}")`).all().map(c=>c.name);
+          const cols = Object.keys(rows[0]).filter(c=>tableCols.includes(c));
+          if(cols.length){
+            const stmt = db.prepare(`INSERT INTO "${table}" (${cols.map(c=>`"${c}"`).join(',')}) VALUES (${cols.map(()=>'?').join(',')})`);
+            for(const r of rows) stmt.run(...cols.map(c=>r[c]));
+          }
+        }
+        imported.push(table);
+      }catch(e){ skipped.push(table); }
+    }
+  });
+  tx();
+  return {imported, skipped};
+}
+
+function v57RestoreLatestIfEmpty(){
+  try{
+    const dir = v57BackupDir();
+    const latest = path.join(dir,'LATEST.json');
+    if(!fs.existsSync(latest)) return {ok:false, reason:'no_latest'};
+    const tables = v57AllTables();
+    let total = 0;
+    for(const t of tables){
+      try { total += Number(db.prepare(`SELECT COUNT(*) c FROM "${t}"`).get().c || 0); } catch(e){}
+    }
+    if(total > 10) return {ok:false, reason:'db_not_empty', total};
+    const backup = JSON.parse(fs.readFileSync(latest,'utf8'));
+    const result = v57RestoreObject(backup);
+    return {ok:true, ...result};
+  }catch(e){
+    console.error('v57 auto restore error', e);
+    return {ok:false,error:e.message};
+  }
+}
+
+try { v57RestoreLatestIfEmpty(); } catch(e){}
+
+app.post('/api/backup/manual-v57', requireAdmin, (req,res)=>{
+  res.json(v57WriteBackup('manual'));
+});
+
+app.get('/api/backup/list-v57', requireAdmin, (req,res)=>{
+  try{
+    const dir = v57BackupDir();
+    const files = fs.readdirSync(dir).filter(f=>f.endsWith('.json')).map(f=>{
+      const p = path.join(dir,f);
+      const st = fs.statSync(p);
+      return {filename:f, size_bytes:st.size, created_at:st.mtime.toISOString()};
+    }).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
+    res.json({ok:true, dir, files});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+
+app.post('/api/backup/restore-v57', requireAdmin, (req,res)=>{
+  try{
+    const filename = String((req.body||{}).filename||'');
+    if(!filename || filename.includes('..') || filename.includes('/') || filename.includes('\\')) return res.status(400).json({error:'Nombre inválido'});
+    const file = path.join(v57BackupDir(), filename);
+    if(!fs.existsSync(file)) return res.status(404).json({error:'Backup no encontrado'});
+    const backup = JSON.parse(fs.readFileSync(file,'utf8'));
+    const result = v57RestoreObject(backup);
+    res.json({ok:true, ...result});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+
+app.get('/api/backup/export-v57', requireAdmin, (req,res)=>{
+  const backup = v57BackupObject('download');
+  res.setHeader('Content-Type','application/json; charset=utf-8');
+  res.setHeader('Content-Disposition',`attachment; filename="marfan-backup-completo-${new Date().toISOString().slice(0,10)}.json"`);
+  res.send(JSON.stringify(backup,null,2));
+});
+
+// Auto backup tras cambios importantes
+app.use((req,res,next)=>{
+  const method = String(req.method||'GET').toUpperCase();
+  const url = String(req.originalUrl||req.url||'');
+  const should = ['POST','PUT','DELETE'].includes(method) &&
+    url.startsWith('/api/') &&
+    !url.includes('/backup/') &&
+    !url.includes('/login') &&
+    !url.includes('/google/');
+  if(!should) return next();
+  res.on('finish', ()=>{
+    if(res.statusCode >= 200 && res.statusCode < 300){
+      v57WriteBackup(method + '_' + url.replace(/[^a-zA-Z0-9]/g,'_').slice(0,50));
+    }
+  });
+  next();
+});
+
 // ---------- API ROUTES ----------
 app.get('/health', (req, res) => res.json({ ok: true, version: '53.3.0' }));
 
