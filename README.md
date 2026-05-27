@@ -342,3 +342,21 @@ El calendario seguirá mostrando el estado:
   - Crew/operación
   - Tarifas/facturación
   - Notas internas
+
+
+# V56.1 Google Calendar Sync Fix
+
+## Corrige
+- Si pone conectado, ahora lee eventos reales con `/api/google/marfan-events-v561`.
+- Busca calendario MARFAN por:
+  - GOOGLE_TARGET_CALENDAR_ID si existe
+  - nombre exacto MARFAN
+  - coincidencia flexible que contenga marfan
+- Muestra diagnóstico visible en Calendario:
+  - calendario encontrado
+  - número de eventos leídos
+  - error si no puede leer
+
+## Endpoint diagnóstico
+/api/google/calendars-v561
+/api/google/marfan-events-v561

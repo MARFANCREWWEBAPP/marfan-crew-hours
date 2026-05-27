@@ -3134,7 +3134,7 @@ function v552CreateBackupObject() {
   const backup = {
     meta: {
       app: 'Marfan Crew Hours',
-      version: '56.0.0',
+      version: '56.1.0',
       exported_at: new Date().toISOString(),
       data_dir: V552_DATA_DIR,
       backup_dir: V552_BACKUP_DIR,
@@ -3552,6 +3552,138 @@ app.post('/api/users/:id/document-from-operator-form', requireAdmin, (req,res)=>
     res.json({ok:true,id:info.lastInsertRowid,file_url:fileUrl});
   } catch(e) {
     res.status(500).json({error:e.message});
+  }
+});
+
+
+// ---------- V56.1 GOOGLE CALENDAR SYNC FIX ----------
+function v561MadridDateParts(value) {
+  if (!value) return { date:'', time:'' };
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return { date:value, time:'' };
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return { date:String(value).slice(0,10), time:'' };
+  const parts = new Intl.DateTimeFormat('sv-SE', {
+    timeZone:'Europe/Madrid',
+    year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit',
+    hour12:false
+  }).formatToParts(d).reduce((a,p)=>{a[p.type]=p.value; return a;}, {});
+  return { date:`${parts.year}-${parts.month}-${parts.day}`, time:`${parts.hour}:${parts.minute}` };
+}
+
+async function v561GoogleCalendarClientAny() {
+  const tokens = (typeof v557GetTokensAny === 'function') ? v557GetTokensAny() : (typeof v55GetGoogleTokens === 'function' ? v55GetGoogleTokens() : null);
+  if (!tokens) throw new Error('Google Calendar no conectado: no hay token guardado.');
+  const clientId = process.env.GOOGLE_CLIENT_ID || (typeof GOOGLE_CLIENT_ID !== 'undefined' ? GOOGLE_CLIENT_ID : '');
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || (typeof GOOGLE_CLIENT_SECRET !== 'undefined' ? GOOGLE_CLIENT_SECRET : '');
+  const callbackUrl = process.env.GOOGLE_CALLBACK_URL || (typeof GOOGLE_CALLBACK_URL !== 'undefined' ? GOOGLE_CALLBACK_URL : '');
+  if (!clientId || !clientSecret || !callbackUrl) throw new Error('Faltan variables GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_CALLBACK_URL.');
+  const oauth2 = new google.auth.OAuth2(clientId, clientSecret, callbackUrl);
+  oauth2.setCredentials(tokens);
+  oauth2.on('tokens', (newTokens)=>{
+    try {
+      const merged = {...tokens, ...newTokens};
+      if (typeof v557SaveTokensEverywhere === 'function') v557SaveTokensEverywhere(merged);
+      else if (typeof v55SaveGoogleTokens === 'function') v55SaveGoogleTokens(merged);
+    } catch(e) {}
+  });
+  return google.calendar({ version:'v3', auth:oauth2 });
+}
+
+async function v561ResolveMarfanCalendar(calendar) {
+  const targetName = String(process.env.GOOGLE_TARGET_CALENDAR_NAME || 'MARFAN').trim();
+  const targetId = String(process.env.GOOGLE_TARGET_CALENDAR_ID || '').trim();
+  const list = await calendar.calendarList.list({ maxResults:250 });
+  const calendars = (list.data.items || []).map(c=>({
+    id:c.id,
+    summary:c.summary || '',
+    primary:!!c.primary,
+    accessRole:c.accessRole || ''
+  }));
+
+  if (targetId) {
+    const byId = calendars.find(c=>c.id === targetId);
+    if (byId) return { calendar:byId, calendars, match:'id' };
+  }
+
+  const clean = s => String(s||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  const targetClean = clean(targetName);
+  let found = calendars.find(c=>clean(c.summary) === targetClean);
+  if (found) return { calendar:found, calendars, match:'exact' };
+
+  found = calendars.find(c=>clean(c.summary).includes(targetClean) || targetClean.includes(clean(c.summary)));
+  if (found) return { calendar:found, calendars, match:'contains' };
+
+  found = calendars.find(c=>clean(c.summary).includes('marfan'));
+  if (found) return { calendar:found, calendars, match:'marfan-flex' };
+
+  throw new Error(`No encuentro el calendario "${targetName}". Calendarios disponibles: ${calendars.map(c=>c.summary).join(', ')}`);
+}
+
+app.get('/api/google/calendars-v561', requireAdmin, async (req,res)=>{
+  try{
+    const calendar = await v561GoogleCalendarClientAny();
+    const resolved = await v561ResolveMarfanCalendar(calendar);
+    res.json({ ok:true, target:resolved.calendar, match:resolved.match, calendars:resolved.calendars });
+  }catch(e){
+    res.status(200).json({ ok:false, error:e.message, calendars:[] });
+  }
+});
+
+app.get('/api/google/marfan-events-v561', requireAdmin, async (req,res)=>{
+  try{
+    const calendar = await v561GoogleCalendarClientAny();
+    const resolved = await v561ResolveMarfanCalendar(calendar);
+
+    const now = new Date();
+    const min = new Date(now.getFullYear(), now.getMonth()-6, 1);
+    const max = new Date(now.getFullYear()+2, 11, 31);
+
+    const response = await calendar.events.list({
+      calendarId: resolved.calendar.id,
+      timeMin:min.toISOString(),
+      timeMax:max.toISOString(),
+      singleEvents:true,
+      orderBy:'startTime',
+      maxResults:500
+    });
+
+    const events = (response.data.items || [])
+      .filter(item => item.status !== 'cancelled')
+      .map(item => {
+        const s = item.start || {};
+        const e = item.end || {};
+        const start = v561MadridDateParts(s.dateTime || s.date);
+        const end = v561MadridDateParts(e.dateTime || e.date);
+        return {
+          id:'g_'+item.id,
+          google_event_id:item.id,
+          name:item.summary || 'Evento MARFAN',
+          location:item.location || '',
+          event_date:start.date,
+          start_time:start.time,
+          end_time:end.time,
+          status:'google',
+          operational_status:'google_marfan',
+          source:'google',
+          htmlLink:item.htmlLink || '',
+          description:item.description || '',
+          calendar_id:resolved.calendar.id,
+          calendar_name:resolved.calendar.summary
+        };
+      });
+
+    res.json({
+      ok:true,
+      connected:true,
+      calendar:resolved.calendar,
+      match:resolved.match,
+      count:events.length,
+      events
+    });
+  }catch(e){
+    console.error('marfan-events-v561', e);
+    res.json({ ok:false, connected:false, count:0, events:[], error:e.message });
   }
 });
 

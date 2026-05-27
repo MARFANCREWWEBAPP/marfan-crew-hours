@@ -3432,3 +3432,70 @@ viewCalendar = async function(){
     </div>
   `;
 };
+
+
+// ---------- V56.1 GOOGLE CALENDAR SYNC FIX FRONTEND ----------
+async function v561GetGoogleEvents(){
+  const data = await api('/api/google/marfan-events-v561').catch(e=>({ok:false,connected:false,events:[],error:e.message}));
+  return data;
+}
+
+async function v561GetCalendarsDebug(){
+  return await api('/api/google/calendars-v561').catch(e=>({ok:false,error:e.message,calendars:[]}));
+}
+
+async function viewCalendar(){
+  const localEvents = await api('/api/events');
+  const googleStatus = await api('/api/google/status-v557').catch(()=>({configured:false,connected:false,target_calendar_name:'MARFAN'}));
+  const googleData = await v561GetGoogleEvents();
+
+  const googleEvents = googleData.events || [];
+  const events = [
+    ...localEvents.map(e=>({...e,source:'local'})),
+    ...googleEvents
+  ];
+
+  const body = v55CalView==='week' ? v55RenderWeekAuto(events) : v55CalView==='day' ? v55RenderDayAuto(events) : v55RenderMonthAuto(events);
+
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div>
+          <h3>Calendario eventos · MARFAN</h3>
+          <p class="v52-sub">Vista tipo Google Calendar integrada. Deben aparecer eventos locales y los eventos reales del calendario MARFAN.</p>
+        </div>
+        <div class="v55-google-panel">
+          ${googleStatus.connected
+            ? `<span class="status-badge status-ok">Google conectado</span>`
+            : `<span class="status-badge status-warn">Google no conectado</span><button onclick="v559OpenGooglePopup()">Conectar Google</button>`}
+          <button class="secondary" onclick="viewCalendar()">Actualizar</button>
+          <button class="secondary" onclick="v55ImportGoogle()">Importar MARFAN</button>
+          <button class="secondary" onclick="v55ExportAll()">Exportar a MARFAN</button>
+        </div>
+      </div>
+
+      ${googleData.ok
+        ? `<div class="google-sync-debug-v561 ok">Google MARFAN OK · Calendario: ${esc((googleData.calendar||{}).summary||'MARFAN')} · Eventos Google leídos: ${Number(googleData.count||0)} · Match: ${esc(googleData.match||'')}</div>`
+        : `<div class="google-sync-debug-v561 bad">Google conectado, pero no se pueden leer eventos: ${esc(googleData.error||'Error desconocido')}</div>`}
+    </div>
+
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div class="actions">
+          <button onclick="openCreateEventV559()">+ Crear evento</button>
+          <button class="secondary" onclick="v55MoveCalendar(-1)">← Anterior</button>
+          <button onclick="v55CalDate=new Date();viewCalendar()">Hoy</button>
+          <button class="secondary" onclick="v55MoveCalendar(1)">Siguiente →</button>
+        </div>
+        <h2 style="text-transform:capitalize">${v55CalendarTitle()}</h2>
+        <div class="v55-view-tabs">
+          <button class="${v55CalView==='month'?'active':''}" onclick="v55SetView('month')">Mes</button>
+          <button class="${v55CalView==='week'?'active':''}" onclick="v55SetView('week')">Semana</button>
+          <button class="${v55CalView==='day'?'active':''}" onclick="v55SetView('day')">Día</button>
+        </div>
+      </div>
+      <br>
+      ${body}
+    </div>
+  `;
+}

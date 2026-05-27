@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "56.0.0",
-  "description": "Marfan Crew Hours V56 - Operarios Smart Layout",
+  "version": "56.1.0",
+  "description": "Marfan Crew Hours V56.1 - Google Calendar Sync Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
