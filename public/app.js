@@ -1253,3 +1253,345 @@ async function deleteDocument(id){
 }
 
 init();
+
+
+// ---------- V53 ENTERPRISE OVERRIDES ----------
+function v53Money(n){ return Number(n||0).toFixed(2)+' €'; }
+
+function v53ChartTooltip(){
+  let el=document.getElementById('v53Tooltip');
+  if(!el){
+    el=document.createElement('div');
+    el.id='v53Tooltip';
+    el.className='v53-tooltip';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function v53ShowTooltip(ev, html){
+  const el=v53ChartTooltip();
+  el.innerHTML=html;
+  el.style.display='block';
+  const pad=16;
+  let x=ev.clientX+14, y=ev.clientY+14;
+  const rect=el.getBoundingClientRect();
+  if(x+rect.width>window.innerWidth-pad) x=ev.clientX-rect.width-14;
+  if(y+rect.height>window.innerHeight-pad) y=ev.clientY-rect.height-14;
+  el.style.left=x+'px';
+  el.style.top=y+'px';
+}
+
+function v53HideTooltip(){
+  const el=document.getElementById('v53Tooltip');
+  if(el) el.style.display='none';
+}
+
+async function viewDashboard(){
+  const d = await api('/api/dashboard').catch(()=>({}));
+  const ingresos = Number(d.revenue || d.income || d.total || 0);
+  const beneficio = Number(d.profit || 0);
+  const activos = Number(d.active || 0);
+  const operarios = Number(d.users || d.workers || 0);
+  const clientes = Number(d.clients || 0);
+  const eventos = Number(d.events || 0);
+  const albaranesSinFirma = Number(d.unsigned_notes || d.notes_unsigned || 0);
+  const monthly = d.monthly || [];
+
+  $('#content').innerHTML = `
+    <div class="v53-kpi-grid">
+      <div class="v53-kpi-card"><div class="label">Ingresos</div><div class="value">${v53Money(ingresos)}</div></div>
+      <div class="v53-kpi-card"><div class="label">Beneficio</div><div class="value">${v53Money(beneficio)}</div></div>
+      <div class="v53-kpi-card"><div class="label">Eventos activos</div><div class="value">${activos}</div></div>
+      <div class="v53-kpi-card"><div class="label">Operarios</div><div class="value">${operarios}</div></div>
+      <div class="v53-kpi-card"><div class="label">Clientes</div><div class="value">${clientes}</div></div>
+      <div class="v53-kpi-card"><div class="label">Albaranes sin firma</div><div class="value">${albaranesSinFirma}</div></div>
+      <div class="v53-kpi-card"><div class="label">Eventos totales</div><div class="value">${eventos}</div></div>
+    </div>
+
+    <div class="card">
+      <div class="v52-head">
+        <div>
+          <h3>Progresión anual</h3>
+          <p class="v52-sub">Tooltip mejorado: no se corta y muestra datos ampliados por mes.</p>
+        </div>
+        <button onclick="go('finanzas')">Ver Finanzas Pro</button>
+      </div>
+      <div class="chart v53-chart-wrap">
+        ${(monthly.length?monthly:[{month:'Demo',amount:1,profit:0,events:0,cost:0}]).map(x=>`
+          <div class="bar"
+               style="height:${Math.max(12,Math.min(200,Number(x.amount||0)/8))}px"
+               onmousemove="v53ShowTooltip(event,'<b>${esc(x.month||'Mes')}</b><br>Facturación: ${v53Money(x.amount||0)}<br>Beneficio: ${v53Money(x.profit||0)}<br>Coste: ${v53Money(x.cost||0)}<br>Eventos: ${Number(x.events||0)}')"
+               onmouseleave="v53HideTooltip()">
+            <span>${esc(x.month||'Mes')}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Alertas operativas</h3>
+      ${(d.alerts||[]).length ? d.alerts.map(a=>`<p><span class="status-badge status-warn">${esc(a.type||'alerta')}</span> ${esc(a.text||a.message||'')}</p>`).join('') : '<p class="muted">Sin alertas críticas.</p>'}
+    </div>
+
+    <div class="card">
+      <h3>Accesos rápidos</h3>
+      <div class="actions">
+        <button onclick="go('eventos')">Crear evento</button>
+        <button onclick="go('tarifas')">Tarifas</button>
+        <button onclick="go('gps')">GPS Live</button>
+        <button onclick="go('finanzas')">Finanzas Pro</button>
+        <button onclick="go('documentacion')">Documentación</button>
+        <button onclick="go('albaranes')">Albaranes A4</button>
+      </div>
+    </div>
+  `;
+}
+
+async function viewRates(){
+  const rates = await api('/api/rates').catch(()=>[]);
+  $('#content').innerHTML = `
+    <div class="card">
+      <h3>Tarifas</h3>
+      <p class="muted">Explicación rápida de importes y selectores.</p>
+      <div class="v53-rate-help">
+        <div class="v53-help-chip"><b>18,5 €</b>Operario estándar diurno</div>
+        <div class="v53-help-chip"><b>23,5 €</b>Operario nocturno / especial</div>
+        <div class="v53-help-chip"><b>15 €</b>Dieta</div>
+        <div class="v53-help-chip"><b>0 €</b>Sin dieta / sin extra</div>
+      </div>
+      <div class="v53-legend">
+        <span class="v53-pill">N = Nocturno</span>
+        <span class="v53-pill">D = Diurno</span>
+      </div>
+      <form id="rateForm" class="grid">
+        <input class="field" name="role" placeholder="Tipo de operario / cargo">
+        <input class="field" name="hourly_rate" type="number" step="0.01" placeholder="18.5 · D">
+        <input class="field" name="night_rate" type="number" step="0.01" placeholder="23.5 · N">
+        <input class="field" name="diet" type="number" step="0.01" placeholder="15 · Dieta">
+        <button>Guardar tarifa</button>
+      </form>
+    </div>
+    <div class="card">
+      <table class="table">
+        <thead><tr><th>Tipo</th><th>D / Diurno</th><th>N / Nocturno</th><th>Dieta</th><th>Estado</th></tr></thead>
+        <tbody>${rates.map(r=>`
+          <tr>
+            <td><b>${esc(r.role||r.name||'')}</b></td>
+            <td><span class="v53-pill">D</span> ${v53Money(r.hourly_rate||0)}</td>
+            <td><span class="v53-pill">N</span> ${v53Money(r.night_rate||0)}</td>
+            <td>${v53Money(r.diet||0)}</td>
+            <td>${Number(r.active)!==0?'<span class="status-badge status-ok">Activa</span>':'<span class="status-badge status-bad">Inactiva</span>'}</td>
+          </tr>
+        `).join('') || '<tr><td colspan="5">Sin tarifas.</td></tr>'}</tbody>
+      </table>
+    </div>
+  `;
+  const f=$('#rateForm');
+  if(f) f.onsubmit=async e=>{
+    e.preventDefault();
+    const payload={...Object.fromEntries(new FormData(e.target)), active:1};
+    await api('/api/rates',{method:'POST',body:JSON.stringify(payload)});
+    viewRates();
+  };
+}
+
+async function viewGpsLive(radius=Number(localStorage.getItem('gpsRadius')||300)){
+  localStorage.setItem('gpsRadius', radius);
+  const date = localDateStr ? localDateStr() : new Date().toISOString().slice(0,10);
+  const data = await api('/api/gps/live?date='+date+'&radius='+radius);
+  const rows = data.rows.map(r=>`<tr>
+    <td data-label="Operario"><b>${esc((r.first_name||'')+' '+(r.last_name||''))}</b><br>${esc(r.phone||'')}</td>
+    <td data-label="Evento"><b>${esc(r.event_name)}</b><br>${esc(r.location||'')}</td>
+    <td data-label="Estado">${r.gps_status==='en_evento'?'<span class="status-badge status-ok">En evento</span>':r.gps_status==='fuera_radio'?'<span class="status-badge status-bad">Fuera radio</span>':'<span class="status-badge status-warn">'+esc(r.gps_status)+'</span>'}</td>
+    <td data-label="Distancia">${r.distance_m!==null&&r.distance_m!==undefined?r.distance_m+' m':'—'}</td>
+    <td data-label="Último">${r.last_log?new Date(r.last_log.timestamp).toLocaleString('es-ES'):'—'}</td>
+  </tr>`).join('');
+  $('#content').innerHTML = `
+    <div class="card">
+      <h3>GPS Live</h3>
+      <p class="muted">Selecciona el radio de control para mayor precisión.</p>
+      <div class="v53-radio-row">
+        ${[50,100,200,300,500].map(r=>`<button class="${Number(radius)===r?'active':''}" onclick="viewGpsLive(${r})">${r}m</button>`).join('')}
+      </div>
+    </div>
+    <div class="v53-kpi-grid">
+      <div class="v53-kpi-card"><div class="label">Radio seleccionado</div><div class="value">${radius}m</div></div>
+      <div class="v53-kpi-card"><div class="label">Operarios monitorizados</div><div class="value">${data.rows.length}</div></div>
+      <div class="v53-kpi-card"><div class="label">En evento</div><div class="value">${data.rows.filter(r=>r.gps_status==='en_evento').length}</div></div>
+      <div class="v53-kpi-card"><div class="label">Fuera radio</div><div class="value">${data.rows.filter(r=>r.gps_status==='fuera_radio').length}</div></div>
+    </div>
+    <div class="card">
+      <table class="table"><thead><tr><th>Operario</th><th>Evento</th><th>Estado</th><th>Distancia</th><th>Último</th></tr></thead><tbody>${rows||'<tr><td>Sin datos GPS hoy.</td></tr>'}</tbody></table>
+    </div>
+  `;
+}
+
+async function viewFinancePro(){
+  const data = await api('/api/finance/events');
+  const rows = data.rows.map(r=>`<tr>
+    <td data-label="Evento"><b>${esc(r.event.name)}</b><br>${formatLocalDate(r.event.event_date)}</td>
+    <td data-label="Ingresos">${v53Money(r.revenue||0)} + IVA</td>
+    <td data-label="Costes">${v53Money(r.totalCost||0)}</td>
+    <td data-label="Beneficio"><b>${v53Money(r.profit||0)}</b></td>
+    <td data-label="Margen">${Number(r.margin||0).toFixed(2)}%</td>
+    <td data-label="Acción"><button onclick="openFinanceCostsV53(${r.event.id})">Costes reales</button></td>
+  </tr>`).join('');
+  $('#content').innerHTML = `
+    <div class="v53-kpi-grid">
+      <div class="v53-kpi-card"><div class="label">Ingresos</div><div class="value">${v53Money(data.totals.revenue||0)}</div></div>
+      <div class="v53-kpi-card"><div class="label">Costes</div><div class="value">${v53Money(data.totals.cost||0)}</div></div>
+      <div class="v53-kpi-card"><div class="label">Beneficio</div><div class="value">${v53Money(data.totals.profit||0)}</div></div>
+      <div class="v53-kpi-card"><div class="label">Margen</div><div class="value">${Number(data.totals.margin||0).toFixed(2)}%</div></div>
+    </div>
+    <div class="card">
+      <h3>Finanzas Pro · Costes reales</h3>
+      <table class="table"><thead><tr><th>Evento</th><th>Ingresos</th><th>Costes</th><th>Beneficio</th><th>Margen</th><th>Acción</th></tr></thead><tbody>${rows||'<tr><td>Sin eventos financieros.</td></tr>'}</tbody></table>
+    </div>
+  `;
+}
+
+function openFinanceCostsV53(eventId){
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back"><div class="modal">
+      <div class="modal-head"><h2>Costes reales del evento</h2><button class="secondary" onclick="closeWizard()">Cerrar</button></div>
+      <form id="costFormV53" class="grid">
+        <input class="col-3" name="cost_staff" type="number" step="0.01" placeholder="Coste operarios">
+        <input class="col-3" name="cost_social_security" type="number" step="0.01" placeholder="Seguridad Social">
+        <input class="col-3" name="cost_gestoria" type="number" step="0.01" placeholder="Gestoría">
+        <input class="col-3" name="cost_fixed" type="number" step="0.01" placeholder="Costes fijos">
+        <input class="col-3" name="cost_transport" type="number" step="0.01" placeholder="Transporte">
+        <input class="col-3" name="cost_taxi" type="number" step="0.01" placeholder="Taxi">
+        <input class="col-3" name="cost_hotel" type="number" step="0.01" placeholder="Hotel">
+        <input class="col-3" name="cost_extra_hours" type="number" step="0.01" placeholder="Horas extra">
+        <input class="col-3" name="cost_other" type="number" step="0.01" placeholder="Otros costes">
+        <select class="col-3" name="payment_status">
+          <option value="pendiente">Pendiente</option>
+          <option value="facturado">Facturado</option>
+          <option value="cobrado">Cobrado</option>
+          <option value="parcial">Parcial</option>
+          <option value="impagado">Impagado</option>
+        </select>
+        <button class="col-12">Guardar costes reales</button>
+      </form>
+    </div></div>`;
+  $('#costFormV53').onsubmit=async e=>{
+    e.preventDefault();
+    await api('/api/finance/events/'+eventId+'/detailed-costs',{method:'PUT',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});
+    closeWizard();
+    viewFinancePro();
+  };
+}
+
+async function viewDocuments(){
+  const docs = await api('/api/documents');
+  const users = state.users || await api('/api/users').catch(()=>[]);
+  const rows = docs.map(d=>`<tr>
+    <td data-label="Operario"><b>${esc((d.first_name||'')+' '+(d.last_name||''))}</b><br>${esc(d.phone||'')}</td>
+    <td data-label="Documento">${esc(d.doc_type)}<br><b>${esc(d.title)}</b></td>
+    <td data-label="Validez">${d.issue_date||'—'} → ${d.expiry_date||'—'}</td>
+    <td data-label="Estado">${d.computed_status==='vigente'?'<span class="status-badge status-ok">Vigente</span>':d.computed_status==='proximo_caducar'?'<span class="status-badge status-warn">Próximo</span>':'<span class="status-badge status-bad">'+esc(d.computed_status)+'</span>'}</td>
+    <td data-label="Archivo">${d.file_url?`<a target="_blank" href="${d.file_url}"><button>Ver</button></a>`:'—'}</td>
+    <td data-label="PDF"><button class="secondary" onclick="printDocA4(${d.id})">PDF A4</button></td>
+    <td data-label="Acción"><button class="danger" onclick="deleteDocument(${d.id})">Borrar</button></td>
+  </tr>`).join('');
+  $('#content').innerHTML = `
+    <div class="card">
+      <h3>Documentación RRHH</h3>
+      <form id="docForm" class="grid">
+        <select class="col-3" name="user_id">${users.filter(u=>u.role!=='admin').map(u=>`<option value="${u.id}">${fullName(u)}</option>`).join('')}</select>
+        <select class="col-2" name="doc_type"><option>PRL</option><option>DNI/NIE</option><option>Carretilla</option><option>Plataforma</option><option>Contrato</option><option>Alta SS</option><option>Formación</option><option>Otros</option></select>
+        <input class="col-3" name="title" placeholder="Título documento">
+        <input class="col-2" name="issue_date" type="date" title="Fecha emisión">
+        <input class="col-2" name="expiry_date" type="date" title="Fecha validez/caducidad">
+        <input class="col-12" id="docFile" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx">
+        <textarea class="col-12" name="notes" placeholder="Observaciones"></textarea>
+        <button class="col-12">Guardar documento con archivo</button>
+      </form>
+    </div>
+    <div class="card">
+      <table class="table"><thead><tr><th>Operario</th><th>Documento</th><th>Validez</th><th>Estado</th><th>Archivo</th><th>PDF</th><th>Acción</th></tr></thead><tbody>${rows||'<tr><td>Sin documentos.</td></tr>'}</tbody></table>
+    </div>`;
+  $('#docForm').onsubmit=async e=>{
+    e.preventDefault();
+    const payload=Object.fromEntries(new FormData(e.target));
+    const file=$('#docFile').files[0];
+    if(file){
+      payload.file_name=file.name;
+      payload.dataUrl=await fileToDataUrl(file);
+    }
+    await api('/api/documents',{method:'POST',body:JSON.stringify(payload)});
+    viewDocuments();
+  };
+}
+
+function fileToDataUrl(file){
+  return new Promise((resolve,reject)=>{
+    const r=new FileReader();
+    r.onload=()=>resolve(r.result);
+    r.onerror=reject;
+    r.readAsDataURL(file);
+  });
+}
+
+async function printDocA4(id){
+  const docs=await api('/api/documents');
+  const d=docs.find(x=>Number(x.id)===Number(id));
+  if(!d)return;
+  openA4Window('Documento operario', `
+    <h1>Documento operario</h1>
+    <table>
+      <tr><td><b>Operario</b></td><td>${esc((d.first_name||'')+' '+(d.last_name||''))}</td></tr>
+      <tr><td><b>Tipo</b></td><td>${esc(d.doc_type)}</td></tr>
+      <tr><td><b>Título</b></td><td>${esc(d.title)}</td></tr>
+      <tr><td><b>Emisión</b></td><td>${esc(d.issue_date||'—')}</td></tr>
+      <tr><td><b>Validez</b></td><td>${esc(d.expiry_date||'—')}</td></tr>
+      <tr><td><b>Estado</b></td><td>${esc(d.computed_status||'')}</td></tr>
+      <tr><td><b>Observaciones</b></td><td>${esc(d.notes||'')}</td></tr>
+    </table>
+  `);
+}
+
+function openA4Window(title, body){
+  const w=window.open('','_blank');
+  w.document.write(`<html><head><title>${esc(title)}</title><style>@page{size:A4 portrait;margin:12mm}body{font-family:Arial;color:#111}.head{border-bottom:2px solid #111;margin-bottom:18px;padding-bottom:10px}h1{font-size:22px}table{width:100%;border-collapse:collapse}td{border-bottom:1px solid #ddd;padding:8px}.foot{margin-top:30px;font-size:12px;color:#666}</style></head><body><div class="head"><h1>MARFAN CREW</h1><p>${esc(title)} · A4 Vertical</p></div>${body}<div class="foot">Documento generado desde Marfan Crew Hours</div><br><button onclick="window.print()">Imprimir / Guardar PDF</button></body></html>`);
+  w.document.close();
+}
+
+async function operario(){
+  const ev=await api('/api/events').catch(()=>[]);
+  const docs=await api('/api/my-documents').catch(()=>[]);
+  $('#content').innerHTML=`
+    <div class="card">
+      <h3>Mis eventos asignados</h3>
+      <table class="table"><tbody>${ev.map(e=>`<tr><td>${formatLocalDate(e.event_date)}<br>${esc(e.start_time||'')} - ${esc(e.end_time||'')}</td><td><b>${esc(e.name)}</b><br>${esc(e.location||'')}</td><td><button onclick="clock(${e.id},'entrada')">Entrada</button><button class="danger" onclick="clock(${e.id},'salida')">Salida</button></td></tr>`).join('')||'<tr><td>Sin eventos asignados.</td></tr>'}</tbody></table>
+    </div>
+    <div class="card">
+      <h3>Mis documentos</h3>
+      <p class="muted">Documentos disponibles para enseñar o descargar si los solicita el cliente.</p>
+      ${docs.map(d=>`<div class="v53-doc-card"><b>${esc(d.title)}</b><br>${esc(d.doc_type)} · Validez: ${esc(d.expiry_date||'—')}<br>${d.file_url?`<a target="_blank" href="${d.file_url}"><button>Ver documento</button></a>`:''}<button class="secondary" onclick="printMyDocA4(${d.id})">PDF A4</button></div>`).join('')||'<p class="muted">No tienes documentos asignados.</p>'}
+      <p class="muted">Contactar oficina: <a href="https://wa.me/34635371634" target="_blank">WhatsApp oficina</a></p>
+    </div>
+  `;
+}
+
+async function printMyDocA4(id){
+  const docs=await api('/api/my-documents');
+  const d=docs.find(x=>Number(x.id)===Number(id));
+  if(!d)return;
+  openA4Window('Mi documento', `
+    <h1>${esc(d.title)}</h1>
+    <table>
+      <tr><td><b>Tipo</b></td><td>${esc(d.doc_type)}</td></tr>
+      <tr><td><b>Validez</b></td><td>${esc(d.expiry_date||'—')}</td></tr>
+      <tr><td><b>Estado</b></td><td>${esc(d.computed_status||'')}</td></tr>
+    </table>
+  `);
+}
+
+async function deleteDocument(id){
+  if(confirm('¿Borrar documento?')){
+    await api('/api/documents/'+id,{method:'DELETE'});
+    viewDocuments();
+  }
+}

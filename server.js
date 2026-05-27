@@ -74,6 +74,7 @@ app.use(session({
   cookie: { httpOnly: true, sameSite: 'lax', maxAge: 1000 * 60 * 60 * 12 }
 }));
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads'), { maxAge: 0 }));
 
 // ---------- AUTH MIDDLEWARES ----------
 function safeUser(user) {
@@ -910,6 +911,49 @@ function ensureFixedAdminAccess() {
   }
 }
 
+
+function v53EnsureUploadDir() {
+  const dir = path.join(__dirname, 'public', 'uploads', 'documents');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function v53SaveBase64File(dataUrl, fileName='documento') {
+  if (!dataUrl || !String(dataUrl).startsWith('data:')) return '';
+  const m = String(dataUrl).match(/^data:([^;]+);base64,(.+)$/);
+  if (!m) return '';
+  const mime = m[1];
+  const extMap = {
+    'application/pdf': 'pdf',
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx'
+  };
+  const ext = extMap[mime] || (String(fileName).split('.').pop() || 'bin');
+  const safe = String(fileName || 'documento').replace(/[^a-z0-9._-]/gi,'_').slice(0,80);
+  const finalName = `${Date.now()}_${Math.random().toString(16).slice(2)}_${safe}`.endsWith('.'+ext) ? `${Date.now()}_${safe}` : `${Date.now()}_${safe}.${ext}`;
+  const dir = v53EnsureUploadDir();
+  fs.writeFileSync(path.join(dir, finalName), Buffer.from(m[2], 'base64'));
+  return `/uploads/documents/${finalName}`;
+}
+
+function v53EnsureFinanceColumns() {
+  try {
+    addColumn('events', 'cost_staff REAL DEFAULT 0');
+    addColumn('events', 'cost_social_security REAL DEFAULT 0');
+    addColumn('events', 'cost_gestoria REAL DEFAULT 0');
+    addColumn('events', 'cost_fixed REAL DEFAULT 0');
+    addColumn('events', 'cost_transport REAL DEFAULT 0');
+    addColumn('events', 'cost_taxi REAL DEFAULT 0');
+    addColumn('events', 'cost_hotel REAL DEFAULT 0');
+    addColumn('events', 'cost_extra_hours REAL DEFAULT 0');
+    addColumn('events', 'cost_other REAL DEFAULT 0');
+  } catch(e) {}
+}
+
+v53EnsureFinanceColumns();
+
 function addDaysJS(dateStr, days) {
   const base = dateStr ? new Date(dateStr + 'T12:00:00') : new Date();
   base.setDate(base.getDate() + Number(days || 0));
@@ -1144,7 +1188,7 @@ async function geocodeAddressOSM(address) {
 
 
 // ---------- API ROUTES ----------
-app.get('/health', (req, res) => res.json({ ok: true, version: '52.2.0' }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '53.0.0' }));
 
 
 app.post('/api/geocode', requireAdmin, async (req, res) => {
@@ -2314,13 +2358,77 @@ app.get('/api/documents', requireAdmin, (req, res) => {
 app.post('/api/documents', requireAdmin, (req, res) => {
   const b = req.body || {};
   const info = db.prepare('INSERT INTO worker_documents (user_id,doc_type,title,file_url,issue_date,expiry_date,notes) VALUES (?,?,?,?,?,?,?)')
-    .run(b.user_id, b.doc_type||'PRL', b.title||'', b.file_url||'', b.issue_date||'', b.expiry_date||'', b.notes||'');
+    .run(b.user_id, b.doc_type||'PRL', b.title||'', (b.dataUrl ? v53SaveBase64File(b.dataUrl, b.file_name || b.title || 'documento') : (b.file_url||'')), b.issue_date||'', b.expiry_date||'', b.notes||'');
   res.json({ ok:true, id:info.lastInsertRowid });
 });
 
 app.delete('/api/documents/:id', requireAdmin, (req, res) => {
   db.prepare('DELETE FROM worker_documents WHERE id=?').run(req.params.id);
   res.json({ ok:true });
+});
+
+
+// ---------- V53 ENTERPRISE ROUTES ----------
+app.get('/api/my-documents', requireAuth, (req, res) => {
+  const userId = req.session.user.id;
+  if (req.session.user.role === 'admin') return res.json([]);
+  const rows = db.prepare(`
+    SELECT d.*, u.first_name,u.last_name,u.phone
+    FROM worker_documents d
+    JOIN users u ON u.id=d.user_id
+    WHERE d.user_id=?
+    ORDER BY d.expiry_date
+  `).all(userId).map(d => ({...d, computed_status:auditDocStatus(d.expiry_date)}));
+  res.json(rows);
+});
+
+app.put('/api/finance/events/:id/detailed-costs', requireAdmin, (req, res) => {
+  const b = req.body || {};
+  v53EnsureFinanceColumns();
+  db.prepare(`
+    UPDATE events SET
+      cost_staff=?,
+      cost_social_security=?,
+      cost_gestoria=?,
+      cost_fixed=?,
+      cost_transport=?,
+      cost_taxi=?,
+      cost_hotel=?,
+      cost_extra_hours=?,
+      cost_other=?,
+      estimated_external_cost=?,
+      estimated_transport_cost=?,
+      estimated_other_cost=?,
+      payment_status=?
+    WHERE id=?
+  `).run(
+    Number(b.cost_staff||0),
+    Number(b.cost_social_security||0),
+    Number(b.cost_gestoria||0),
+    Number(b.cost_fixed||0),
+    Number(b.cost_transport||0),
+    Number(b.cost_taxi||0),
+    Number(b.cost_hotel||0),
+    Number(b.cost_extra_hours||0),
+    Number(b.cost_other||0),
+    Number(b.estimated_external_cost||0),
+    Number(b.estimated_transport_cost||0),
+    Number(b.estimated_other_cost||0),
+    b.payment_status||'pendiente',
+    req.params.id
+  );
+  res.json({ ok:true });
+});
+
+app.get('/api/pdf-template/:type/:id', requireAuth, (req, res) => {
+  res.json({
+    ok:true,
+    type:req.params.type,
+    id:req.params.id,
+    format:'A4 portrait',
+    company:'MARFAN CREW',
+    generated_at:new Date().toISOString()
+  });
 });
 
 // Settings
@@ -2349,5 +2457,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Marfan Crew Hours V52.2 Hotfix Admin Access listening on port ${PORT}`);
+  console.log(`Marfan Crew Hours V53 Enterprise Stable Build listening on port ${PORT}`);
 });
