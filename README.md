@@ -375,3 +375,16 @@ El calendario seguirá mostrando el estado:
 - Dietas.
 - Extras.
 - PDF A4 vertical mediante impresión/guardar PDF.
+
+
+# V56.3 Calendar Force Sync + Evento V46 Full
+
+## Calendario
+- Añade botón Forzar sincronización.
+- Lee eventos reales de Google MARFAN.
+- Guarda/actualiza eventos en la base local.
+- Muestra popup con eventos leídos, creados y actualizados.
+
+## Crear evento
+- Modal ampliado estilo V46.
+- Datos principales, cliente, contacto, horarios, ubicación, operación, producción, tarifas, costes, notas.

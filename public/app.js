@@ -3672,3 +3672,236 @@ function renderReportV562(report){
     </div>
   `;
 }
+
+
+// ---------- V56.3 CALENDAR FORCE SYNC + EVENT V46 FULL FRONTEND ----------
+async function forceSyncGoogleMarfanV563(){
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal sync-modal-v563">
+        <div class="modal-head">
+          <h2>Sincronizando Google Calendar MARFAN</h2>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+        <div class="sync-box-v563">
+          <b>Procesando…</b><br>
+          Leyendo eventos del calendario MARFAN y guardándolos en la app.
+        </div>
+      </div>
+    </div>
+  `;
+
+  try{
+    const r = await api('/api/google/force-sync-marfan-v563',{method:'POST'});
+    $('#modalRoot').innerHTML = `
+      <div class="modal-back">
+        <div class="modal sync-modal-v563">
+          <div class="modal-head">
+            <h2>Sincronización terminada ✅</h2>
+            <button class="secondary" onclick="closeWizard();viewCalendar()">Cerrar</button>
+          </div>
+          <div class="sync-box-v563 sync-ok-v563">
+            <b>Calendario:</b> ${esc((r.calendar||{}).summary||'MARFAN')}<br>
+            <b>Eventos leídos:</b> ${r.google_events_read}<br>
+            <b>Creados en la app:</b> ${r.created}<br>
+            <b>Actualizados:</b> ${r.updated}<br>
+            <b>Errores:</b> ${r.errors}
+          </div>
+          <button onclick="closeWizard();viewCalendar()">Ver calendario actualizado</button>
+        </div>
+      </div>
+    `;
+  }catch(e){
+    $('#modalRoot').innerHTML = `
+      <div class="modal-back">
+        <div class="modal sync-modal-v563">
+          <div class="modal-head">
+            <h2>Error de sincronización</h2>
+            <button class="secondary" onclick="closeWizard()">Cerrar</button>
+          </div>
+          <div class="sync-box-v563 sync-bad-v563">
+            ${esc(e.message)}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+}
+
+function openCreateEventV559(){
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal event-modal-v563">
+        <div class="modal-head">
+          <h2>Crear evento</h2>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+
+        <form id="eventFormV563" class="event-form-v563">
+
+          <div class="event-block-v563">
+            <h4>1. Datos principales</h4>
+            <div class="event-grid-v563">
+              <input class="field span-6" name="name" placeholder="Nombre del evento" required>
+              <input class="field span-3" name="event_code" placeholder="Código / referencia">
+              <select class="field span-3" name="status">
+                <option value="programado">Programado</option>
+                <option value="confirmado">Confirmado</option>
+                <option value="pendiente">Pendiente</option>
+                <option value="realizado">Realizado</option>
+                <option value="cancelado">Cancelado</option>
+              </select>
+              <input class="field span-4" name="client" placeholder="Cliente">
+              <input class="field span-4" name="legal_name" placeholder="Razón social">
+              <input class="field span-4" name="cif" placeholder="CIF/NIF">
+            </div>
+          </div>
+
+          <div class="event-block-v563">
+            <h4>2. Contacto cliente / responsable</h4>
+            <div class="event-grid-v563">
+              <input class="field span-4" name="contact_name" placeholder="Responsable">
+              <input class="field span-3" name="contact_phone" placeholder="Teléfono">
+              <input class="field span-5" name="contact_email" placeholder="Email">
+              <input class="field span-12" name="client_notes" placeholder="Notas del cliente">
+            </div>
+          </div>
+
+          <div class="event-block-v563">
+            <h4>3. Fecha, horario y localización</h4>
+            <div class="event-grid-v563">
+              <input class="field span-3" name="event_date" type="date" value="${v55DateKey ? v55DateKey(v55CalDate || new Date()) : new Date().toISOString().slice(0,10)}" required>
+              <input class="field span-2" name="start_time" type="time" value="09:00">
+              <input class="field span-2" name="end_time" type="time" value="10:00">
+              <input class="field span-2" name="load_in_time" type="time" title="Hora entrada/carga">
+              <input class="field span-3" name="load_out_time" type="time" title="Hora salida/desmontaje">
+              <input class="field span-5" name="location" placeholder="Recinto / ubicación">
+              <input class="field span-7" name="address" placeholder="Dirección completa">
+              <input class="field span-6" name="access_notes" placeholder="Acceso carga/descarga">
+              <input class="field span-6" name="parking_notes" placeholder="Parking / vehículos">
+            </div>
+          </div>
+
+          <div class="event-block-v563">
+            <h4>4. Operación y personal</h4>
+            <div class="event-grid-v563">
+              <input class="field span-3" name="required_workers" type="number" placeholder="Operarios necesarios">
+              <input class="field span-3" name="required_team_leads" type="number" value="1" placeholder="Jefes equipo">
+              <select class="field span-3" name="operational_status">
+                <option value="borrador">Borrador</option>
+                <option value="crew_parcial">Crew parcial</option>
+                <option value="crew_completo">Crew completo</option>
+                <option value="produccion">Producción</option>
+                <option value="finalizado">Finalizado</option>
+              </select>
+              <input class="field span-3" name="service_type" placeholder="Tipo servicio">
+              <input class="field span-6" name="crew_notes" placeholder="Notas para crew">
+              <input class="field span-6" name="team_lead_notes" placeholder="Notas jefe de equipo">
+            </div>
+          </div>
+
+          <div class="event-block-v563">
+            <h4>5. Producción técnica</h4>
+            <div class="event-grid-v563">
+              <input class="field span-6" name="material_notes" placeholder="Material / técnica">
+              <input class="field span-6" name="provider_notes" placeholder="Proveedores / subcontratas">
+              <input class="field span-4" name="sound_notes" placeholder="Sonido">
+              <input class="field span-4" name="lighting_notes" placeholder="Iluminación">
+              <input class="field span-4" name="video_notes" placeholder="Vídeo / LED">
+              <input class="field span-12" name="production_notes" placeholder="Notas producción">
+            </div>
+          </div>
+
+          <div class="event-block-v563">
+            <h4>6. Tarifas y facturación</h4>
+            <div class="event-grid-v563">
+              <input class="field span-3" name="hourly_rate" type="number" step="0.01" placeholder="Tarifa hora">
+              <input class="field span-3" name="night_rate" type="number" step="0.01" placeholder="Tarifa nocturna">
+              <input class="field span-3" name="diet_price" type="number" step="0.01" placeholder="Dieta">
+              <input class="field span-3" name="km_amount" type="number" step="0.01" placeholder="Kilometraje/transporte">
+              <input class="field span-3" name="estimated_external_cost" type="number" step="0.01" placeholder="Costes externos">
+              <input class="field span-3" name="estimated_transport_cost" type="number" step="0.01" placeholder="Coste transporte">
+              <input class="field span-3" name="estimated_other_cost" type="number" step="0.01" placeholder="Otros costes">
+              <select class="field span-3" name="payment_status">
+                <option value="pendiente">Pendiente</option>
+                <option value="facturado">Facturado</option>
+                <option value="cobrado">Cobrado</option>
+                <option value="impagado">Impagado</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="event-block-v563">
+            <h4>7. Notas internas</h4>
+            <textarea class="field span-12" name="notes" placeholder="Notas internas del evento"></textarea>
+          </div>
+
+          <div class="event-actions-v559">
+            <button type="button" class="secondary" onclick="closeWizard()">Cancelar</button>
+            <button>Guardar evento</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  $('#eventFormV563').onsubmit = async e => {
+    e.preventDefault();
+    const payload = Object.fromEntries(new FormData(e.target));
+    const created = await api('/api/events',{method:'POST',body:JSON.stringify(payload)});
+    if(typeof v534Toast === 'function') v534Toast('Evento creado correctamente');
+    try { await api('/api/google/export-event-v563/'+(created.id || created.event_id),{method:'POST'}); } catch(err){}
+    closeWizard();
+    viewCalendar();
+  };
+}
+
+async function viewCalendar(){
+  const localEvents = await api('/api/events');
+  const googleStatus = await api('/api/google/status-v557').catch(()=>({configured:false,connected:false,target_calendar_name:'MARFAN'}));
+  const googleData = await v561GetGoogleEvents().catch(()=>({ok:false,events:[],error:'No se pudieron leer eventos Google'}));
+  const googleEvents = googleData.events || [];
+  const events = [...localEvents.map(e=>({...e,source:'local'})), ...googleEvents];
+
+  const body = v55CalView==='week' ? v55RenderWeekAuto(events) : v55CalView==='day' ? v55RenderDayAuto(events) : v55RenderMonthAuto(events);
+
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div>
+          <h3>Calendario eventos · MARFAN</h3>
+          <p class="v52-sub">Si los eventos no aparecen, pulsa “Forzar sincronización” y se guardarán en la app.</p>
+        </div>
+        <div class="v55-google-panel">
+          ${googleStatus.connected
+            ? `<span class="status-badge status-ok">Google conectado</span>`
+            : `<span class="status-badge status-warn">Google no conectado</span><button onclick="v559OpenGooglePopup()">Conectar Google</button>`}
+          <button onclick="forceSyncGoogleMarfanV563()">Forzar sincronización</button>
+          <button class="secondary" onclick="viewCalendar()">Actualizar vista</button>
+        </div>
+      </div>
+      ${googleData.ok
+        ? `<div class="google-sync-debug-v561 ok">Calendario: ${esc((googleData.calendar||{}).summary||'MARFAN')} · Eventos Google leídos: ${Number(googleData.count||0)}</div>`
+        : `<div class="google-sync-debug-v561 bad">Google conectado pero no lee eventos: ${esc(googleData.error||'Error desconocido')}</div>`}
+    </div>
+
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div class="actions">
+          <button onclick="openCreateEventV559()">+ Crear evento</button>
+          <button class="secondary" onclick="v55MoveCalendar(-1)">← Anterior</button>
+          <button onclick="v55CalDate=new Date();viewCalendar()">Hoy</button>
+          <button class="secondary" onclick="v55MoveCalendar(1)">Siguiente →</button>
+        </div>
+        <h2 style="text-transform:capitalize">${v55CalendarTitle()}</h2>
+        <div class="v55-view-tabs">
+          <button class="${v55CalView==='month'?'active':''}" onclick="v55SetView('month')">Mes</button>
+          <button class="${v55CalView==='week'?'active':''}" onclick="v55SetView('week')">Semana</button>
+          <button class="${v55CalView==='day'?'active':''}" onclick="v55SetView('day')">Día</button>
+        </div>
+      </div>
+      <br>
+      ${body}
+    </div>
+  `;
+}

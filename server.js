@@ -3134,7 +3134,7 @@ function v552CreateBackupObject() {
   const backup = {
     meta: {
       app: 'Marfan Crew Hours',
-      version: '56.2.0',
+      version: '56.3.0',
       exported_at: new Date().toISOString(),
       data_dir: V552_DATA_DIR,
       backup_dir: V552_BACKUP_DIR,
@@ -3789,6 +3789,129 @@ app.post('/api/reports/employee-costs', requireAdmin, (req,res)=>{
   } catch(e) {
     console.error('employee-costs report', e);
     res.status(500).json({ error:e.message });
+  }
+});
+
+
+// ---------- V56.3 FORCE GOOGLE MARFAN SYNC ----------
+function v563TableCols(table) {
+  try { return db.prepare(`PRAGMA table_info("${table}")`).all().map(c=>c.name); }
+  catch(e) { return []; }
+}
+
+function v563InsertOrUpdateEventFromGoogle(item, calendarId) {
+  const googleId = item.id;
+  const s = item.start || {};
+  const en = item.end || {};
+  const start = typeof v561MadridDateParts === 'function' ? v561MadridDateParts(s.dateTime || s.date) : {date:(s.date || String(s.dateTime||'').slice(0,10)), time:String(s.dateTime||'').slice(11,16)};
+  const end = typeof v561MadridDateParts === 'function' ? v561MadridDateParts(en.dateTime || en.date) : {date:(en.date || String(en.dateTime||'').slice(0,10)), time:String(en.dateTime||'').slice(11,16)};
+
+  const existingLink = db.prepare('SELECT * FROM google_event_links WHERE google_event_id=?').get(googleId);
+  const cols = v563TableCols('events');
+
+  const data = {
+    name: item.summary || 'Evento MARFAN',
+    location: item.location || '',
+    event_date: start.date,
+    start_time: start.time || '09:00',
+    end_time: end.time || '10:00',
+    notes: item.description || '',
+    status: 'programado',
+    operational_status: 'google_marfan',
+    client: 'MARFAN'
+  };
+
+  const keys = Object.keys(data).filter(k => cols.includes(k));
+
+  if (existingLink) {
+    const sets = keys.map(k => `"${k}"=?`).join(',');
+    db.prepare(`UPDATE events SET ${sets} WHERE id=?`).run(...keys.map(k=>data[k]), existingLink.event_id);
+    return { action:'updated', event_id:existingLink.event_id, google_event_id:googleId, summary:data.name };
+  }
+
+  const stmt = db.prepare(`INSERT INTO events (${keys.map(k=>`"${k}"`).join(',')}) VALUES (${keys.map(()=>'?').join(',')})`);
+  const info = stmt.run(...keys.map(k=>data[k]));
+  db.prepare('INSERT INTO google_event_links (event_id,google_event_id,calendar_id) VALUES (?,?,?)').run(info.lastInsertRowid, googleId, calendarId);
+  return { action:'created', event_id:info.lastInsertRowid, google_event_id:googleId, summary:data.name };
+}
+
+app.post('/api/google/force-sync-marfan-v563', requireAdmin, async (req,res)=>{
+  try {
+    const calendar = await v561GoogleCalendarClientAny();
+    const resolved = await v561ResolveMarfanCalendar(calendar);
+
+    const now = new Date();
+    const min = new Date(now.getFullYear()-1, 0, 1);
+    const max = new Date(now.getFullYear()+2, 11, 31);
+
+    const response = await calendar.events.list({
+      calendarId: resolved.calendar.id,
+      timeMin:min.toISOString(),
+      timeMax:max.toISOString(),
+      singleEvents:true,
+      orderBy:'startTime',
+      maxResults:1000
+    });
+
+    const items = (response.data.items || []).filter(i=>i.status !== 'cancelled');
+    const results = [];
+    for (const item of items) {
+      try { results.push(v563InsertOrUpdateEventFromGoogle(item, resolved.calendar.id)); }
+      catch(err) { results.push({ action:'error', google_event_id:item.id, summary:item.summary, error:err.message }); }
+    }
+
+    res.json({
+      ok:true,
+      calendar:resolved.calendar,
+      match:resolved.match,
+      google_events_read:items.length,
+      created:results.filter(r=>r.action==='created').length,
+      updated:results.filter(r=>r.action==='updated').length,
+      errors:results.filter(r=>r.action==='error').length,
+      results
+    });
+  } catch(e) {
+    console.error('force-sync-marfan-v563', e);
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// Exportar evento local a MARFAN usando datos completos del evento
+app.post('/api/google/export-event-v563/:id', requireAdmin, async (req,res)=>{
+  try {
+    const event = db.prepare('SELECT * FROM events WHERE id=?').get(req.params.id);
+    if (!event) return res.status(404).json({error:'Evento no encontrado'});
+    const calendar = await v561GoogleCalendarClientAny();
+    const resolved = await v561ResolveMarfanCalendar(calendar);
+    const calendarId = resolved.calendar.id;
+
+    const existing = db.prepare('SELECT * FROM google_event_links WHERE event_id=? ORDER BY id DESC LIMIT 1').get(event.id);
+
+    const requestBody = {
+      summary:event.name || 'Evento Marfan Crew',
+      location:event.location || event.address || '',
+      description:[
+        'Creado desde Marfan Crew Hours',
+        event.client ? `Cliente: ${event.client}` : '',
+        event.contact_name ? `Contacto: ${event.contact_name}` : '',
+        event.contact_phone ? `Teléfono: ${event.contact_phone}` : '',
+        event.notes ? `Notas: ${event.notes}` : ''
+      ].filter(Boolean).join('\\n'),
+      start:{dateTime:`${event.event_date}T${event.start_time || '09:00'}:00`,timeZone:'Europe/Madrid'},
+      end:{dateTime:`${event.event_date}T${event.end_time || '10:00'}:00`,timeZone:'Europe/Madrid'}
+    };
+
+    let result;
+    if (existing) {
+      result = await calendar.events.update({calendarId,eventId:existing.google_event_id,requestBody});
+    } else {
+      result = await calendar.events.insert({calendarId,requestBody});
+      db.prepare('INSERT INTO google_event_links (event_id,google_event_id,calendar_id) VALUES (?,?,?)').run(event.id,result.data.id,calendarId);
+    }
+
+    res.json({ok:true,google_event_id:result.data.id,htmlLink:result.data.htmlLink,calendar:resolved.calendar});
+  } catch(e) {
+    res.status(500).json({error:e.message});
   }
 });
 
