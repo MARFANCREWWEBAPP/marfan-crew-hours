@@ -3134,7 +3134,7 @@ function v552CreateBackupObject() {
   const backup = {
     meta: {
       app: 'Marfan Crew Hours',
-      version: '56.1.0',
+      version: '56.2.0',
       exported_at: new Date().toISOString(),
       data_dir: V552_DATA_DIR,
       backup_dir: V552_BACKUP_DIR,
@@ -3684,6 +3684,111 @@ app.get('/api/google/marfan-events-v561', requireAdmin, async (req,res)=>{
   }catch(e){
     console.error('marfan-events-v561', e);
     res.json({ ok:false, connected:false, count:0, events:[], error:e.message });
+  }
+});
+
+
+// ---------- V56.2 INFORMES PDF PRO A4 ----------
+function v562HoursBetween(start, end) {
+  if (!start || !end) return 0;
+  const [sh, sm] = String(start).split(':').map(Number);
+  const [eh, em] = String(end).split(':').map(Number);
+  if (!Number.isFinite(sh) || !Number.isFinite(eh)) return 0;
+  let s = sh * 60 + (sm || 0);
+  let e = eh * 60 + (em || 0);
+  if (e <= s) e += 1440;
+  return Math.round(((e - s) / 60) * 100) / 100;
+}
+
+app.post('/api/reports/employee-costs', requireAdmin, (req,res)=>{
+  try {
+    const b = req.body || {};
+    const eventId = Number(b.event_id || 0);
+    const selectedUserIds = Array.isArray(b.user_ids) ? b.user_ids.map(Number) : [];
+    const socialSecurityPercent = Number(b.social_security_percent || 32);
+    const gestoriaCost = Number(b.gestoria_cost || 0);
+    const transportCost = Number(b.transport_cost || 0);
+    const dietCost = Number(b.diet_cost || 0);
+    const extraCost = Number(b.extra_cost || 0);
+    const includeAll = !selectedUserIds.length || selectedUserIds.includes(0);
+
+    const event = eventId ? db.prepare('SELECT * FROM events WHERE id=?').get(eventId) : null;
+    if (!event) return res.status(404).json({ error:'Evento no encontrado' });
+
+    const assignments = db.prepare(`
+      SELECT a.*, 
+             u.id user_id,
+             u.first_name,u.last_name,u.nickname,u.phone,u.dni,
+             u.internal_hour_cost,u.internal_night_cost
+      FROM assignments a
+      JOIN users u ON u.id=a.user_id
+      WHERE a.event_id=?
+      ORDER BY u.first_name,u.last_name
+    `).all(eventId).filter(a => includeAll || selectedUserIds.includes(Number(a.user_id)));
+
+    const rows = assignments.map(a => {
+      const start = a.planned_start || event.start_time || '';
+      const end = a.planned_end || event.end_time || '';
+      const hours = Math.max(0, v562HoursBetween(start, end));
+      const hourCost = Number(a.internal_hour_cost || b.default_hour_cost || 0);
+      const baseCost = hours * hourCost;
+      const ssCost = baseCost * (socialSecurityPercent / 100);
+      const gestoriaShare = assignments.length ? gestoriaCost / assignments.length : 0;
+      const transportShare = assignments.length ? transportCost / assignments.length : 0;
+      const dietShare = assignments.length ? dietCost / assignments.length : 0;
+      const extraShare = assignments.length ? extraCost / assignments.length : 0;
+      const total = baseCost + ssCost + gestoriaShare + transportShare + dietShare + extraShare;
+      return {
+        user_id:a.user_id,
+        name:`${a.first_name||''} ${a.last_name||''}`.trim(),
+        nickname:a.nickname || '',
+        phone:a.phone || '',
+        dni:a.dni || '',
+        role:a.service_role || a.role || '',
+        start,end,hours,
+        hour_cost:Math.round(hourCost*100)/100,
+        base_cost:Math.round(baseCost*100)/100,
+        social_security_percent:socialSecurityPercent,
+        social_security_cost:Math.round(ssCost*100)/100,
+        gestoria_cost:Math.round(gestoriaShare*100)/100,
+        transport_cost:Math.round(transportShare*100)/100,
+        diet_cost:Math.round(dietShare*100)/100,
+        extra_cost:Math.round(extraShare*100)/100,
+        total_cost:Math.round(total*100)/100
+      };
+    });
+
+    const totals = rows.reduce((a,r)=>{
+      a.hours += r.hours;
+      a.base_cost += r.base_cost;
+      a.social_security_cost += r.social_security_cost;
+      a.gestoria_cost += r.gestoria_cost;
+      a.transport_cost += r.transport_cost;
+      a.diet_cost += r.diet_cost;
+      a.extra_cost += r.extra_cost;
+      a.total_cost += r.total_cost;
+      return a;
+    }, {hours:0,base_cost:0,social_security_cost:0,gestoria_cost:0,transport_cost:0,diet_cost:0,extra_cost:0,total_cost:0});
+
+    Object.keys(totals).forEach(k => totals[k] = Math.round(totals[k]*100)/100);
+
+    res.json({
+      ok:true,
+      event,
+      params:{
+        social_security_percent:socialSecurityPercent,
+        gestoria_cost:gestoriaCost,
+        transport_cost:transportCost,
+        diet_cost:dietCost,
+        extra_cost:extraCost
+      },
+      rows,
+      totals,
+      generated_at:new Date().toISOString()
+    });
+  } catch(e) {
+    console.error('employee-costs report', e);
+    res.status(500).json({ error:e.message });
   }
 });
 

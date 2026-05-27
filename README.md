@@ -360,3 +360,18 @@ El calendario seguirá mostrando el estado:
 ## Endpoint diagnóstico
 /api/google/calendars-v561
 /api/google/marfan-events-v561
+
+
+# V56.2 Informes PDF Pro A4
+
+## Añadido en menú Informes PDF
+- Selector de evento.
+- Selector de personal.
+- Informe interno de costes empresa por empleado.
+- Coste hora empleado.
+- Seguridad Social %.
+- Gastos de gestoría.
+- Transporte/taxi.
+- Dietas.
+- Extras.
+- PDF A4 vertical mediante impresión/guardar PDF.

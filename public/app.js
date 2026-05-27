@@ -138,7 +138,7 @@ async function renderApp(){
   if(state.user && state.user.role !== 'admin') state.view='operario';
   await load();
   document.getElementById('app').innerHTML=`<div class="app"><aside class="side">${logoTag('brand-logo')}<div class="brand">MARFAN CREW</div><div class="muted">${state.user.email||state.user.phone||''}</div><br><div class="nav">${menu()}</div><br><button class="secondary" onclick="logout()">Salir</button></aside><main class="main"><div class="top"><h1>${label(state.view)}</h1><span class="badge">${state.user.role}</span></div><div id="content"></div><div id="modalRoot"></div></main></div>`;
-  const routes={dashboard:viewDashboard,control:viewDailyControl,operaciones:viewOperations,clientes:viewClients,informes:viewReports,eventos:viewCalendar,realizados:viewRealizados,operarios:viewUsers,tarifas:viewRates,gps:viewGpsLive,produccion:viewProductionLive,finanzas:viewFinancePro,documentacion:viewDocuments,operario:viewOperario,albaranes:viewNotes,passwords:viewPasswords,config:viewConfig};
+  const routes={dashboard:viewDashboard,control:viewDailyControl,operaciones:viewOperations,clientes:viewClients,informes:viewReportsV562,eventos:viewCalendar,realizados:viewRealizados,operarios:viewUsers,tarifas:viewRates,gps:viewGpsLive,produccion:viewProductionLive,finanzas:viewFinancePro,documentacion:viewDocuments,operario:viewOperario,albaranes:viewNotes,passwords:viewPasswords,config:viewConfig};
   try{ await (routes[state.view]||viewDashboard)(); }
   catch(err){ console.error('VIEW_RENDER_ERROR',err); const c=document.getElementById('content'); if(c)c.innerHTML=`<div class="card"><h3>Error cargando menú</h3><p class="muted">${esc(err.message||err)}</p><button onclick="go('dashboard')">Volver al dashboard</button></div>`; }
 }
@@ -3496,6 +3496,179 @@ async function viewCalendar(){
       </div>
       <br>
       ${body}
+    </div>
+  `;
+}
+
+
+// ---------- V56.2 INFORMES PDF PRO A4 FRONTEND ----------
+async function viewReportsV562(){
+  const events = await api('/api/events');
+  const users = await api('/api/users');
+
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="v52-head">
+        <div>
+          <h3>Informes PDF Pro</h3>
+          <p class="muted">Informe interno A4 vertical de costes reales para la empresa por empleado.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card report-panel-v562">
+      <div class="report-tabs-v562">
+        <span>1. Seleccionar evento</span>
+        <span>2. Seleccionar personal</span>
+        <span>3. Costes empresa</span>
+        <span>4. Generar PDF A4</span>
+      </div>
+
+      <form id="reportFormV562" class="report-selector-v562">
+        <h4>Evento</h4>
+        <select class="field" name="event_id" required>
+          <option value="">Selecciona evento</option>
+          ${events.map(e=>`<option value="${e.id}">${esc(e.event_date||'')} · ${esc(e.name||'Evento')} · ${esc(e.client||'')}</option>`).join('')}
+        </select>
+
+        <br><br>
+        <h4>Personal</h4>
+        <select class="field" name="user_ids" multiple size="7">
+          <option value="0">TODOS LOS ASIGNADOS AL EVENTO</option>
+          ${users.filter(u=>u.role!=='admin').map(u=>`<option value="${u.id}">${esc((u.first_name||'')+' '+(u.last_name||''))} ${u.nickname ? '('+esc(u.nickname)+')' : ''}</option>`).join('')}
+        </select>
+        <p class="muted">Mantén pulsado CTRL/CMD para seleccionar varios. Si eliges “TODOS”, calcula todos los asignados al evento.</p>
+
+        <br>
+        <h4>Costes empresa</h4>
+        <div class="operator-grid-v56">
+          <input class="field span-3" name="default_hour_cost" type="number" step="0.01" value="0" placeholder="Coste hora defecto">
+          <input class="field span-3" name="social_security_percent" type="number" step="0.01" value="32" placeholder="% Seguridad Social">
+          <input class="field span-3" name="gestoria_cost" type="number" step="0.01" value="0" placeholder="Gastos gestoría">
+          <input class="field span-3" name="transport_cost" type="number" step="0.01" value="0" placeholder="Transporte / taxi">
+          <input class="field span-3" name="diet_cost" type="number" step="0.01" value="0" placeholder="Dietas empresa">
+          <input class="field span-3" name="extra_cost" type="number" step="0.01" value="0" placeholder="Extras">
+        </div>
+
+        <br>
+        <button>Generar informe</button>
+      </form>
+    </div>
+
+    <div id="reportResultV562"></div>
+  `;
+
+  $('#reportFormV562').onsubmit = async e => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const selected = [...e.target.querySelector('[name="user_ids"]').selectedOptions].map(o=>Number(o.value));
+    const payload = {
+      event_id:Number(fd.get('event_id')),
+      user_ids:selected,
+      default_hour_cost:Number(fd.get('default_hour_cost')||0),
+      social_security_percent:Number(fd.get('social_security_percent')||32),
+      gestoria_cost:Number(fd.get('gestoria_cost')||0),
+      transport_cost:Number(fd.get('transport_cost')||0),
+      diet_cost:Number(fd.get('diet_cost')||0),
+      extra_cost:Number(fd.get('extra_cost')||0)
+    };
+    const report = await api('/api/reports/employee-costs',{method:'POST',body:JSON.stringify(payload)});
+    renderReportV562(report);
+  };
+}
+
+function euroV562(n){ return Number(n||0).toFixed(2)+' €'; }
+
+function renderReportV562(report){
+  const e = report.event;
+  const rows = report.rows || [];
+  const t = report.totals || {};
+
+  $('#reportResultV562').innerHTML = `
+    <div class="card no-print">
+      <h3>Informe generado</h3>
+      <div class="actions">
+        <button onclick="window.print()">Descargar / Imprimir PDF A4</button>
+      </div>
+    </div>
+
+    <div id="reportPrintAreaV562" class="report-a4-v562">
+      <div class="report-a4-head-v562">
+        <div>
+          <div class="report-a4-title-v562">MARFAN CREW</div>
+          <div>Informe interno de costes de personal</div>
+        </div>
+        <div>
+          <b>A4 Vertical</b><br>
+          ${new Date(report.generated_at).toLocaleString('es-ES')}
+        </div>
+      </div>
+
+      <h1>Costes empresa por empleado</h1>
+
+      <table style="width:100%;border-collapse:collapse;margin-bottom:14px">
+        <tr><td><b>Evento</b></td><td>${esc(e.name||'')}</td></tr>
+        <tr><td><b>Fecha</b></td><td>${esc(e.event_date||'')}</td></tr>
+        <tr><td><b>Horario</b></td><td>${esc(e.start_time||'')} - ${esc(e.end_time||'')}</td></tr>
+        <tr><td><b>Cliente</b></td><td>${esc(e.client||'')}</td></tr>
+        <tr><td><b>Ubicación</b></td><td>${esc(e.location||'')}</td></tr>
+      </table>
+
+      <div class="report-kpis-v562">
+        <div class="report-kpi-v562"><span>Horas</span><b>${Number(t.hours||0).toFixed(2)}</b></div>
+        <div class="report-kpi-v562"><span>Coste base</span><b>${euroV562(t.base_cost)}</b></div>
+        <div class="report-kpi-v562"><span>Seguridad Social</span><b>${euroV562(t.social_security_cost)}</b></div>
+        <div class="report-kpi-v562"><span>Total empresa</span><b>${euroV562(t.total_cost)}</b></div>
+      </div>
+
+      <h2>Desglose por empleado</h2>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr>
+            <th style="border-bottom:1px solid #111;text-align:left;padding:6px">Empleado</th>
+            <th style="border-bottom:1px solid #111;text-align:left;padding:6px">Rol</th>
+            <th style="border-bottom:1px solid #111;text-align:right;padding:6px">Horas</th>
+            <th style="border-bottom:1px solid #111;text-align:right;padding:6px">€/h</th>
+            <th style="border-bottom:1px solid #111;text-align:right;padding:6px">Base</th>
+            <th style="border-bottom:1px solid #111;text-align:right;padding:6px">SS</th>
+            <th style="border-bottom:1px solid #111;text-align:right;padding:6px">Gestoría</th>
+            <th style="border-bottom:1px solid #111;text-align:right;padding:6px">Transp.</th>
+            <th style="border-bottom:1px solid #111;text-align:right;padding:6px">Dietas</th>
+            <th style="border-bottom:1px solid #111;text-align:right;padding:6px">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r=>`
+            <tr>
+              <td style="border-bottom:1px solid #ddd;padding:6px"><b>${esc(r.name)}</b>${r.nickname?'<br><small>'+esc(r.nickname)+'</small>':''}</td>
+              <td style="border-bottom:1px solid #ddd;padding:6px">${esc(r.role||'')}</td>
+              <td style="border-bottom:1px solid #ddd;padding:6px;text-align:right">${Number(r.hours||0).toFixed(2)}</td>
+              <td style="border-bottom:1px solid #ddd;padding:6px;text-align:right">${euroV562(r.hour_cost)}</td>
+              <td style="border-bottom:1px solid #ddd;padding:6px;text-align:right">${euroV562(r.base_cost)}</td>
+              <td style="border-bottom:1px solid #ddd;padding:6px;text-align:right">${euroV562(r.social_security_cost)}</td>
+              <td style="border-bottom:1px solid #ddd;padding:6px;text-align:right">${euroV562(r.gestoria_cost)}</td>
+              <td style="border-bottom:1px solid #ddd;padding:6px;text-align:right">${euroV562(r.transport_cost)}</td>
+              <td style="border-bottom:1px solid #ddd;padding:6px;text-align:right">${euroV562(r.diet_cost)}</td>
+              <td style="border-bottom:1px solid #ddd;padding:6px;text-align:right"><b>${euroV562(r.total_cost)}</b></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+
+      <h2>Totales</h2>
+      <table style="width:100%;border-collapse:collapse">
+        <tr><td>Coste base empleados</td><td style="text-align:right">${euroV562(t.base_cost)}</td></tr>
+        <tr><td>Seguridad Social</td><td style="text-align:right">${euroV562(t.social_security_cost)}</td></tr>
+        <tr><td>Gestoría</td><td style="text-align:right">${euroV562(t.gestoria_cost)}</td></tr>
+        <tr><td>Transporte / taxi</td><td style="text-align:right">${euroV562(t.transport_cost)}</td></tr>
+        <tr><td>Dietas</td><td style="text-align:right">${euroV562(t.diet_cost)}</td></tr>
+        <tr><td>Extras</td><td style="text-align:right">${euroV562(t.extra_cost)}</td></tr>
+        <tr><td style="border-top:2px solid #111;padding-top:8px"><b>TOTAL COSTE EMPRESA</b></td><td style="border-top:2px solid #111;padding-top:8px;text-align:right"><b>${euroV562(t.total_cost)}</b></td></tr>
+      </table>
+
+      <p style="font-size:11px;color:#666;margin-top:24px">
+        Documento interno generado por Marfan Crew Hours. Informe orientado a control interno de costes empresa.
+      </p>
     </div>
   `;
 }

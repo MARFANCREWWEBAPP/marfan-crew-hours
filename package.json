@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "56.1.0",
-  "description": "Marfan Crew Hours V56.1 - Google Calendar Sync Fix",
+  "version": "56.2.0",
+  "description": "Marfan Crew Hours V56.2 - Informes PDF Pro A4 Vertical",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
