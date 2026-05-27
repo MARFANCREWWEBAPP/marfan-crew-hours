@@ -4806,3 +4806,121 @@ app.get('/auth/google/callback-popup', async (req,res)=>{
     res.status(500).send('Error conectando Google Calendar: '+e.message);
   }
 });
+
+
+// ---------- V56.9 REAL CALENDAR FIX ----------
+app.get('/api/google/debug-calendars-v569', requireAdmin, async (req,res)=>{
+  try{
+    const tokens = typeof v567GetTokens === 'function' ? v567GetTokens() : null;
+    if(!tokens) return res.json({ok:false,error:'No hay tokens Google'});
+    const oauth2 = v567OAuthClient();
+    oauth2.setCredentials(tokens);
+    const calendar = google.calendar({version:'v3',auth:oauth2});
+    const list = await calendar.calendarList.list({maxResults:250,showHidden:true});
+    res.json({
+      ok:true,
+      total:(list.data.items||[]).length,
+      calendars:(list.data.items||[]).map(c=>({
+        id:c.id,
+        summary:c.summary,
+        accessRole:c.accessRole
+      }))
+    });
+  }catch(e){
+    res.json({ok:false,error:e.message});
+  }
+});
+
+app.post('/api/google/manual-force-sync-v569', requireAdmin, async (req,res)=>{
+  try{
+    const tokens = typeof v567GetTokens === 'function' ? v567GetTokens() : null;
+    if(!tokens) throw new Error('Google no conectado');
+
+    const oauth2 = v567OAuthClient();
+    oauth2.setCredentials(tokens);
+
+    const calendar = google.calendar({version:'v3',auth:oauth2});
+
+    const targetId = process.env.GOOGLE_TARGET_CALENDAR_ID || 'primary';
+
+    const response = await calendar.events.list({
+      calendarId:targetId,
+      singleEvents:true,
+      orderBy:'startTime',
+      maxResults:500,
+      timeMin:new Date('2024-01-01').toISOString()
+    });
+
+    const items = response.data.items || [];
+
+    let created = 0;
+    let updated = 0;
+
+    for(const item of items){
+      try{
+        const existing = db.prepare(`
+          SELECT * FROM google_event_links
+          WHERE google_event_id=?
+        `).get(item.id);
+
+        const startRaw = item.start?.dateTime || item.start?.date || '';
+        const endRaw = item.end?.dateTime || item.end?.date || '';
+
+        const startDate = String(startRaw).slice(0,10);
+        const startTime = String(startRaw).slice(11,16) || '09:00';
+        const endTime = String(endRaw).slice(11,16) || '10:00';
+
+        if(existing){
+          db.prepare(`
+            UPDATE events
+            SET name=?, location=?, notes=?, event_date=?, start_time=?, end_time=?, operational_status='google_marfan'
+            WHERE id=?
+          `).run(
+            item.summary || 'Evento Google',
+            item.location || '',
+            item.description || '',
+            startDate,
+            startTime,
+            endTime,
+            existing.event_id
+          );
+          updated++;
+        }else{
+          const info = db.prepare(`
+            INSERT INTO events
+            (name,client,location,notes,event_date,start_time,end_time,status,operational_status)
+            VALUES (?,?,?,?,?,?,?,?,?)
+          `).run(
+            item.summary || 'Evento Google',
+            'MARFAN',
+            item.location || '',
+            item.description || '',
+            startDate,
+            startTime,
+            endTime,
+            'programado',
+            'google_marfan'
+          );
+
+          db.prepare(`
+            INSERT INTO google_event_links
+            (event_id,google_event_id,calendar_id)
+            VALUES (?,?,?)
+          `).run(info.lastInsertRowid,item.id,targetId);
+
+          created++;
+        }
+      }catch(err){}
+    }
+
+    res.json({
+      ok:true,
+      total_google:items.length,
+      created,
+      updated
+    });
+
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});

@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "56.8.0",
-  "description": "Marfan Crew Hours V56.8 - Operarios Roles + Asignaciones Persistentes",
+  "version": "56.9.0",
+  "description": "V56.9 Calendar Real Fix + Dynamic Event Roles",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

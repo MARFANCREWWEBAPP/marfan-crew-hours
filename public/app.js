@@ -4847,3 +4847,148 @@ async function resetRatesFullV568(){
   await api('/api/rates-pro/seed-full-v568',{method:'POST'});
   viewRates();
 }
+
+
+// ---------- V56.9 REAL CALENDAR FIX FRONTEND ----------
+async function forceSyncGoogleV569(){
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal">
+        <div class="modal-head">
+          <h2>Sincronización Google MARFAN</h2>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+        <div class="sync-final-v567">
+          Conectando y leyendo eventos...
+        </div>
+      </div>
+    </div>
+  `;
+
+  try{
+    const dbg = await api('/api/google/debug-calendars-v569');
+
+    if(!dbg.ok){
+      $('#modalRoot').innerHTML = `
+        <div class="modal-back">
+          <div class="modal">
+            <div class="modal-head">
+              <h2>Error Google Calendar</h2>
+              <button class="secondary" onclick="closeWizard()">Cerrar</button>
+            </div>
+            <div class="sync-final-v567 bad">
+              ${esc(dbg.error||'Error')}
+            </div>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    const sync = await api('/api/google/manual-force-sync-v569',{method:'POST'});
+
+    $('#modalRoot').innerHTML = `
+      <div class="modal-back">
+        <div class="modal">
+          <div class="modal-head">
+            <h2>Sincronización completada</h2>
+            <button class="secondary" onclick="closeWizard();viewCalendar()">Cerrar</button>
+          </div>
+          <div class="sync-final-v567 ok">
+            <b>Calendarios detectados:</b> ${dbg.total}<br>
+            <b>Eventos Google:</b> ${sync.total_google}<br>
+            <b>Creados:</b> ${sync.created}<br>
+            <b>Actualizados:</b> ${sync.updated}
+          </div>
+          <div class="sync-final-v567">
+            <pre>${esc(JSON.stringify(dbg.calendars,null,2))}</pre>
+          </div>
+        </div>
+      </div>
+    `;
+
+    setTimeout(()=>viewCalendar(),1200);
+
+  }catch(e){
+    $('#modalRoot').innerHTML = `
+      <div class="modal-back">
+        <div class="modal">
+          <div class="modal-head">
+            <h2>Error sincronizando</h2>
+            <button class="secondary" onclick="closeWizard()">Cerrar</button>
+          </div>
+          <div class="sync-final-v567 bad">
+            ${esc(e.message)}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+}
+
+// override definitivo
+const __viewCalendarV569 = viewCalendar;
+viewCalendar = async function(){
+  await __viewCalendarV569();
+
+  setTimeout(()=>{
+    const toolbar = document.querySelector('.v55-google-panel');
+    if(toolbar && !document.getElementById('forceSyncV569')){
+      const btn = document.createElement('button');
+      btn.id='forceSyncV569';
+      btn.className='force-sync-btn-v567';
+      btn.innerText='FORZAR SINCRONIZACIÓN';
+      btn.onclick=forceSyncGoogleV569;
+      toolbar.prepend(btn);
+    }
+  },150);
+};
+
+// roles dinámicos por evento
+function calcRolePriceDynamicV569(row){
+  const roleSel = row.querySelector('[name="service_role_rate"]');
+  const opt = roleSel.options[roleSel.selectedIndex];
+  const type = row.querySelector('[name="service_shift"]').value;
+  const price = type === 'N'
+    ? Number(opt.dataset.night||0)
+    : Number(opt.dataset.day||0);
+
+  row.querySelector('[name="service_price"]').value = price.toFixed(2);
+}
+
+function addAssignmentRowV569(userId='', roleId=''){
+  const box = document.querySelector('#assignmentsBoxV568');
+  if(!box) return;
+
+  const div = document.createElement('div');
+  div.className='assignment-row-v568';
+
+  div.innerHTML = `
+    <select class="field" name="user_id">${usersOptionsV568(userId)}</select>
+
+    <select class="field" name="service_role_rate" onchange="calcRolePriceDynamicV569(this.closest('.assignment-row-v568'))">
+      ${v568RolesCache.map(r=>`
+        <option 
+          value="${r.id}" 
+          data-day="${Number(r.hourly_rate||0)}"
+          data-night="${Number(r.night_rate||0)}"
+          ${String(roleId)===String(r.id)?'selected':''}
+        >
+          ${esc(r.role||r.name||'')}
+        </option>
+      `).join('')}
+    </select>
+
+    <select class="field" name="service_shift" onchange="calcRolePriceDynamicV569(this.closest('.assignment-row-v568'))">
+      <option value="D">D</option>
+      <option value="N">N</option>
+    </select>
+
+    <input class="field" readonly name="service_price" placeholder="Tarifa">
+
+    <button type="button" class="danger" onclick="this.closest('.assignment-row-v568').remove()">Quitar</button>
+  `;
+
+  box.appendChild(div);
+  calcRolePriceDynamicV569(div);
+}
