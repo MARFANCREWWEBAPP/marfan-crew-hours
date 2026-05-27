@@ -278,3 +278,22 @@ La creación de operarios se rediseña visualmente como el menú de clientes:
 - apodo/mote mantenido
 - fotografía mantenida
 - carpeta de documentos mantenida
+
+
+# V55.7 Google Calendar Auto Connect
+
+## Cambio principal
+Al entrar en Calendario, la app intenta conectar automáticamente Google MARFAN si está configurado.
+
+## Persistencia
+El token se guarda en:
+- SQLite
+- /data/google-token.json
+
+Esto evita repetir el proceso tras actualizar versión, siempre que Railway tenga Volume en /data.
+
+## Estado
+El calendario seguirá mostrando el estado:
+- Google MARFAN conectado automáticamente
+- OAuth pendiente
+- Faltan variables Railway

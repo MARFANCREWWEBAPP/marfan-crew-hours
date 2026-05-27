@@ -2904,7 +2904,7 @@ function v55EventToGoogle(e) {
 }
 
 async function v55GoogleCalendarClient() {
-  const tokens = v55GetGoogleTokens();
+  const tokens = (typeof v557GetTokensAny === 'function' ? v557GetTokensAny() : v55GetGoogleTokens());
   if (!tokens) throw new Error('Google Calendar no conectado');
   const oauth2 = v55GoogleOAuthClient();
   oauth2.setCredentials(tokens);
@@ -2990,6 +2990,7 @@ app.get('/auth/google/callback', async (req,res)=>{
     const oauth2 = v55GoogleOAuthClient();
     const { tokens } = await oauth2.getToken(code);
     v55SaveGoogleTokens(tokens);
+    try { v557WriteTokenFile(tokens); } catch(e) {}
     res.send(`
       <html><body style="font-family:Arial;padding:40px">
         <h1>Google Calendar conectado correctamente ✅</h1>
@@ -3133,7 +3134,7 @@ function v552CreateBackupObject() {
   const backup = {
     meta: {
       app: 'Marfan Crew Hours',
-      version: '55.6.0',
+      version: '55.7.0',
       exported_at: new Date().toISOString(),
       data_dir: V552_DATA_DIR,
       backup_dir: V552_BACKUP_DIR,
@@ -3388,6 +3389,129 @@ app.get('/api/users/:id/folder', requireAdmin, (req,res)=>{
     `).all(id).map(d => ({...d, computed_status: typeof auditDocStatus==='function' ? auditDocStatus(d.expiry_date) : ''}));
   } catch(e) {}
   res.json({user, docs});
+});
+
+
+// ---------- V55.7 GOOGLE AUTO CONNECT PERSISTENCE ----------
+const V557_GOOGLE_TOKEN_FILE = path.join((typeof V552_DATA_DIR !== 'undefined' ? V552_DATA_DIR : (process.env.DATA_DIR || '/data')), 'google-token.json');
+
+function v557ReadTokenFile() {
+  try {
+    if (fs.existsSync(V557_GOOGLE_TOKEN_FILE)) {
+      return JSON.parse(fs.readFileSync(V557_GOOGLE_TOKEN_FILE, 'utf8'));
+    }
+  } catch(e) {}
+  return null;
+}
+
+function v557WriteTokenFile(tokens) {
+  try {
+    fs.mkdirSync(path.dirname(V557_GOOGLE_TOKEN_FILE), { recursive:true });
+    fs.writeFileSync(V557_GOOGLE_TOKEN_FILE, JSON.stringify(tokens, null, 2));
+    return true;
+  } catch(e) {
+    console.error('write google token file error', e);
+    return false;
+  }
+}
+
+function v557GetTokensAny() {
+  try {
+    const dbTokens = typeof v55GetGoogleTokens === 'function' ? v55GetGoogleTokens() : null;
+    if (dbTokens) return dbTokens;
+  } catch(e) {}
+  return v557ReadTokenFile();
+}
+
+function v557SaveTokensEverywhere(tokens) {
+  try { if (typeof v55SaveGoogleTokens === 'function') v55SaveGoogleTokens(tokens); } catch(e) {}
+  v557WriteTokenFile(tokens);
+}
+
+app.get('/api/google/status-v557', requireAdmin, (req,res)=>{
+  const configured = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && (process.env.GOOGLE_CALLBACK_URL || typeof GOOGLE_CALLBACK_URL !== 'undefined'));
+  const tokens = v557GetTokensAny();
+  res.json({
+    ok:true,
+    configured,
+    connected: !!tokens,
+    token_file_exists: fs.existsSync(V557_GOOGLE_TOKEN_FILE),
+    token_file: V557_GOOGLE_TOKEN_FILE,
+    target_calendar_name: process.env.GOOGLE_TARGET_CALENDAR_NAME || 'MARFAN',
+    callback_url: process.env.GOOGLE_CALLBACK_URL || (typeof GOOGLE_CALLBACK_URL !== 'undefined' ? GOOGLE_CALLBACK_URL : '')
+  });
+});
+
+// Ruta de conexión automática. Si ya hay token, no repite OAuth.
+app.get('/auth/google-auto', requireAdmin, (req,res)=>{
+  try {
+    if (v557GetTokensAny()) {
+      return res.send(`
+        <html><body style="font-family:Arial;padding:40px">
+          <h1>Google Calendar ya está conectado ✅</h1>
+          <p>Calendario objetivo: MARFAN</p>
+          <script>setTimeout(()=>{ window.location.href='/' },1200)</script>
+        </body></html>
+      `);
+    }
+
+    const clientId = process.env.GOOGLE_CLIENT_ID || (typeof GOOGLE_CLIENT_ID !== 'undefined' ? GOOGLE_CLIENT_ID : '');
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET || (typeof GOOGLE_CLIENT_SECRET !== 'undefined' ? GOOGLE_CLIENT_SECRET : '');
+    const callbackUrl = process.env.GOOGLE_CALLBACK_URL || (typeof GOOGLE_CALLBACK_URL !== 'undefined' ? GOOGLE_CALLBACK_URL : '');
+
+    if(!clientId || !clientSecret || !callbackUrl){
+      return res.status(400).send(`
+        <html><body style="font-family:Arial;padding:40px">
+          <h1>Faltan variables Google OAuth</h1>
+          <p>Configura en Railway Variables:</p>
+          <ul>
+            <li>GOOGLE_CLIENT_ID: ${clientId ? 'OK' : 'FALTA'}</li>
+            <li>GOOGLE_CLIENT_SECRET: ${clientSecret ? 'OK' : 'FALTA'}</li>
+            <li>GOOGLE_CALLBACK_URL: ${callbackUrl ? callbackUrl : 'FALTA'}</li>
+            <li>GOOGLE_TARGET_CALENDAR_NAME: ${process.env.GOOGLE_TARGET_CALENDAR_NAME || 'MARFAN'}</li>
+          </ul>
+        </body></html>
+      `);
+    }
+
+    const oauth2 = new google.auth.OAuth2(clientId, clientSecret, callbackUrl);
+    const url = oauth2.generateAuthUrl({
+      access_type:'offline',
+      prompt:'consent',
+      scope:[
+        'https://www.googleapis.com/auth/calendar',
+        'https://www.googleapis.com/auth/calendar.events'
+      ]
+    });
+    return res.redirect(url);
+  } catch(e) {
+    console.error('google-auto error', e);
+    res.status(500).send('Error Google Auto: '+e.message);
+  }
+});
+
+// Callback persistente alternativo: guarda en DB y en /data/google-token.json
+app.get('/auth/google/callback-v557', async (req,res)=>{
+  try {
+    const code = req.query.code;
+    if (!code) return res.status(400).send('Falta code OAuth.');
+    const clientId = process.env.GOOGLE_CLIENT_ID || (typeof GOOGLE_CLIENT_ID !== 'undefined' ? GOOGLE_CLIENT_ID : '');
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET || (typeof GOOGLE_CLIENT_SECRET !== 'undefined' ? GOOGLE_CLIENT_SECRET : '');
+    const callbackUrl = process.env.GOOGLE_CALLBACK_URL || (typeof GOOGLE_CALLBACK_URL !== 'undefined' ? GOOGLE_CALLBACK_URL : '');
+    const oauth2 = new google.auth.OAuth2(clientId, clientSecret, callbackUrl);
+    const { tokens } = await oauth2.getToken(code);
+    v557SaveTokensEverywhere(tokens);
+    res.send(`
+      <html><body style="font-family:Arial;padding:40px">
+        <h1>Google Calendar conectado y guardado correctamente ✅</h1>
+        <p>Token guardado en base de datos y en volumen persistente.</p>
+        <script>setTimeout(()=>{ window.location.href='/' },1600)</script>
+      </body></html>
+    `);
+  } catch(e) {
+    console.error('callback-v557', e);
+    res.status(500).send('Error conectando Google Calendar: '+e.message);
+  }
 });
 
 // Settings

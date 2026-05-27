@@ -2949,3 +2949,47 @@ async function viewUsers(){
     viewUsers();
   };
 }
+
+
+// ---------- V55.7 GOOGLE AUTO CONNECT FRONTEND ----------
+let v557AutoTried = sessionStorage.getItem('v557_google_auto_tried') === '1';
+
+async function v557GoogleStatus(){
+  try { return await api('/api/google/status-v557'); }
+  catch(e) { return {configured:false,connected:false,error:e.message,target_calendar_name:'MARFAN'}; }
+}
+
+// override calendar to auto connect if configured but disconnected
+const __v553ViewCalendar = typeof viewCalendar === 'function' ? viewCalendar : null;
+viewCalendar = async function(){
+  const st = await v557GoogleStatus();
+
+  if(st.configured && !st.connected && !v557AutoTried){
+    sessionStorage.setItem('v557_google_auto_tried','1');
+    v557AutoTried = true;
+    $('#content').innerHTML = `
+      <div class="card">
+        <h3>Conectando automáticamente Google Calendar MARFAN…</h3>
+        <p class="muted">Solo tendrás que aceptar permisos si Google todavía no tiene token guardado.</p>
+        <p><span class="status-badge status-warn">Estado: conectando OAuth</span></p>
+      </div>
+    `;
+    setTimeout(()=>{ window.location.href='/auth/google-auto'; },700);
+    return;
+  }
+
+  if(__v553ViewCalendar) {
+    await __v553ViewCalendar();
+    setTimeout(()=>{
+      const panel = document.querySelector('.v553-sync-info');
+      if(panel){
+        panel.innerHTML = st.connected
+          ? `✅ Google MARFAN conectado automáticamente. Token persistente: ${st.token_file_exists ? 'OK' : 'pendiente'}`
+          : `⚠️ Google MARFAN no conectado. Estado: ${st.configured ? 'OAuth pendiente' : 'faltan variables Railway'}`;
+      }
+    },100);
+    return;
+  }
+
+  $('#content').innerHTML = '<div class="card"><h3>Calendario</h3><p>No se pudo cargar la vista calendario.</p></div>';
+};
