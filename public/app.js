@@ -7260,3 +7260,130 @@ if(!window.__v584CalendarActiveClick){
 }
 
 setTimeout(setCalendarMenuActiveV584, 800);
+
+
+// ---------- V58.5 GOOGLE SYNC MODAL CLOSE FIX ----------
+window.__syncAbortV585 = false;
+
+function closeSyncModalV585(){
+  window.__syncAbortV585 = true;
+  try { closeWizard(); } catch(e) {
+    const modal = document.getElementById('modalRoot');
+    if(modal) modal.innerHTML = '';
+  }
+}
+
+function syncModalV585(title, body, closable=true){
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back" onclick="if(event.target===this) closeSyncModalV585()">
+      <div class="modal sync-modal-safe-v585" onclick="event.stopPropagation()">
+        <div class="sync-modal-head-v585">
+          <h2>${escV582 ? escV582(title) : title}</h2>
+          ${closable ? `<button class="sync-close-v585" onclick="closeSyncModalV585()">Cerrar</button>` : ''}
+        </div>
+        ${body}
+        <div class="actions">
+          <button class="sync-cancel-v585" onclick="closeSyncModalV585()">Cancelar / cerrar ventana</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Escape cierra cualquier modal de sync
+if(!window.__v585EscapeClose){
+  window.__v585EscapeClose = true;
+  window.addEventListener('keydown', e=>{
+    if(e.key === 'Escape'){
+      const m = document.querySelector('.sync-modal-safe-v585');
+      if(m) closeSyncModalV585();
+    }
+  });
+}
+
+// Sobrescribe la sincronización para que NUNCA se quede bloqueada.
+async function forceGoogleSyncV583(){
+  window.__syncAbortV585 = false;
+
+  syncModalV585('Sincronización Google MARFAN', `
+    <div class="sync-status-v585">
+      <b>Sincronizando…</b><br>
+      Puedes cerrar esta ventana cuando quieras. La app no quedará bloqueada.
+    </div>
+  `);
+
+  const timeout = setTimeout(()=>{
+    if(!window.__syncAbortV585){
+      const box = document.querySelector('.sync-status-v585');
+      if(box){
+        box.classList.add('bad');
+        box.innerHTML = `
+          <b>La sincronización está tardando demasiado.</b><br>
+          Puedes cerrar esta ventana y volver a intentarlo.
+        `;
+      }
+    }
+  }, 25000);
+
+  try{
+    const r = await api('/api/google/sync-calendar-v583',{method:'POST'});
+    if(window.__syncAbortV585) return;
+
+    syncModalV585('Sincronización completada ✅', `
+      <div class="sync-status-v585 ok">
+        <b>Calendario:</b> ${escV582((r.calendar||{}).summary||'MARFAN')}<br>
+        <b>Eventos leídos:</b> ${r.read}<br>
+        <b>Creados:</b> ${r.created}<br>
+        <b>Actualizados:</b> ${r.updated}<br>
+        <b>Errores:</b> ${r.errors}
+      </div>
+      ${r.errors ? `<div class="sync-status-v585 bad"><pre>${escV582(JSON.stringify((r.results||[]).filter(x=>x.action==='error'),null,2))}</pre></div>` : ''}
+      <div class="actions">
+        <button onclick="closeSyncModalV585(); showCalendarV582();">Cerrar y actualizar calendario</button>
+      </div>
+    `);
+  }catch(e){
+    if(window.__syncAbortV585) return;
+
+    syncModalV585('Error sincronizando Google', `
+      <div class="sync-status-v585 bad">
+        ${escV582(e.message || 'Error desconocido')}
+      </div>
+      <div class="actions">
+        <button onclick="closeSyncModalV585(); showCalendarV582();">Cerrar y volver al calendario</button>
+      </div>
+    `);
+  }finally{
+    clearTimeout(timeout);
+    window.__syncAbortV585 = false;
+    try { document.body.classList.remove('loading'); } catch(e){}
+  }
+}
+
+// Alias para otros botones antiguos de sincronización
+if(typeof forceGoogleSyncNoPatternV574 === 'function'){
+  forceGoogleSyncNoPatternV574 = forceGoogleSyncV583;
+}
+if(typeof forceGoogleSyncV572 === 'function'){
+  forceGoogleSyncV572 = forceGoogleSyncV583;
+}
+if(typeof forceSyncGoogleV569 === 'function'){
+  forceSyncGoogleV569 = forceGoogleSyncV583;
+}
+
+// Reforzar botón de calendario para llamar al sync seguro
+const __showCalendarV582_v585 = typeof showCalendarV582 === 'function' ? showCalendarV582 : null;
+if(__showCalendarV582_v585){
+  showCalendarV582 = async function(){
+    await __showCalendarV582_v585();
+    setTimeout(()=>{
+      document.querySelectorAll('button').forEach(btn=>{
+        const t = (btn.textContent||'').toLowerCase();
+        if(t.includes('sincronización google') || t.includes('sincronizar google') || t.includes('forzar sincronización')){
+          btn.onclick = forceGoogleSyncV583;
+        }
+      });
+    },150);
+  };
+  window.viewCalendar = showCalendarV582;
+}

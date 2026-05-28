@@ -1,7 +1,11 @@
 
-# V58.4 Calendar Menu Active State
+# V58.5 Google Sync Modal Close Fix
 
 Corrige:
-- Al seleccionar Calendario eventos, el menú queda marcado como activo/blanco.
-- Añade clase visual propia sin romper otras activaciones.
-- Reaplica estado activo tras renderizados.
+- La ventana de sincronización Google siempre se puede cerrar.
+- Cierre con botón Cerrar.
+- Cierre con Cancelar/cerrar ventana.
+- Cierre haciendo click fuera.
+- Cierre con tecla Escape.
+- Timeout visual si Google tarda demasiado.
+- El modal no bloquea la app.
