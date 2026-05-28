@@ -1473,3 +1473,16 @@ button.warn{background:#f59e0b;color:#111}
 .v583-sync-btn{background:#7f1d1d!important;color:#fff!important;font-weight:950!important}
 .v583-edit{background:#2563eb!important;color:#fff!important;font-weight:950!important}
 .v583-delete{background:#dc2626!important;color:#fff!important;font-weight:950!important}
+
+
+/* V58.4 Calendar menu active state */
+.menu-active-calendar-v584,
+.sidebar button.menu-active-calendar-v584,
+.sidebar a.menu-active-calendar-v584,
+nav button.menu-active-calendar-v584,
+nav a.menu-active-calendar-v584{
+  background:#fff!important;
+  color:#111!important;
+  font-weight:950!important;
+  box-shadow:0 8px 24px rgba(255,255,255,.18)!important;
+}

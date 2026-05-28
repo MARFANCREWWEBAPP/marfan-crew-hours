@@ -1,8 +1,7 @@
 
-# V58.3 Calendar Sync Restored + Edit Fix
+# V58.4 Calendar Menu Active State
 
-## Corrige
-- Recupera botón FORZAR SINCRONIZACIÓN GOOGLE en calendario V58.2.
-- Corrige botón Editar evento.
-- Guardar cambios funciona y refresca calendario.
-- Borrar sigue funcionando.
+Corrige:
+- Al seleccionar Calendario eventos, el menú queda marcado como activo/blanco.
+- Añade clase visual propia sin romper otras activaciones.
+- Reaplica estado activo tras renderizados.

@@ -7189,3 +7189,74 @@ showCalendarV582 = async function(){
 };
 
 window.viewCalendar = showCalendarV582;
+
+
+// ---------- V58.4 CALENDAR MENU ACTIVE STATE ----------
+function setCalendarMenuActiveV584(){
+  const candidates = document.querySelectorAll('button,a,[data-view],[data-section],[onclick]');
+  candidates.forEach(el=>{
+    const txt = (el.textContent || '').toLowerCase();
+    const attrs = [
+      el.getAttribute('data-view'),
+      el.getAttribute('data-section'),
+      el.getAttribute('onclick'),
+      el.getAttribute('href'),
+      el.id,
+      el.className
+    ].join(' ').toLowerCase();
+
+    const isCalendar = txt.includes('calendario') || attrs.includes('calendario') || attrs.includes('calendar');
+    if(isCalendar){
+      el.classList.add('menu-active-calendar-v584');
+      el.classList.add('active');
+      el.setAttribute('aria-current','page');
+    }else{
+      // solo quitamos nuestra clase, no rompemos otras activaciones propias
+      el.classList.remove('menu-active-calendar-v584');
+    }
+  });
+}
+
+const __showCalendarV582_v584 = typeof showCalendarV582 === 'function' ? showCalendarV582 : null;
+if(__showCalendarV582_v584){
+  showCalendarV582 = async function(){
+    await __showCalendarV582_v584();
+    setCalendarMenuActiveV584();
+    setTimeout(setCalendarMenuActiveV584, 150);
+    setTimeout(setCalendarMenuActiveV584, 600);
+  };
+  window.viewCalendar = showCalendarV582;
+}
+
+const __viewCalendar_v584 = typeof viewCalendar === 'function' ? viewCalendar : null;
+if(__viewCalendar_v584){
+  viewCalendar = async function(){
+    await __viewCalendar_v584();
+    setCalendarMenuActiveV584();
+    setTimeout(setCalendarMenuActiveV584, 150);
+    setTimeout(setCalendarMenuActiveV584, 600);
+  };
+}
+
+// Intercepta clicks del menú calendario para dejarlo activo al momento.
+if(!window.__v584CalendarActiveClick){
+  window.__v584CalendarActiveClick = true;
+  document.addEventListener('click', ev=>{
+    const el = ev.target.closest && ev.target.closest('button,a,[data-view],[data-section],[onclick]');
+    if(!el) return;
+    const txt = (el.textContent || '').toLowerCase();
+    const attrs = [
+      el.getAttribute('data-view'),
+      el.getAttribute('data-section'),
+      el.getAttribute('onclick'),
+      el.getAttribute('href')
+    ].join(' ').toLowerCase();
+
+    if(txt.includes('calendario') || attrs.includes('calendario') || attrs.includes('calendar')){
+      setTimeout(setCalendarMenuActiveV584, 20);
+      setTimeout(setCalendarMenuActiveV584, 250);
+    }
+  }, true);
+}
+
+setTimeout(setCalendarMenuActiveV584, 800);
