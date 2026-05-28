@@ -6334,3 +6334,218 @@ async function viewCalendar(){
     </div>
   `;
 }
+
+
+// ---------- V57.9 CALENDAR CLICK FINAL FIX ----------
+window.__calendarEventsCacheV579 = [];
+
+async function getEventsCacheV579(){
+  try{
+    const events = await api('/api/events');
+    window.__calendarEventsCacheV579 = Array.isArray(events) ? events : [];
+    return window.__calendarEventsCacheV579;
+  }catch(e){
+    return window.__calendarEventsCacheV579 || [];
+  }
+}
+
+function normalizeTextV579(s){
+  return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
+}
+
+function findEventIdFromElementV579(el){
+  if(!el) return null;
+
+  const attrs = [
+    el.dataset?.calEventId,
+    el.dataset?.eventId,
+    el.getAttribute?.('data-cal-event-id'),
+    el.getAttribute?.('data-event-id')
+  ].filter(Boolean);
+
+  for(const a of attrs){
+    const id = Number(String(a).replace(/^g_/,'').replace(/[^0-9]/g,''));
+    if(id) return id;
+  }
+
+  const onclick = el.getAttribute?.('onclick') || '';
+  const m = onclick.match(/(?:openEventDetail|openCalendarEventActionsV576)\((\d+)\)/);
+  if(m) return Number(m[1]);
+
+  const text = normalizeTextV579(el.innerText || el.textContent || '');
+  if(text){
+    const found = (window.__calendarEventsCacheV579||[]).find(e=>{
+      const name = normalizeTextV579(e.name || '');
+      const time = normalizeTextV579(e.start_time || '');
+      return name && text.includes(name) || (name && time && text.includes(time) && text.includes(name.slice(0, Math.min(8,name.length))));
+    });
+    if(found) return Number(found.id);
+  }
+
+  return null;
+}
+
+async function openCalendarEventFinalV579(id){
+  id = Number(id);
+  if(!id){
+    alert('No puedo identificar el ID del evento. Actualiza la vista y prueba otra vez.');
+    return;
+  }
+  if(typeof openCalendarEventActionsV576 === 'function'){
+    return openCalendarEventActionsV576(id);
+  }
+  if(typeof openEventDetail === 'function'){
+    return openEventDetail(id);
+  }
+  alert('Evento ID: '+id);
+}
+
+function bindEveryCalendarEventV579(){
+  const selectors = [
+    '[data-cal-event-id]',
+    '[data-event-id]',
+    '.cal-event-v578',
+    '.v55-event',
+    '.calendar-event-click-v577'
+  ].join(',');
+
+  document.querySelectorAll(selectors).forEach(el=>{
+    if(el.dataset.v579Bound === '1') return;
+
+    const id = findEventIdFromElementV579(el);
+    if(id){
+      el.dataset.calEventId = String(id);
+      el.classList.add('cal-clickable-v579');
+      el.removeAttribute('onclick');
+      el.addEventListener('click', ev=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+        ev.stopImmediatePropagation();
+        openCalendarEventFinalV579(id);
+      }, true);
+      el.dataset.v579Bound = '1';
+    }
+  });
+}
+
+// Captura total: aunque otro listener lo bloquee, este va primero.
+if(!window.__v579CaptureInstalled){
+  window.__v579CaptureInstalled = true;
+  document.addEventListener('pointerdown', function(ev){
+    const el = ev.target.closest && ev.target.closest('[data-cal-event-id],[data-event-id],.cal-event-v578,.v55-event,.calendar-event-click-v577');
+    if(!el) return;
+    const id = findEventIdFromElementV579(el);
+    if(!id) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    ev.stopImmediatePropagation();
+    openCalendarEventFinalV579(id);
+  }, true);
+
+  document.addEventListener('click', function(ev){
+    const el = ev.target.closest && ev.target.closest('[data-cal-event-id],[data-event-id],.cal-event-v578,.v55-event,.calendar-event-click-v577');
+    if(!el) return;
+    const id = findEventIdFromElementV579(el);
+    if(!id) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    ev.stopImmediatePropagation();
+    openCalendarEventFinalV579(id);
+  }, true);
+}
+
+// Mutation observer: cuando se repinta el calendario, reengancha eventos.
+if(!window.__v579ObserverInstalled){
+  window.__v579ObserverInstalled = true;
+  const obs = new MutationObserver(()=>{
+    bindEveryCalendarEventV579();
+  });
+  obs.observe(document.body, {childList:true, subtree:true});
+}
+
+// Render nuevo real, y además fuerza cache de eventos.
+async function viewCalendarV579Final(){
+  const events = await getEventsCacheV579();
+  const googleStatus = await api('/api/google/status-v557').catch(()=>({connected:false}));
+
+  const view = (typeof v55CalView !== 'undefined' && v55CalView) ? v55CalView : 'month';
+  const body = view === 'week'
+    ? calV578RenderWeek(events)
+    : view === 'day'
+      ? calV578RenderDay(events)
+      : calV578RenderMonth(events);
+
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div>
+          <h3>Calendario eventos · MARFAN</h3>
+          <p class="v52-sub">V57.9: click final activo. Pulsa directamente sobre el evento para editar/borrar.</p>
+        </div>
+        <div class="v55-google-panel">
+          ${googleStatus.connected ? '<span class="status-badge status-ok">Google conectado</span>' : '<span class="status-badge status-warn">Google no conectado</span><button onclick="v559OpenGooglePopup()">Conectar Google</button>'}
+          <button class="force-sync-v574" onclick="forceGoogleSyncNoPatternV574()">FORZAR SINCRONIZACIÓN GOOGLE</button>
+          <button class="secondary" onclick="viewCalendar()">Actualizar vista</button>
+        </div>
+      </div>
+      <div class="google-sync-debug-v561 ok">Eventos cargados: ${events.length}. Click final V57.9 activo.</div>
+    </div>
+
+    <div class="card" id="calendarCardV579">
+      <div class="v55-calendar-toolbar">
+        <div class="actions">
+          <button onclick="openCreateEventV559()">+ Crear evento</button>
+          <button class="secondary" onclick="v55MoveCalendar(-1)">← Anterior</button>
+          <button onclick="v55CalDate=new Date();viewCalendar()">Hoy</button>
+          <button class="secondary" onclick="v55MoveCalendar(1)">Siguiente →</button>
+        </div>
+        <h2 style="text-transform:capitalize">${calV578Title()}</h2>
+        <div class="v55-view-tabs">
+          <button class="${view==='month'?'active':''}" onclick="v55SetView('month')">Mes</button>
+          <button class="${view==='week'?'active':''}" onclick="v55SetView('week')">Semana</button>
+          <button class="${view==='day'?'active':''}" onclick="v55SetView('day')">Día</button>
+        </div>
+      </div>
+      <br>
+      ${body}
+    </div>
+  `;
+
+  setTimeout(bindEveryCalendarEventV579, 50);
+  setTimeout(bindEveryCalendarEventV579, 300);
+}
+
+// Sobrescribe función global y también posibles mapas de rutas.
+viewCalendar = viewCalendarV579Final;
+
+try{
+  if(typeof routes !== 'undefined' && routes){
+    routes.calendario = viewCalendarV579Final;
+    routes.calendar = viewCalendarV579Final;
+    routes.eventos = viewCalendarV579Final;
+  }
+}catch(e){}
+
+try{
+  if(typeof views !== 'undefined' && views){
+    views.calendario = viewCalendarV579Final;
+    views.calendar = viewCalendarV579Final;
+    views.eventos = viewCalendarV579Final;
+  }
+}catch(e){}
+
+// Parchea v55SetView para que siempre llame a la vista final.
+if(typeof v55SetView === 'function' && !window.__v579SetViewPatched){
+  window.__v579SetViewPatched = true;
+  const oldSetView = v55SetView;
+  v55SetView = function(v){
+    try{ oldSetView(v); }catch(e){ if(typeof v55CalView !== 'undefined') v55CalView = v; }
+    setTimeout(viewCalendarV579Final, 50);
+  };
+}
+
+// Primera activación cuando ya esté la app cargada.
+setTimeout(async ()=>{
+  await getEventsCacheV579();
+  bindEveryCalendarEventV579();
+}, 800);

@@ -1329,3 +1329,17 @@ button.warn{background:#f59e0b;color:#111}
   transform:translateY(-1px);
   filter:brightness(.92);
 }
+
+
+/* V57.9 Calendar Click Final Fix */
+.cal-clickable-v579,
+.v55-event,
+.cal-event-v578{
+  cursor:pointer!important;
+  pointer-events:auto!important;
+  position:relative!important;
+  z-index:50!important;
+}
+.cal-clickable-v579{
+  outline:2px solid rgba(37,99,235,.25);
+}

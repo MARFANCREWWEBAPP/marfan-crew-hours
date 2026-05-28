@@ -97,3 +97,13 @@ Reemplaza completamente el render del calendario:
 - listener global en captura
 - no depende de onclick antiguos
 - al pulsar evento abre subventana editar/borrar
+
+
+# V57.9 Calendar Click Final Fix
+
+## Solución
+- Sobrescribe viewCalendar.
+- Reengancha routes/views si existen.
+- Listener en pointerdown y click, fase captura.
+- MutationObserver para repintados.
+- Si no hay data-id, intenta resolver evento por texto/nombre/hora.
