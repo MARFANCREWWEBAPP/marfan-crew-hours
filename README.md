@@ -1,11 +1,16 @@
 
-# V58.8 Calendar Delete Sync Fix
+# V58.9 Sync Modal Hard Close Fix
 
-## Problema corregido
-Al borrar eventos sincronizados, al volver a sincronizar Google Calendar reaparecían.
+Corrige definitivamente:
+- El modal de sincronización se queda bloqueado.
+- Botón Cerrar no responde.
+- Overlay no se libera.
 
-## Solución
-- Al borrar evento con enlace Google, se guarda una marca en `deleted_google_events`.
-- La sincronización ignora eventos marcados como borrados.
-- Además intenta borrar el evento en Google Calendar si hay permisos.
-- El modal de sync muestra cuántos eventos ha saltado por estar borrados.
+Solución:
+- hardCloseModalV589 elimina modalRoot directamente.
+- Cierra con botón Cerrar.
+- Cierra con botón Cerrar ventana.
+- Cierra con Escape.
+- Cierra con click fuera.
+- Limpia clases loading.
+- Reengancha todos los botones de sincronización.

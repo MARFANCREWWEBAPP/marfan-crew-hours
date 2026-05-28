@@ -7707,3 +7707,132 @@ deleteCalendarEventV588 = deleteEventV582;
 if(typeof forceGoogleSyncNoPatternV574 === 'function') forceGoogleSyncNoPatternV574 = forceGoogleSyncV583;
 if(typeof forceGoogleSyncV572 === 'function') forceGoogleSyncV572 = forceGoogleSyncV583;
 if(typeof forceSyncGoogleV569 === 'function') forceSyncGoogleV569 = forceGoogleSyncV583;
+
+
+// ---------- V58.9 SYNC MODAL HARD CLOSE FIX ----------
+function hardCloseModalV589(){
+  try { window.__syncAbortV585 = true; } catch(e){}
+  try { document.body.classList.remove('loading'); } catch(e){}
+  try { document.documentElement.classList.remove('loading'); } catch(e){}
+  try {
+    const root = document.getElementById('modalRoot');
+    if(root) root.innerHTML = '';
+  } catch(e){}
+  try {
+    document.querySelectorAll('.modal-back,.modal-overlay,.sync-modal-safe-v585,.sync-modal-v589').forEach(el=>{
+      if(el && el.parentNode) el.parentNode.removeChild(el);
+    });
+  } catch(e){}
+}
+
+function syncModalV589(title, body){
+  const safeEsc = (typeof escV582 === 'function') ? escV582 : (v=>String(v||''));
+  const root = document.getElementById('modalRoot') || document.body;
+  root.innerHTML = `
+    <div class="modal-back" onclick="if(event.target===this) hardCloseModalV589()">
+      <div class="modal sync-modal-v589" onclick="event.stopPropagation()">
+        <div class="sync-modal-head-v589">
+          <h2>${safeEsc(title)}</h2>
+          <button type="button" class="sync-hard-close-v589" onclick="hardCloseModalV589()">Cerrar</button>
+        </div>
+        ${body}
+        <div class="actions">
+          <button type="button" class="sync-hard-close-v589" onclick="hardCloseModalV589()">Cerrar ventana</button>
+          <button type="button" class="secondary" onclick="hardCloseModalV589(); if(typeof showCalendarV582==='function') showCalendarV582();">Cerrar y volver al calendario</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Escape siempre cierra modal, incluso si closeWizard falla.
+if(!window.__v589HardEscape){
+  window.__v589HardEscape = true;
+  window.addEventListener('keydown', e=>{
+    if(e.key === 'Escape') hardCloseModalV589();
+  }, true);
+}
+
+// Sobrescribe closeWizard para que también cierre overlays atascados.
+if(typeof closeWizard === 'function' && !window.__v589CloseWizardWrapped){
+  window.__v589CloseWizardWrapped = true;
+  const oldCloseWizardV589 = closeWizard;
+  closeWizard = function(){
+    try { oldCloseWizardV589(); } catch(e){}
+    hardCloseModalV589();
+  };
+}
+
+// Versión segura definitiva de sincronización: siempre usa hard close.
+async function forceGoogleSyncV583(){
+  syncModalV589('Sincronización Google MARFAN', `
+    <div class="sync-status-v589">
+      <b>Sincronizando…</b><br>
+      Puedes cerrar esta ventana en cualquier momento con Cerrar, Escape o click fuera.
+    </div>
+  `);
+
+  let timeout = setTimeout(()=>{
+    const box = document.querySelector('.sync-status-v589');
+    if(box){
+      box.classList.add('bad');
+      box.innerHTML = '<b>Google está tardando demasiado.</b><br>Puedes cerrar esta ventana sin bloquear la app.';
+    }
+  }, 25000);
+
+  try{
+    const r = await api('/api/google/sync-calendar-v588',{method:'POST'});
+    clearTimeout(timeout);
+
+    syncModalV589('Sincronización completada ✅', `
+      <div class="sync-status-v589 ok">
+        <b>Calendario:</b> ${escV582((r.calendar||{}).summary||'MARFAN')}<br>
+        <b>Eventos leídos:</b> ${r.read}<br>
+        <b>Saltados porque fueron borrados:</b> ${r.skipped_deleted}<br>
+        <b>Creados:</b> ${r.created}<br>
+        <b>Actualizados:</b> ${r.updated}<br>
+        <b>Errores:</b> ${r.errors}
+      </div>
+    `);
+  }catch(e){
+    clearTimeout(timeout);
+    syncModalV589('Error sincronizando Google', `
+      <div class="sync-status-v589 bad">
+        ${escV582(e.message || 'Error desconocido')}
+      </div>
+    `);
+  }finally{
+    try { document.body.classList.remove('loading'); } catch(e){}
+  }
+}
+
+// Todos los botones antiguos de sync apuntan aquí.
+forceGoogleSyncNoPatternV574 = forceGoogleSyncV583;
+forceGoogleSyncV572 = forceGoogleSyncV583;
+forceSyncGoogleV569 = forceGoogleSyncV583;
+
+// Reenganchar los botones visibles tras pintar calendario.
+function patchSyncButtonsV589(){
+  document.querySelectorAll('button').forEach(btn=>{
+    const t = (btn.textContent||'').toLowerCase();
+    if(t.includes('sincronización google') || t.includes('sincronizar google') || t.includes('forzar sincronización')){
+      btn.onclick = function(ev){
+        ev.preventDefault();
+        ev.stopPropagation();
+        forceGoogleSyncV583();
+      };
+    }
+  });
+}
+
+setInterval(patchSyncButtonsV589, 1000);
+
+const __showCalendarV582_v589 = typeof showCalendarV582 === 'function' ? showCalendarV582 : null;
+if(__showCalendarV582_v589){
+  showCalendarV582 = async function(){
+    await __showCalendarV582_v589();
+    setTimeout(patchSyncButtonsV589, 100);
+    setTimeout(patchSyncButtonsV589, 500);
+  };
+  window.viewCalendar = showCalendarV582;
+}

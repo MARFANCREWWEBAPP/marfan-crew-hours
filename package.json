@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "58.8.0",
-  "description": "V58.8 Calendar Delete Sync Fix",
+  "version": "58.9.0",
+  "description": "V58.9 Sync Modal Hard Close Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
