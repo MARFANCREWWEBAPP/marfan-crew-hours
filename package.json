@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "60.0.0",
-  "description": "V60 Edit Event Direct Real Fix",
+  "version": "60.1.0",
+  "description": "V60.1 Edit Fetch Pattern Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
