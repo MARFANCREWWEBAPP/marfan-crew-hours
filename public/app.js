@@ -8093,3 +8093,129 @@ if(__showCalendarV582_v612){
   };
   window.viewCalendar = showCalendarV582;
 }
+
+
+// ---------- V61.3 SOLO LOGIN FIX FRONTEND ----------
+// No toca calendario V61.2. Solo evita entrada directa sin sesión real.
+
+window.__v613LoginSubmitted = false;
+window.__v613LoginCheckDone = false;
+
+function v613HasStoredAuth(){
+  try{
+    if(typeof token !== 'undefined' && token) return true;
+    if(window.token) return true;
+    if(localStorage.getItem('token') || localStorage.getItem('authToken') || localStorage.getItem('marfan_token')) return true;
+    if(sessionStorage.getItem('token') || sessionStorage.getItem('authToken')) return true;
+  }catch(e){}
+  return false;
+}
+
+function v613LoginVisible(){
+  const hasPass = !!document.querySelector('input[type="password"]');
+  const txt = (document.body.textContent || '').toLowerCase();
+  return hasPass && (txt.includes('entrar') || txt.includes('usuario') || txt.includes('contraseña') || txt.includes('login'));
+}
+
+function v613LooksInsideApp(){
+  const txt = (document.body.textContent || '').toLowerCase();
+  const side = document.querySelector('.sidebar') || document.querySelector('aside') || document.querySelector('nav');
+  return !!side && (
+    txt.includes('dashboard') ||
+    txt.includes('calendario eventos') ||
+    txt.includes('operarios') ||
+    txt.includes('finanzas') ||
+    txt.includes('crear evento')
+  );
+}
+
+function v613RenderLoginFallback(){
+  const root = document.getElementById('app') || document.body;
+  root.innerHTML = `
+    <div class="v613-login-lock">
+      <div class="v613-login-card">
+        <h2>Acceso requerido</h2>
+        <p>Por seguridad tienes que iniciar sesión para entrar en la aplicación.</p>
+        <button onclick="location.reload()">Volver al login</button>
+      </div>
+    </div>
+  `;
+}
+
+async function v613ServerSession(){
+  try{
+    const r = await fetch('/api/v613-session', {
+      credentials:'same-origin',
+      cache:'no-store',
+      headers:{'Accept':'application/json'}
+    });
+    const txt = await r.text();
+    if(txt.trim().startsWith('<')) return false;
+    const j = JSON.parse(txt || '{}');
+    return !!(j.ok || j.authenticated);
+  }catch(e){
+    return false;
+  }
+}
+
+async function v613EnforceLoginOnce(){
+  // Si ya se ve login, no tocar nada.
+  if(v613LoginVisible()) return;
+
+  // Si acaba de pulsar Entrar, dar margen al login original.
+  if(window.__v613LoginSubmitted) return;
+
+  // Si hay token local, no bloquear.
+  if(v613HasStoredAuth()) return;
+
+  // Comprobar cookie/sesión de servidor. Si existe, no bloquear.
+  const serverOk = await v613ServerSession();
+  if(serverOk) return;
+
+  // Si no hay sesión y está dentro de app, mandar a login sin romper el login real.
+  if(v613LooksInsideApp()){
+    try{
+      if(typeof logout === 'function'){
+        logout();
+        return;
+      }
+      if(typeof showLogin === 'function'){
+        showLogin();
+        return;
+      }
+      if(typeof renderLogin === 'function'){
+        renderLogin();
+        return;
+      }
+    }catch(e){}
+    v613RenderLoginFallback();
+  }
+}
+
+if(!window.__v613LoginListeners){
+  window.__v613LoginListeners = true;
+
+  document.addEventListener('submit', ev=>{
+    if(ev.target && ev.target.querySelector && ev.target.querySelector('input[type="password"]')){
+      window.__v613LoginSubmitted = true;
+      setTimeout(()=>{ window.__v613LoginSubmitted = false; }, 10000);
+    }
+  }, true);
+
+  document.addEventListener('click', ev=>{
+    const btn = ev.target.closest && ev.target.closest('button,input[type="submit"]');
+    if(!btn) return;
+    const form = btn.closest && btn.closest('form');
+    const txt = (btn.textContent || btn.value || '').toLowerCase();
+    if((form && form.querySelector('input[type="password"]')) || txt.includes('entrar') || txt.includes('acceder')){
+      window.__v613LoginSubmitted = true;
+      setTimeout(()=>{ window.__v613LoginSubmitted = false; }, 10000);
+    }
+  }, true);
+}
+
+// Ejecutar después de que la app haya intentado pintar su vista inicial.
+setTimeout(v613EnforceLoginOnce, 900);
+setTimeout(v613EnforceLoginOnce, 2200);
+
+// No se ejecuta en bucle agresivo para no bloquear calendario ni login.

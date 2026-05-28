@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "61.2.0",
-  "description": "V61.2 Safe V46 Event Create Edit Form",
+  "version": "61.3.0",
+  "description": "V61.3 Solo Login Fix - calendar untouched",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

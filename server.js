@@ -363,6 +363,24 @@ app.get('/api/v612-route-test', requireAdmin, (req,res)=>{
   res.json({ok:true, version:'61.2.0', route:'v46-safe-event-form'});
 });
 
+
+// ---------- V61.3 SOLO LOGIN FIX API ----------
+app.get('/api/v613-session', (req,res)=>{
+  try{
+    const hasSession = !!(req.session && (
+      req.session.user ||
+      req.session.userId ||
+      req.session.admin ||
+      req.session.role ||
+      req.session.operator
+    ));
+    res.setHeader('Content-Type','application/json; charset=utf-8');
+    res.json({ok:hasSession, authenticated:hasSession});
+  }catch(e){
+    res.json({ok:false, authenticated:false});
+  }
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads'), { maxAge: 0 }));
 

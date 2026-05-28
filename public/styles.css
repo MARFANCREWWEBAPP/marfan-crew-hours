@@ -1648,3 +1648,28 @@ body.calendar-view-active-v586 a.menu-calendar-active-v586{
   .v612-grid,.v612-assignment{grid-template-columns:1fr}
   .span-12,.span-9,.span-8,.span-7,.span-6,.span-5,.span-4,.span-3,.span-2{grid-column:span 1!important}
 }
+
+
+/* V61.3 Solo Login Fix */
+.v613-login-lock{
+  min-height:100vh;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:24px;
+  background:#050505;
+  color:#111;
+}
+.v613-login-card{
+  width:min(520px,100%);
+  background:#fff;
+  border-radius:24px;
+  padding:26px;
+  box-shadow:0 22px 60px rgba(0,0,0,.28);
+}
+.v613-login-card h2{margin-top:0}
+.v613-login-card button{
+  background:#111!important;
+  color:#fff!important;
+  font-weight:950!important;
+}
