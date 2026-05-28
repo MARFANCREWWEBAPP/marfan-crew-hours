@@ -5630,3 +5630,98 @@ app.delete('/api/events/:id/remove-v58', requireAdmin, (req,res)=>{
     res.json({ok:true,deleted:true});
   }catch(e){res.status(500).json({error:e.message});}
 });
+
+
+// ---------- V58.3 CALENDAR SYNC RESTORED + EDIT FIX ----------
+app.get('/api/events/:id/detail-v583', requireAdmin, (req,res)=>{
+  try{
+    const event = db.prepare('SELECT * FROM events WHERE id=?').get(req.params.id);
+    if(!event) return res.status(404).json({error:'Evento no encontrado'});
+    let assignments = [];
+    try{
+      assignments = db.prepare(`
+        SELECT a.*, u.first_name,u.last_name,u.nickname,u.phone
+        FROM assignments a
+        LEFT JOIN users u ON u.id=a.user_id
+        WHERE a.event_id=?
+        ORDER BY u.first_name,u.last_name
+      `).all(req.params.id);
+    }catch(e){}
+    res.json({ok:true,event,assignments});
+  }catch(e){res.status(500).json({error:e.message});}
+});
+
+app.put('/api/events/:id/save-v583', requireAdmin, (req,res)=>{
+  try{
+    const id = Number(req.params.id);
+    const exists = db.prepare('SELECT * FROM events WHERE id=?').get(id);
+    if(!exists) return res.status(404).json({error:'Evento no encontrado'});
+    const b = req.body || {};
+    const cols = db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
+    const fields = [
+      'name','client','event_date','start_time','end_time','location','address',
+      'contact_name','contact_phone','contact_email','status','operational_status',
+      'notes','production_notes','access_notes','parking_notes','service_type',
+      'load_in_time','load_out_time','payment_status'
+    ].filter(k => cols.includes(k) && Object.prototype.hasOwnProperty.call(b,k));
+    if(fields.length){
+      db.prepare(`UPDATE events SET ${fields.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...fields.map(k=>b[k]), id);
+    }
+    res.json({ok:true,updated:fields.length});
+  }catch(e){res.status(500).json({error:e.message});}
+});
+
+app.delete('/api/events/:id/remove-v583', requireAdmin, (req,res)=>{
+  try{
+    const id = Number(req.params.id);
+    const event = db.prepare('SELECT * FROM events WHERE id=?').get(id);
+    if(!event) return res.status(404).json({error:'Evento no encontrado'});
+    const tx = db.transaction(()=>{
+      try{db.prepare('DELETE FROM assignments WHERE event_id=?').run(id);}catch(e){}
+      try{db.prepare('DELETE FROM event_role_lines WHERE event_id=?').run(id);}catch(e){}
+      try{db.prepare('DELETE FROM google_event_links WHERE event_id=?').run(id);}catch(e){}
+      try{db.prepare('DELETE FROM delivery_notes WHERE event_id=?').run(id);}catch(e){}
+      try{db.prepare('DELETE FROM event_delivery_notes WHERE event_id=?').run(id);}catch(e){}
+      db.prepare('DELETE FROM events WHERE id=?').run(id);
+    });
+    tx();
+    res.json({ok:true,deleted:true});
+  }catch(e){res.status(500).json({error:e.message});}
+});
+
+// Endpoint puente: usa el sync que ya funcionó en V57.4 si existe; si no, informa claro.
+app.post('/api/google/sync-calendar-v583', requireAdmin, async (req,res)=>{
+  try{
+    if(typeof v574CalendarClient === 'function' && typeof v574ResolveCalendar === 'function' && typeof v574Upsert === 'function'){
+      const calendar = await v574CalendarClient();
+      const resolved = await v574ResolveCalendar(calendar);
+      let pageToken = undefined;
+      const items = [];
+      do{
+        const params = {calendarId:resolved.calendar.id,maxResults:250,singleEvents:true};
+        if(pageToken) params.pageToken = pageToken;
+        const response = await calendar.events.list(params);
+        items.push(...(response.data.items || []).filter(i=>i.status !== 'cancelled'));
+        pageToken = response.data.nextPageToken || undefined;
+      }while(pageToken && items.length < 2500);
+
+      const results = [];
+      for(const item of items){
+        try{ results.push(v574Upsert(item, resolved.calendar.id)); }
+        catch(e){ results.push({action:'error', summary:item.summary || item.id, error:e.message}); }
+      }
+      return res.json({
+        ok:true,
+        calendar:{id:resolved.calendar.id,summary:resolved.calendar.summary,accessRole:resolved.calendar.accessRole},
+        read:items.length,
+        created:results.filter(r=>r.action==='created').length,
+        updated:results.filter(r=>r.action==='updated').length,
+        errors:results.filter(r=>r.action==='error').length,
+        results:results.slice(0,100)
+      });
+    }
+    res.status(500).json({ok:false,error:'No está cargado el motor de sincronización Google v574'});
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message,stack:e.stack});
+  }
+});

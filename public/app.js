@@ -7024,3 +7024,168 @@ setInterval(()=>{
 }, 1000);
 
 console.log('V58.2 Calendar Override Real loaded');
+
+
+// ---------- V58.3 CALENDAR SYNC RESTORED + EDIT FIX FRONTEND ----------
+async function forceGoogleSyncV583(){
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back"><div class="modal">
+      <div class="modal-head"><h2>Sincronización Google MARFAN</h2><button class="secondary" onclick="closeWizard()">Cerrar</button></div>
+      <div class="v583-sync">Sincronizando con Google Calendar...</div>
+    </div></div>`;
+
+  try{
+    const r = await api('/api/google/sync-calendar-v583',{method:'POST'});
+    $('#modalRoot').innerHTML = `
+      <div class="modal-back"><div class="modal">
+        <div class="modal-head"><h2>Sincronización completada ✅</h2><button class="secondary" onclick="closeWizard();showCalendarV582()">Cerrar</button></div>
+        <div class="v583-sync ok">
+          <b>Calendario:</b> ${escV582((r.calendar||{}).summary||'MARFAN')}<br>
+          <b>Eventos leídos:</b> ${r.read}<br>
+          <b>Creados:</b> ${r.created}<br>
+          <b>Actualizados:</b> ${r.updated}<br>
+          <b>Errores:</b> ${r.errors}
+        </div>
+        ${r.errors ? `<div class="v583-sync bad"><pre>${escV582(JSON.stringify((r.results||[]).filter(x=>x.action==='error'),null,2))}</pre></div>` : ''}
+      </div></div>`;
+  }catch(e){
+    $('#modalRoot').innerHTML = `
+      <div class="modal-back"><div class="modal">
+        <div class="modal-head"><h2>Error sincronizando</h2><button class="secondary" onclick="closeWizard()">Cerrar</button></div>
+        <div class="v583-sync bad">${escV582(e.message)}</div>
+      </div></div>`;
+  }
+}
+
+async function editEventV582(id){
+  const data = await api('/api/events/'+id+'/detail-v583');
+  const e = data.event || {};
+
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal event-v58-modal">
+        <div class="modal-head">
+          <h2>Editar evento</h2>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+
+        <form id="editEventFormV583">
+          <div class="event-v58-section">
+            <div class="event-v58-grid">
+              <input class="field span-6" name="name" value="${escV582(e.name||'')}" placeholder="Nombre evento">
+              <input class="field span-3" name="event_date" type="date" value="${escV582(e.event_date||'')}">
+              <select class="field span-3" name="status">
+                ${['programado','confirmado','pendiente','realizado','cancelado'].map(s=>`<option value="${s}" ${e.status===s?'selected':''}>${s}</option>`).join('')}
+              </select>
+              <input class="field span-3" name="start_time" type="time" value="${escV582(e.start_time||'')}">
+              <input class="field span-3" name="end_time" type="time" value="${escV582(e.end_time||'')}">
+              <input class="field span-6" name="client" value="${escV582(e.client||'')}" placeholder="Cliente">
+              <input class="field span-6" name="location" value="${escV582(e.location||'')}" placeholder="Ubicación">
+              <input class="field span-6" name="address" value="${escV582(e.address||'')}" placeholder="Dirección">
+              <input class="field span-4" name="contact_name" value="${escV582(e.contact_name||'')}" placeholder="Contacto">
+              <input class="field span-4" name="contact_phone" value="${escV582(e.contact_phone||'')}" placeholder="Teléfono">
+              <input class="field span-4" name="contact_email" value="${escV582(e.contact_email||'')}" placeholder="Email">
+              <input class="field span-3" name="load_in_time" type="time" value="${escV582(e.load_in_time||'')}">
+              <input class="field span-3" name="load_out_time" type="time" value="${escV582(e.load_out_time||'')}">
+              <input class="field span-6" name="service_type" value="${escV582(e.service_type||'')}" placeholder="Tipo de servicio">
+              <textarea class="field span-12" name="notes" placeholder="Notas">${escV582(e.notes||'')}</textarea>
+            </div>
+          </div>
+
+          <div class="event-v58-actions">
+            <button class="v583-edit">Guardar cambios</button>
+            <button type="button" class="secondary" onclick="closeWizard()">Cancelar</button>
+          </div>
+        </form>
+      </div>
+    </div>`;
+
+  $('#editEventFormV583').onsubmit = async ev=>{
+    ev.preventDefault();
+    await api('/api/events/'+id+'/save-v583',{method:'PUT',body:JSON.stringify(Object.fromEntries(new FormData(ev.target)))});
+    if(typeof v534Toast==='function') v534Toast('Evento editado correctamente');
+    closeWizard();
+    await showCalendarV582();
+  };
+}
+
+async function deleteEventV582(id, name){
+  if(!confirm(`¿Seguro que quieres borrar este evento?\n\n${name}\n\nEsta acción no se puede deshacer.`)) return;
+  await api('/api/events/'+id+'/remove-v583',{method:'DELETE'});
+  if(typeof v534Toast==='function') v534Toast('Evento borrado');
+  closeWizard();
+  await showCalendarV582();
+}
+
+async function openEventV582(id){
+  const data = await api('/api/events/'+id+'/detail-v583');
+  const e = data.event || {};
+  const assignments = data.assignments || [];
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal event-v58-modal">
+        <div class="modal-head">
+          <div><h2>${escV582(e.name||'Evento')}</h2><p class="muted">${escV582(e.event_date||'')} · ${escV582(e.start_time||'')} - ${escV582(e.end_time||'')}</p></div>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+        <div class="event-v58-section">
+          <h3>Acciones</h3>
+          <div class="v582-event-actions">
+            <button class="v583-edit" onclick="editEventV582(${id})">Editar evento</button>
+            <button class="v583-delete" onclick="deleteEventV582(${id}, '${escV582((e.name||'Evento')).replace(/'/g,"\\'")}')">Borrar evento</button>
+          </div>
+        </div>
+        <div class="event-v58-section">
+          <h3>Información</h3>
+          <p><b>Cliente:</b> ${escV582(e.client||'—')}</p>
+          <p><b>Ubicación:</b> ${escV582(e.location||e.address||'—')}</p>
+          <p><b>Estado:</b> ${escV582(e.status||'—')}</p>
+          <p><b>Notas:</b> ${escV582(e.notes||'—')}</p>
+        </div>
+        <div class="event-v58-section">
+          <h3>Operarios</h3>
+          ${assignments.map(a=>`<div style="border-bottom:1px solid #e5e7eb;padding:8px 0"><b>${escV582((a.first_name||'')+' '+(a.last_name||''))}${a.nickname?' · '+escV582(a.nickname):''}</b><br>${escV582(a.service_role||'')} · ${escV582(a.planned_start||'')} - ${escV582(a.planned_end||'')}</div>`).join('') || '<p class="muted">Sin operarios asignados.</p>'}
+        </div>
+      </div>
+    </div>`;
+}
+
+// Reescribe la vista V58.2 para recuperar botón sync y usar edit corregido.
+const __oldShowCalendarV582 = typeof showCalendarV582 === 'function' ? showCalendarV582 : null;
+showCalendarV582 = async function(){
+  const events = await apiV582('/api/events').catch(()=>[]);
+  const googleStatus = await apiV582('/api/google/status-v557').catch(()=>({connected:false}));
+  const content = document.getElementById('content') || document.querySelector('#main') || document.body;
+
+  content.innerHTML = `
+    <div class="v582-calendar-force-banner">
+      <div>
+        <h2 style="margin:0">Calendario eventos · V58.3</h2>
+        <div>Vista con Google Sync restaurado y edición corregida.</div>
+      </div>
+      <div class="v582-event-actions">
+        <button onclick="showCalendarV582()">Actualizar calendario</button>
+        <button onclick="openCreateEventV559()">+ Crear evento</button>
+        <button class="v583-sync-btn" onclick="forceGoogleSyncV583()">FORZAR SINCRONIZACIÓN GOOGLE</button>
+        ${googleStatus.connected ? '<span class="status-badge status-ok">Google conectado</span>' : '<span class="status-badge status-warn">Google no conectado</span>'}
+      </div>
+    </div>
+
+    <div class="card v582-calendar-card">
+      <h3>Vista mensual</h3>
+      ${renderMonthV582(events)}
+    </div>
+
+    ${renderEventRowsV582(events)}
+  `;
+
+  document.querySelectorAll('[data-v582-event]').forEach(btn=>{
+    btn.addEventListener('click', ev=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      openEventV582(Number(btn.dataset.v582Event));
+    });
+  });
+};
+
+window.viewCalendar = showCalendarV582;

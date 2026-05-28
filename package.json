@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "58.2.0",
-  "description": "V58.2 Calendar Override Real",
+  "version": "58.3.0",
+  "description": "V58.3 Calendar Sync Restored + Edit Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
