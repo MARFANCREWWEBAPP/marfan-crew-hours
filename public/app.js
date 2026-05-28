@@ -8877,3 +8877,203 @@ window.editEventV587 = openEditEventV60;
 window.editEventV593 = openEditEventV60;
 window.editCalendarEventV58 = openEditEventV60;
 window.editCalendarEventV576 = openEditEventV60;
+
+
+// ---------- V60.2 EDIT API ROUTE ORDER FIX FRONTEND ----------
+async function v602FetchJson(path, opts={}){
+  const headers = {
+    'Content-Type':'application/json',
+    'Accept':'application/json'
+  };
+  try{
+    if(typeof token !== 'undefined' && token) headers.Authorization = 'Bearer '+token;
+    if(window.token) headers.Authorization = 'Bearer '+window.token;
+  }catch(e){}
+
+  const absolute = new URL(path, window.location.origin).toString();
+  const r = await fetch(absolute, {
+    method: opts.method || 'GET',
+    headers: {...headers, ...(opts.headers||{})},
+    body: opts.body || undefined,
+    credentials: 'same-origin',
+    cache: 'no-store'
+  });
+
+  const text = await r.text();
+
+  if(text.trim().toLowerCase().startsWith('<!doctype') || text.trim().toLowerCase().startsWith('<html')){
+    throw new Error('La ruta API de edición está devolviendo HTML. Revisa que Railway haya desplegado V60.2 y limpia caché.');
+  }
+
+  let data = {};
+  try{ data = text ? JSON.parse(text) : {}; }
+  catch(e){ data = {ok:false,error:text}; }
+
+  if(!r.ok || data.ok === false){
+    throw new Error(data.error || text || ('HTTP '+r.status));
+  }
+  return data;
+}
+
+// Sobrescribe la carga V60 para usar la ruta temprana V60.2.
+const __openEditEventV60_old_v602 = typeof openEditEventV60 === 'function' ? openEditEventV60 : null;
+
+async function openEditEventV60(id){
+  id = Number(String(id).replace(/[^0-9]/g,''));
+  if(!id){
+    alert('No se ha podido identificar el evento para editar.');
+    return;
+  }
+
+  let data;
+  try{
+    data = await v602FetchJson('/api/event-v602-edit?id='+encodeURIComponent(id));
+  }catch(e){
+    alert('Error cargando evento para editar: '+e.message);
+    return;
+  }
+
+  const e = data.event || {};
+  const assignments = data.assignments || [];
+  const root = document.getElementById('modalRoot') || document.body;
+
+  root.innerHTML = `
+    <div class="modal-back">
+      <div class="modal v60-edit-modal">
+        <div class="modal-head">
+          <div>
+            <h2>Editar evento</h2>
+            <p class="muted">Formulario tipo V46 · ${v60Esc(e.name||'Evento')}</p>
+          </div>
+          <button class="secondary" type="button" onclick="closeWizard()">Cerrar</button>
+        </div>
+
+        <form id="v60EditForm">
+          <div class="v60-section">
+            <h3>1. Datos del evento</h3>
+            <div class="v60-grid">
+              <input class="field span-6" name="name" value="${v60Esc(e.name||'')}" placeholder="Nombre del evento" required>
+              <input class="field span-3" name="event_code" value="${v60Esc(e.event_code||'')}" placeholder="Referencia">
+              <select class="field span-3" name="status">
+                ${['programado','confirmado','pendiente','realizado','cancelado'].map(s=>`<option value="${s}" ${String(e.status||'')===s?'selected':''}>${s}</option>`).join('')}
+              </select>
+              <input class="field span-4" name="client" value="${v60Esc(e.client||'')}" placeholder="Cliente">
+              <input class="field span-4" name="legal_name" value="${v60Esc(e.legal_name||'')}" placeholder="Razón social">
+              <input class="field span-4" name="cif" value="${v60Esc(e.cif||'')}" placeholder="CIF/NIF">
+            </div>
+          </div>
+
+          <div class="v60-section">
+            <h3>2. Contacto</h3>
+            <div class="v60-grid">
+              <input class="field span-4" name="contact_name" value="${v60Esc(e.contact_name||'')}" placeholder="Responsable">
+              <input class="field span-4" name="contact_phone" value="${v60Esc(e.contact_phone||'')}" placeholder="Teléfono">
+              <input class="field span-4" name="contact_email" value="${v60Esc(e.contact_email||'')}" placeholder="Email">
+            </div>
+          </div>
+
+          <div class="v60-section">
+            <h3>3. Fecha, horarios y ubicación</h3>
+            <div class="v60-grid">
+              <input class="field span-3" name="event_date" type="date" value="${v60Esc(e.event_date||'')}" required>
+              <input class="field span-2" name="start_time" type="time" value="${v60Esc(e.start_time||'')}">
+              <input class="field span-2" name="end_time" type="time" value="${v60Esc(e.end_time||'')}">
+              <input class="field span-2" name="load_in_time" type="time" value="${v60Esc(e.load_in_time||'')}">
+              <input class="field span-3" name="load_out_time" type="time" value="${v60Esc(e.load_out_time||'')}">
+              <input class="field span-5" name="location" value="${v60Esc(e.location||'')}" placeholder="Recinto / ubicación">
+              <input class="field span-7" name="address" value="${v60Esc(e.address||'')}" placeholder="Dirección completa" oninput="v60TransportSuggest()">
+              <input class="field span-6" name="access_notes" value="${v60Esc(e.access_notes||'')}" placeholder="Accesos / carga y descarga">
+              <input class="field span-6" name="parking_notes" value="${v60Esc(e.parking_notes||'')}" placeholder="Parking / vehículos">
+            </div>
+          </div>
+
+          <div class="v60-section">
+            <h3>4. Geolocalización y transporte</h3>
+            <div class="v60-grid">
+              <input class="field span-3" name="lat" value="${v60Esc(e.lat||'')}" placeholder="Latitud">
+              <input class="field span-3" name="lng" value="${v60Esc(e.lng||'')}" placeholder="Longitud">
+              <input class="field span-3" name="geo_source" value="${v60Esc(e.geo_source||'')}" placeholder="Fuente geolocalización">
+              <button type="button" class="v60-geo span-3" onclick="v60DetectGeo()">Detectar ubicación</button>
+              <select class="field span-3" name="transport_required">
+                <option value="0" ${Number(e.transport_required||0)===0?'selected':''}>Sin cargo transporte</option>
+                <option value="1" ${Number(e.transport_required||0)===1?'selected':''}>Con cargo transporte</option>
+              </select>
+              <input class="field span-3" name="transport_charge" type="number" step="0.01" value="${v60Esc(e.transport_charge||0)}" placeholder="Cargo transporte €">
+              <div class="v60-note span-6" id="v60TransportNote">Revisión automática pendiente.</div>
+            </div>
+          </div>
+
+          <div class="v60-section">
+            <h3>5. Producción</h3>
+            <div class="v60-grid">
+              <input class="field span-4" name="service_type" value="${v60Esc(e.service_type||'')}" placeholder="Tipo de servicio">
+              <input class="field span-4" name="required_workers" type="number" value="${v60Esc(e.required_workers||'')}" placeholder="Operarios necesarios">
+              <input class="field span-4" name="required_team_leads" type="number" value="${v60Esc(e.required_team_leads||'')}" placeholder="Jefes de equipo">
+              <input class="field span-6" name="material_notes" value="${v60Esc(e.material_notes||'')}" placeholder="Material / técnica">
+              <input class="field span-6" name="crew_notes" value="${v60Esc(e.crew_notes||'')}" placeholder="Notas para crew">
+              <textarea class="field span-12" name="production_notes" placeholder="Notas producción">${v60Esc(e.production_notes||'')}</textarea>
+            </div>
+          </div>
+
+          <div class="v60-section">
+            <h3>6. Costes</h3>
+            <div class="v60-grid">
+              <select class="field span-3" name="payment_status">
+                ${['pendiente','facturado','cobrado','impagado'].map(s=>`<option value="${s}" ${String(e.payment_status||'')===s?'selected':''}>${s}</option>`).join('')}
+              </select>
+              <input class="field span-3" name="estimated_external_cost" type="number" step="0.01" value="${v60Esc(e.estimated_external_cost||0)}" placeholder="Coste externo">
+              <input class="field span-3" name="estimated_transport_cost" type="number" step="0.01" value="${v60Esc(e.estimated_transport_cost||0)}" placeholder="Transporte">
+              <input class="field span-3" name="estimated_other_cost" type="number" step="0.01" value="${v60Esc(e.estimated_other_cost||0)}" placeholder="Otros">
+            </div>
+          </div>
+
+          <div class="v60-section">
+            <h3>7. Operarios asignados</h3>
+            ${assignments.map(a=>`
+              <div style="border-bottom:1px solid #e5e7eb;padding:8px 0">
+                <b>${v60Esc((a.first_name||'')+' '+(a.last_name||''))}${a.nickname?' · '+v60Esc(a.nickname):''}</b><br>
+                ${v60Esc(a.service_role||'')} · ${v60Esc(a.planned_start||'')} - ${v60Esc(a.planned_end||'')}
+              </div>
+            `).join('') || '<p class="muted">Sin operarios asignados.</p>'}
+          </div>
+
+          <div class="v60-section">
+            <h3>8. Notas internas</h3>
+            <textarea class="field" name="notes">${v60Esc(e.notes||'')}</textarea>
+          </div>
+
+          <div class="actions">
+            <button class="v60-save" type="submit">Guardar cambios</button>
+            <button class="secondary" type="button" onclick="closeWizard()">Cancelar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  try{ v60TransportSuggest(); }catch(err){}
+
+  document.getElementById('v60EditForm').addEventListener('submit', async ev=>{
+    ev.preventDefault();
+    const payload = Object.fromEntries(new FormData(ev.target));
+    try{
+      await v602FetchJson('/api/event-v602-edit?id='+encodeURIComponent(id), {
+        method:'POST',
+        body:JSON.stringify(payload)
+      });
+      if(typeof v534Toast === 'function') v534Toast('Evento editado correctamente');
+      try{ closeWizard(); }catch(e){ root.innerHTML=''; }
+      if(typeof showCalendarV582 === 'function') await showCalendarV582();
+      else if(typeof viewCalendar === 'function') await viewCalendar();
+    }catch(err){
+      alert('Error guardando evento: '+err.message);
+    }
+  });
+}
+
+window.openEditEventV60 = openEditEventV60;
+window.editEventV582 = openEditEventV60;
+window.editEventV587 = openEditEventV60;
+window.editEventV593 = openEditEventV60;
+window.editCalendarEventV58 = openEditEventV60;
+window.editCalendarEventV576 = openEditEventV60;

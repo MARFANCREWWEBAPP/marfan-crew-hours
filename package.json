@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "60.1.0",
-  "description": "V60.1 Edit Fetch Pattern Fix",
+  "version": "60.2.0",
+  "description": "V60.2 Edit API Route Order Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
