@@ -7483,3 +7483,161 @@ setInterval(()=>{
     setActiveMenuV586('calendar');
   }
 }, 1000);
+
+
+// ---------- V58.7 CALENDAR EDIT FIX FRONTEND ----------
+async function editEventV587(id){
+  id = Number(id);
+  if(!id){
+    alert('No se ha podido identificar el evento para editar.');
+    return;
+  }
+
+  const data = await api('/api/events/'+id+'/edit-data-v587');
+  const e = data.event || {};
+
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal event-edit-modal-v587">
+        <div class="modal-head">
+          <div>
+            <h2>Editar evento</h2>
+            <p class="muted">${escV582 ? escV582(e.name||'Evento') : (e.name||'Evento')}</p>
+          </div>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+
+        <form id="eventEditFormV587">
+          <div class="event-edit-section-v587">
+            <h3>Datos principales</h3>
+            <div class="event-edit-grid-v587">
+              <input class="field span-6" name="name" value="${escV582(e.name||'')}" placeholder="Nombre del evento">
+              <input class="field span-3" name="event_code" value="${escV582(e.event_code||'')}" placeholder="Referencia">
+              <select class="field span-3" name="status">
+                ${['programado','confirmado','pendiente','realizado','cancelado'].map(s=>`<option value="${s}" ${String(e.status||'')===s?'selected':''}>${s}</option>`).join('')}
+              </select>
+
+              <input class="field span-4" name="client" value="${escV582(e.client||'')}" placeholder="Cliente">
+              <input class="field span-4" name="legal_name" value="${escV582(e.legal_name||'')}" placeholder="Razón social">
+              <input class="field span-4" name="cif" value="${escV582(e.cif||'')}" placeholder="CIF/NIF">
+            </div>
+          </div>
+
+          <div class="event-edit-section-v587">
+            <h3>Responsable y contacto</h3>
+            <div class="event-edit-grid-v587">
+              <input class="field span-4" name="contact_name" value="${escV582(e.contact_name||'')}" placeholder="Responsable">
+              <input class="field span-4" name="contact_phone" value="${escV582(e.contact_phone||'')}" placeholder="Teléfono">
+              <input class="field span-4" name="contact_email" value="${escV582(e.contact_email||'')}" placeholder="Email">
+            </div>
+          </div>
+
+          <div class="event-edit-section-v587">
+            <h3>Fecha, horarios y ubicación</h3>
+            <div class="event-edit-grid-v587">
+              <input class="field span-3" name="event_date" type="date" value="${escV582(e.event_date||'')}">
+              <input class="field span-2" name="start_time" type="time" value="${escV582(e.start_time||'')}">
+              <input class="field span-2" name="end_time" type="time" value="${escV582(e.end_time||'')}">
+              <input class="field span-2" name="load_in_time" type="time" value="${escV582(e.load_in_time||'')}">
+              <input class="field span-3" name="load_out_time" type="time" value="${escV582(e.load_out_time||'')}">
+
+              <input class="field span-5" name="location" value="${escV582(e.location||'')}" placeholder="Recinto / ubicación">
+              <input class="field span-7" name="address" value="${escV582(e.address||'')}" placeholder="Dirección completa">
+              <input class="field span-6" name="access_notes" value="${escV582(e.access_notes||'')}" placeholder="Accesos / carga y descarga">
+              <input class="field span-6" name="parking_notes" value="${escV582(e.parking_notes||'')}" placeholder="Parking / vehículos">
+            </div>
+          </div>
+
+          <div class="event-edit-section-v587">
+            <h3>Producción y operación</h3>
+            <div class="event-edit-grid-v587">
+              <input class="field span-4" name="service_type" value="${escV582(e.service_type||'')}" placeholder="Tipo de servicio">
+              <input class="field span-4" name="required_workers" type="number" value="${escV582(e.required_workers||'')}" placeholder="Operarios necesarios">
+              <input class="field span-4" name="required_team_leads" type="number" value="${escV582(e.required_team_leads||'')}" placeholder="Jefes de equipo">
+              <input class="field span-6" name="material_notes" value="${escV582(e.material_notes||'')}" placeholder="Material / técnica">
+              <input class="field span-6" name="crew_notes" value="${escV582(e.crew_notes||'')}" placeholder="Notas para crew">
+              <textarea class="field span-12" name="production_notes" placeholder="Notas producción">${escV582(e.production_notes||'')}</textarea>
+            </div>
+          </div>
+
+          <div class="event-edit-section-v587">
+            <h3>Facturación y costes</h3>
+            <div class="event-edit-grid-v587">
+              <select class="field span-3" name="payment_status">
+                ${['pendiente','facturado','cobrado','impagado'].map(s=>`<option value="${s}" ${String(e.payment_status||'')===s?'selected':''}>${s}</option>`).join('')}
+              </select>
+              <input class="field span-3" name="estimated_external_cost" type="number" step="0.01" value="${escV582(e.estimated_external_cost||'')}" placeholder="Coste externo">
+              <input class="field span-3" name="estimated_transport_cost" type="number" step="0.01" value="${escV582(e.estimated_transport_cost||'')}" placeholder="Transporte">
+              <input class="field span-3" name="estimated_other_cost" type="number" step="0.01" value="${escV582(e.estimated_other_cost||'')}" placeholder="Otros">
+            </div>
+          </div>
+
+          <div class="event-edit-section-v587">
+            <h3>Notas internas</h3>
+            <textarea class="field" name="notes" placeholder="Notas internas">${escV582(e.notes||'')}</textarea>
+          </div>
+
+          <div class="actions">
+            <button class="event-edit-save-v587">Guardar cambios</button>
+            <button type="button" class="event-edit-cancel-v587" onclick="closeWizard()">Cancelar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  $('#eventEditFormV587').onsubmit = async ev=>{
+    ev.preventDefault();
+    const payload = Object.fromEntries(new FormData(ev.target));
+    await api('/api/events/'+id+'/edit-save-v587',{
+      method:'POST',
+      body:JSON.stringify(payload)
+    });
+    if(typeof v534Toast === 'function') v534Toast('Evento editado correctamente');
+    closeWizard();
+    if(typeof showCalendarV582 === 'function') await showCalendarV582();
+    else if(typeof viewCalendar === 'function') await viewCalendar();
+  };
+}
+
+// Redirigir todos los botones antiguos de editar a la corrección V58.7
+editEventV582 = editEventV587;
+editCalendarEventV58 = editEventV587;
+editCalendarEventV576 = editEventV587;
+editCalendarEventV58 = editEventV587;
+
+// Reforzar botones ya renderizados
+function patchEditButtonsV587(){
+  document.querySelectorAll('button').forEach(btn=>{
+    const txt = (btn.textContent||'').toLowerCase().trim();
+    if(txt === 'editar' || txt === 'editar evento'){
+      const onclick = btn.getAttribute('onclick') || '';
+      let id = null;
+      const m = onclick.match(/\((\d+)\)/);
+      if(m) id = Number(m[1]);
+      if(!id){
+        const row = btn.closest('[data-v582-event],[data-cal-event-id],[data-event-id]');
+        if(row) id = Number(row.dataset.v582Event || row.dataset.calEventId || row.dataset.eventId || 0);
+      }
+      if(id){
+        btn.onclick = function(ev){
+          ev.preventDefault();
+          ev.stopPropagation();
+          editEventV587(id);
+        };
+      }
+    }
+  });
+}
+
+setInterval(patchEditButtonsV587, 1000);
+
+const __showCalendarV582_v587 = typeof showCalendarV582 === 'function' ? showCalendarV582 : null;
+if(__showCalendarV582_v587){
+  showCalendarV582 = async function(){
+    await __showCalendarV582_v587();
+    setTimeout(patchEditButtonsV587, 150);
+    setTimeout(patchEditButtonsV587, 600);
+  };
+  window.viewCalendar = showCalendarV582;
+}

@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "58.6.0",
-  "description": "V58.6 Calendar Active Menu Fix",
+  "version": "58.7.0",
+  "description": "V58.7 Calendar Edit Event Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

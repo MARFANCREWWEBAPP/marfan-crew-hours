@@ -5725,3 +5725,78 @@ app.post('/api/google/sync-calendar-v583', requireAdmin, async (req,res)=>{
     res.status(500).json({ok:false,error:e.message,stack:e.stack});
   }
 });
+
+
+// ---------- V58.7 CALENDAR EDIT FIX ----------
+app.get('/api/events/:id/edit-data-v587', requireAdmin, (req,res)=>{
+  try{
+    const event = db.prepare('SELECT * FROM events WHERE id=?').get(req.params.id);
+    if(!event) return res.status(404).json({error:'Evento no encontrado'});
+    let assignments = [];
+    try{
+      assignments = db.prepare(`
+        SELECT a.*, u.first_name,u.last_name,u.nickname,u.phone
+        FROM assignments a
+        LEFT JOIN users u ON u.id=a.user_id
+        WHERE a.event_id=?
+        ORDER BY u.first_name,u.last_name
+      `).all(req.params.id);
+    }catch(e){}
+    res.json({ok:true,event,assignments});
+  }catch(e){
+    res.status(500).json({error:e.message});
+  }
+});
+
+app.post('/api/events/:id/edit-save-v587', requireAdmin, (req,res)=>{
+  try{
+    const id = Number(req.params.id);
+    const event = db.prepare('SELECT * FROM events WHERE id=?').get(id);
+    if(!event) return res.status(404).json({error:'Evento no encontrado'});
+
+    const b = req.body || {};
+    const tableCols = db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
+
+    const allowed = [
+      'name',
+      'event_code',
+      'client',
+      'legal_name',
+      'cif',
+      'contact_name',
+      'contact_phone',
+      'contact_email',
+      'event_date',
+      'start_time',
+      'end_time',
+      'load_in_time',
+      'load_out_time',
+      'location',
+      'address',
+      'access_notes',
+      'parking_notes',
+      'service_type',
+      'required_workers',
+      'required_team_leads',
+      'material_notes',
+      'crew_notes',
+      'production_notes',
+      'payment_status',
+      'estimated_external_cost',
+      'estimated_transport_cost',
+      'estimated_other_cost',
+      'notes',
+      'status',
+      'operational_status'
+    ].filter(k => tableCols.includes(k) && Object.prototype.hasOwnProperty.call(b,k));
+
+    if(allowed.length){
+      const sql = `UPDATE events SET ${allowed.map(k=>`"${k}"=?`).join(',')} WHERE id=?`;
+      db.prepare(sql).run(...allowed.map(k=>b[k]), id);
+    }
+
+    res.json({ok:true,updated:allowed.length});
+  }catch(e){
+    res.status(500).json({error:e.message});
+  }
+});

@@ -1,7 +1,13 @@
 
-# V58.6 Calendar Active Menu Fix
+# V58.7 Calendar Edit Fix
+
+Mantiene:
+- Borrar funcionando.
+- Sincronización Google funcionando.
+- Menú activo funcionando.
 
 Corrige:
-- Al entrar en Calendario eventos, se desactiva Dashboard.
-- Solo Calendario queda blanco/activo.
-- Reaplica el estado tras renderizados y clicks.
+- Editar evento.
+- Abre formulario completo.
+- Guarda cambios.
+- Refresca calendario.

@@ -1562,3 +1562,35 @@ body.calendar-view-active-v586 a.menu-calendar-active-v586{
   font-weight:950!important;
   box-shadow:0 10px 24px rgba(255,255,255,.2)!important;
 }
+
+
+/* V58.7 Calendar Edit Fix */
+.event-edit-modal-v587{
+  max-width:1180px!important;
+}
+.event-edit-section-v587{
+  background:#f8fafc;
+  border:1px solid #e5e7eb;
+  border-radius:18px;
+  padding:16px;
+  margin:12px 0;
+}
+.event-edit-grid-v587{
+  display:grid;
+  grid-template-columns:repeat(12,minmax(0,1fr));
+  gap:12px;
+}
+.event-edit-save-v587{
+  background:#2563eb!important;
+  color:#fff!important;
+  font-weight:950!important;
+}
+.event-edit-cancel-v587{
+  background:#111!important;
+  color:#fff!important;
+  font-weight:950!important;
+}
+@media(max-width:980px){
+  .event-edit-grid-v587{grid-template-columns:1fr}
+  .span-12,.span-9,.span-8,.span-6,.span-4,.span-3,.span-2{grid-column:span 1!important}
+}
