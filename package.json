@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "57.7.0",
-  "description": "V57.7 Calendar Click Fix",
+  "version": "57.8.0",
+  "description": "V57.8 Calendar Click Hard Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

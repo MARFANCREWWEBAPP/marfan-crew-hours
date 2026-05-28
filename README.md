@@ -87,3 +87,13 @@ Al pulsar un evento:
 - Añade delegación global de clicks.
 - Renderiza eventos con data-event-id.
 - Al pulsar evento abre subventana editar/borrar.
+
+
+# V57.8 Calendar Click Hard Fix
+
+## Cambio crítico
+Reemplaza completamente el render del calendario:
+- eventos como botones reales con data-cal-event-id
+- listener global en captura
+- no depende de onclick antiguos
+- al pulsar evento abre subventana editar/borrar

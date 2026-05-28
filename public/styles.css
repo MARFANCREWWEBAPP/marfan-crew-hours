@@ -1303,3 +1303,29 @@ button.warn{background:#f59e0b;color:#111}
   transform:translateY(-1px);
   filter:brightness(.95);
 }
+
+
+/* V57.8 Calendar Click Hard Fix */
+.cal-event-v578{
+  display:block;
+  border-radius:10px;
+  padding:6px 7px;
+  margin:4px 0;
+  color:#fff;
+  background:#111;
+  font-size:11px;
+  cursor:pointer!important;
+  pointer-events:auto!important;
+  line-height:1.25;
+  user-select:none;
+  border:0;
+  width:100%;
+  text-align:left;
+}
+.cal-event-v578.google{background:#2563eb}
+.cal-event-v578.done{background:#16a34a}
+.cal-event-v578.cancel{background:#dc2626}
+.cal-event-v578:hover{
+  transform:translateY(-1px);
+  filter:brightness(.92);
+}

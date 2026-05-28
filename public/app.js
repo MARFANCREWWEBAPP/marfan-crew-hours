@@ -6191,3 +6191,146 @@ if(__viewCalendarV577){
     setTimeout(bindCalendarEventClicksV577, 600);
   };
 }
+
+
+// ---------- V57.8 CALENDAR CLICK HARD FIX ----------
+function calV578DateKey(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function calV578StartOfWeek(d){
+  const x = new Date(d);
+  const day = (x.getDay()+6)%7;
+  x.setDate(x.getDate()-day);
+  return x;
+}
+function calV578AddDays(d,n){
+  const x = new Date(d);
+  x.setDate(x.getDate()+n);
+  return x;
+}
+function calV578EventHtml(e){
+  const id = Number(e.id);
+  if(!id) return '';
+  const cls = `cal-event-v578 ${e.operational_status==='google_marfan'?'google':''} ${e.status==='realizado'?'done':''} ${e.status==='cancelado'?'cancel':''}`;
+  return `<button type="button" class="${cls}" data-cal-event-id="${id}">
+    ${esc(e.start_time||'')} ${esc(e.name||'Evento')}
+  </button>`;
+}
+function calV578Title(){
+  if(typeof v55CalendarTitle === 'function') return v55CalendarTitle();
+  const d = (typeof v55CalDate !== 'undefined' && v55CalDate) ? v55CalDate : new Date();
+  return d.toLocaleDateString('es-ES',{month:'long',year:'numeric'});
+}
+function calV578RenderMonth(events){
+  const date = (typeof v55CalDate !== 'undefined' && v55CalDate) ? v55CalDate : new Date();
+  const first = new Date(date.getFullYear(), date.getMonth(), 1);
+  const start = calV578StartOfWeek(first);
+  const days = [];
+  for(let i=0;i<42;i++) days.push(calV578AddDays(start,i));
+
+  return `<div class="v55-calendar-grid">
+    ${days.map(day=>{
+      const key = calV578DateKey(day);
+      const evs = events.filter(e=>e.event_date===key);
+      const other = day.getMonth()!==date.getMonth();
+      return `<div class="v55-day-card ${other?'other':''}">
+        <div class="v55-day-number">${day.getDate()}</div>
+        ${evs.map(calV578EventHtml).join('')}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+function calV578RenderWeek(events){
+  const date = (typeof v55CalDate !== 'undefined' && v55CalDate) ? v55CalDate : new Date();
+  const start = calV578StartOfWeek(date);
+  const days = [0,1,2,3,4,5,6].map(i=>calV578AddDays(start,i));
+  return `<div class="v55-week-grid">
+    ${days.map(day=>{
+      const key = calV578DateKey(day);
+      const evs = events.filter(e=>e.event_date===key);
+      return `<div class="v55-day-card">
+        <div class="v55-day-number">${day.toLocaleDateString('es-ES',{weekday:'short',day:'numeric'})}</div>
+        ${evs.map(calV578EventHtml).join('') || '<p class="muted">Sin eventos</p>'}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+function calV578RenderDay(events){
+  const date = (typeof v55CalDate !== 'undefined' && v55CalDate) ? v55CalDate : new Date();
+  const key = calV578DateKey(date);
+  const evs = events.filter(e=>e.event_date===key);
+  return `<div class="v55-day-view">
+    ${Array.from({length:24}).map((_,h)=>{
+      const hh = String(h).padStart(2,'0');
+      const hourEvents = evs.filter(e=>String(e.start_time||'').startsWith(hh+':'));
+      return `<div class="v55-hour">
+        <div class="v55-hour-time">${hh}:00</div>
+        <div class="v55-hour-events">${hourEvents.map(calV578EventHtml).join('')}</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+if(!window.__calV578ClickInstalled){
+  window.__calV578ClickInstalled = true;
+  document.addEventListener('click', function(ev){
+    const btn = ev.target.closest && ev.target.closest('[data-cal-event-id]');
+    if(!btn) return;
+    const id = Number(btn.dataset.calEventId);
+    if(!id) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    ev.stopImmediatePropagation();
+    if(typeof openCalendarEventActionsV576 === 'function'){
+      openCalendarEventActionsV576(id);
+    }else if(typeof openEventDetail === 'function'){
+      openEventDetail(id);
+    }else{
+      alert('Evento ID: '+id);
+    }
+  }, true);
+}
+
+async function viewCalendar(){
+  const events = await api('/api/events').catch(()=>[]);
+  const googleStatus = await api('/api/google/status-v557').catch(()=>({connected:false}));
+
+  const view = (typeof v55CalView !== 'undefined' && v55CalView) ? v55CalView : 'month';
+  const body = view === 'week' ? calV578RenderWeek(events) : view === 'day' ? calV578RenderDay(events) : calV578RenderMonth(events);
+
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div>
+          <h3>Calendario eventos · MARFAN</h3>
+          <p class="v52-sub">V57.8: los eventos son botones reales. Pulsa cualquier evento para editarlo o borrarlo.</p>
+        </div>
+        <div class="v55-google-panel">
+          ${googleStatus.connected ? '<span class="status-badge status-ok">Google conectado</span>' : '<span class="status-badge status-warn">Google no conectado</span><button onclick="v559OpenGooglePopup()">Conectar Google</button>'}
+          <button class="force-sync-v574" onclick="forceGoogleSyncNoPatternV574()">FORZAR SINCRONIZACIÓN GOOGLE</button>
+          <button class="secondary" onclick="viewCalendar()">Actualizar vista</button>
+        </div>
+      </div>
+      <div class="google-sync-debug-v561 ok">Eventos cargados: ${events.length}. Click activo V57.8.</div>
+    </div>
+
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div class="actions">
+          <button onclick="openCreateEventV559()">+ Crear evento</button>
+          <button class="secondary" onclick="v55MoveCalendar(-1)">← Anterior</button>
+          <button onclick="v55CalDate=new Date();viewCalendar()">Hoy</button>
+          <button class="secondary" onclick="v55MoveCalendar(1)">Siguiente →</button>
+        </div>
+        <h2 style="text-transform:capitalize">${calV578Title()}</h2>
+        <div class="v55-view-tabs">
+          <button class="${view==='month'?'active':''}" onclick="v55SetView('month')">Mes</button>
+          <button class="${view==='week'?'active':''}" onclick="v55SetView('week')">Semana</button>
+          <button class="${view==='day'?'active':''}" onclick="v55SetView('day')">Día</button>
+        </div>
+      </div>
+      <br>
+      ${body}
+    </div>
+  `;
+}
