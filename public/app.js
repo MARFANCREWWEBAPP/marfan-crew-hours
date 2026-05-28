@@ -8312,15 +8312,17 @@ async function pushEventToGoogleV614(id){
 
 
 
-// ---------- V62.2 SIDEBAR NATIVE REWRITE ----------
-// Reescribe el sidebar real. No duplica, no clona, no parpadea.
-// No toca calendario, Google Sync, login ni formularios.
+
+
+// ---------- V62.3 SIDEBAR STATIC CLEAN FIX ----------
+// Sin parpadeo: no usa intervalos para reconstruir.
+// Albaranes Evento pasa a ADMINISTRACIÓN.
+// No toca calendario, login, Google Sync, formularios ni eventos.
 
 (function(){
-  const V622_MENU = [
+  const MENU_V623 = [
     {group:'OPERATIVA', label:'Dashboard', keys:['dashboard'], fallbacks:['viewDashboard','dashboard']},
     {group:'OPERATIVA', label:'Calendario de Eventos', keys:['calendario'], fallbacks:['viewCalendar','showCalendarV582']},
-    {group:'OPERATIVA', label:'Albaranes Evento', keys:['albaran','albarán'], fallbacks:['viewDeliveryNotes','viewEventDeliveryNotes','viewAlbaranes']},
     {group:'OPERATIVA', label:'Control Diario', keys:['control diario'], fallbacks:['viewDailyControl','viewControlDiario']},
     {group:'OPERATIVA', label:'GPS Live', keys:['gps'], fallbacks:['viewGpsLive','viewGPSLive']},
 
@@ -8329,6 +8331,7 @@ async function pushEventToGoogleV614(id){
     {group:'GESTIÓN', label:'Documentación', keys:['document'], fallbacks:['viewDocuments','viewDocumentation']},
     {group:'GESTIÓN', label:'Tarifas', keys:['tarifa'], fallbacks:['viewRates','viewTarifas']},
 
+    {group:'ADMINISTRACIÓN', label:'Albaranes Evento', keys:['albaran','albarán'], fallbacks:['viewDeliveryNotes','viewEventDeliveryNotes','viewAlbaranes']},
     {group:'ADMINISTRACIÓN', label:'Finanzas Pro', keys:['finanza'], fallbacks:['viewFinancePro','viewFinance']},
     {group:'ADMINISTRACIÓN', label:'Informes PDF', keys:['informe','pdf'], fallbacks:['viewReportsV562','viewReports','viewInformesPDF']},
     {group:'ADMINISTRACIÓN', label:'Vista Operario', keys:['vista operario'], fallbacks:['viewWorkerPortal','viewVistaOperario']},
@@ -8337,29 +8340,34 @@ async function pushEventToGoogleV614(id){
     {group:'SISTEMA', label:'Ajustes ERP', keys:['ajuste','config','erp'], fallbacks:['viewConfig','viewSettings','viewAjustes']}
   ];
 
-  const REMOVE_TEXT = ['operaciones','produccion live','producción live','produccion','producción','eventos realizados'];
+  const KILL_V623 = ['operaciones','produccion live','producción live','produccion','producción','eventos realizados'];
 
-  function normV622(s){
-    return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+  function norm623(v){
+    return String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
   }
 
-  function sidebarV622(){
+  function isLogin623(){
+    const text = norm623(document.body.textContent);
+    return !!document.querySelector('input[type="password"]') && (text.includes('entrar') || text.includes('login') || text.includes('contrasena'));
+  }
+
+  function findSidebar623(){
     const candidates = [
       document.querySelector('.sidebar'),
       document.querySelector('aside.sidebar'),
+      document.querySelector('[class*="sidebar"]'),
       document.querySelector('aside'),
-      document.querySelector('nav'),
-      document.querySelector('[class*="sidebar"]')
+      document.querySelector('nav')
     ].filter(Boolean);
 
     return candidates.find(el=>{
-      const t = normV622(el.textContent);
+      const t = norm623(el.textContent);
       return t.includes('dashboard') && (t.includes('calendario') || t.includes('operario') || t.includes('finanza'));
-    }) || candidates[0];
+    }) || null;
   }
 
-  function itemTextV622(el){
-    return normV622([
+  function itemText623(el){
+    return norm623([
       el.textContent,
       el.getAttribute && el.getAttribute('onclick'),
       el.getAttribute && el.getAttribute('data-view'),
@@ -8370,118 +8378,117 @@ async function pushEventToGoogleV614(id){
     ].filter(Boolean).join(' '));
   }
 
-  function discoverOriginalActionsV622(side){
-    const all = [...side.querySelectorAll('button,a,[onclick],[data-view],[data-section]')];
+  function sourceItems623(side){
+    return [...side.querySelectorAll('button,a,[onclick],[data-view],[data-section]')].filter(el=>{
+      const t = itemText623(el);
+      return t && MENU_V623.concat(KILL_V623.map(k=>({keys:[k]}))).some(s=>s.keys.some(k=>t.includes(norm623(k))));
+    });
+  }
 
+  function keepHeader623(side){
+    const out = [];
+    for(const ch of [...side.children]){
+      const t = norm623(ch.textContent);
+      if(t.includes('dashboard') || t.includes('calendario') || t.includes('control diario') || t.includes('operaciones') || t.includes('clientes') || t.includes('informes') || t.includes('operario') || t.includes('gps') || t.includes('finanza') || t.includes('document') || t.includes('tarifa') || t.includes('albaran') || t.includes('contrasena') || t.includes('produccion')){
+        break;
+      }
+      out.push(ch.cloneNode(true));
+    }
+    return out;
+  }
+
+  function discover623(side){
+    const items = sourceItems623(side);
     const map = {};
-
-    V622_MENU.forEach(spec=>{
-      const found = all.find(el=>{
-        const t = itemTextV622(el);
-        return spec.keys.some(k=>t.includes(normV622(k)));
+    MENU_V623.forEach(spec=>{
+      const found = items.find(el=>{
+        const t = itemText623(el);
+        return spec.keys.some(k=>t.includes(norm623(k)));
       });
       if(found) map[spec.label] = found;
     });
-
     return map;
   }
 
-  function callFallbackV622(spec){
-    for(const name of spec.fallbacks || []){
-      try{
-        if(typeof window[name] === 'function'){
-          window[name]();
-          return true;
-        }
-        if(typeof globalThis[name] === 'function'){
-          globalThis[name]();
-          return true;
-        }
-      }catch(e){}
-    }
-    return false;
-  }
+  function call623(label){
+    const spec = MENU_V623.find(x=>x.label === label);
+    const original = window.__v623Actions && window.__v623Actions[label];
 
-  function runActionV622(label){
-    const spec = V622_MENU.find(x=>x.label === label);
-    const original = window.__v622OriginalActions && window.__v622OriginalActions[label];
-
-    let ok = false;
-
+    let done = false;
     if(original){
-      try{
-        original.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, view:window}));
-        ok = true;
-      }catch(e){}
-      if(!ok){
-        try{ original.click(); ok = true; }catch(e){}
+      try{ original.click(); done = true; }catch(e){}
+    }
+
+    if(!done && spec){
+      for(const fn of spec.fallbacks || []){
+        try{
+          if(typeof window[fn] === 'function'){
+            window[fn]();
+            done = true;
+            break;
+          }
+        }catch(e){}
       }
     }
 
-    if(!ok && spec) ok = callFallbackV622(spec);
-
-    setActiveV622(label);
+    active623(label);
   }
 
-  function setActiveV622(label){
-    document.querySelectorAll('.v622-menu-btn').forEach(btn=>{
-      btn.classList.toggle('v622-active', btn.dataset.label === label);
+  function active623(label){
+    document.querySelectorAll('.v623-menu-btn').forEach(btn=>{
+      btn.classList.toggle('v623-active', btn.dataset.label === label);
     });
+    window.__v623Active = label;
   }
 
-  function buildNativeSidebarV622(){
-    const side = sidebarV622();
+  function detectActive623(){
+    const content = document.getElementById('content') || document.querySelector('#main') || document.body;
+    const t = norm623(content.textContent);
+
+    if(t.includes('calendario')) return active623('Calendario de Eventos');
+    if(t.includes('albaran')) return active623('Albaranes Evento');
+    if(t.includes('control diario')) return active623('Control Diario');
+    if(t.includes('gps')) return active623('GPS Live');
+    if(t.includes('cliente')) return active623('Clientes');
+    if(t.includes('operario')) return active623('Operarios');
+    if(t.includes('document')) return active623('Documentación');
+    if(t.includes('tarifa')) return active623('Tarifas');
+    if(t.includes('finanza')) return active623('Finanzas Pro');
+    if(t.includes('informe')) return active623('Informes PDF');
+    if(t.includes('vista operario')) return active623('Vista Operario');
+    if(t.includes('contrasena') || t.includes('password')) return active623('Contraseñas');
+    if(t.includes('ajuste') || t.includes('config')) return active623('Ajustes ERP');
+    if(t.includes('dashboard')) return active623('Dashboard');
+  }
+
+  function build623(){
+    if(isLogin623()) return false;
+    const side = findSidebar623();
     if(!side) return false;
 
-    // Si está en login, no tocar
-    const bodyText = normV622(document.body.textContent);
-    const hasPassword = !!document.querySelector('input[type="password"]');
-    if(hasPassword && (bodyText.includes('entrar') || bodyText.includes('login') || bodyText.includes('contrasena'))) return false;
+    if(side.dataset.v623Static === '1') return true;
 
-    // Si ya lo hemos reconstruido, no repetir
-    if(side.dataset.v622Native === '1') return true;
+    window.__v623Actions = discover623(side);
 
-    window.__v622OriginalActions = discoverOriginalActionsV622(side);
+    const header = keepHeader623(side);
 
-    // Mantener cabecera/logo/usuario/salir si existen, borrar solo zona de menú.
-    const children = [...side.children];
-
-    // Detectar bloques que deben quedarse arriba: logo/título/email/salir.
-    const keep = [];
-    children.forEach(ch=>{
-      const t = normV622(ch.textContent);
-      const isMenuHeavy = ['dashboard','calendario','control diario','operaciones','clientes','informes','operario','tarifa','gps','finanza','document','vista operario','albaran','contrasena','produccion'].some(k=>t.includes(k));
-      const isLogoHeader = t.includes('marfan') || t.includes('admin@') || t.includes('salir') || ch.querySelector('img');
-      if(isLogoHeader && !isMenuHeavy) keep.push(ch);
-    });
-
-    // Si no ha sabido separar, conservar los primeros elementos hasta antes de Dashboard.
-    if(!keep.length){
-      for(const ch of children){
-        const t = normV622(ch.textContent);
-        if(t.includes('dashboard')) break;
-        keep.push(ch);
-      }
-    }
-
-    // Vaciar sidebar y reconstruir
     side.innerHTML = '';
-    keep.forEach(ch=>side.appendChild(ch));
+    header.forEach(h=>side.appendChild(h));
 
     const root = document.createElement('div');
-    root.className = 'v622-menu-root';
+    root.className = 'v623-menu-root';
 
     const groups = {};
     ['OPERATIVA','GESTIÓN','ADMINISTRACIÓN','SISTEMA'].forEach(g=>{
       const wrap = document.createElement('div');
-      wrap.className = 'v622-menu-group';
+      wrap.className = 'v623-menu-group';
 
       const title = document.createElement('div');
-      title.className = 'v622-menu-title';
+      title.className = 'v623-menu-title';
       title.textContent = g;
 
       const body = document.createElement('div');
-      body.className = 'v622-menu-body';
+      body.className = 'v623-menu-body';
 
       wrap.appendChild(title);
       wrap.appendChild(body);
@@ -8489,82 +8496,47 @@ async function pushEventToGoogleV614(id){
       groups[g] = body;
     });
 
-    V622_MENU.forEach(spec=>{
+    MENU_V623.forEach(spec=>{
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'v622-menu-btn';
+      btn.className = 'v623-menu-btn';
       btn.textContent = spec.label;
       btn.dataset.label = spec.label;
       btn.addEventListener('click', ev=>{
         ev.preventDefault();
         ev.stopPropagation();
-        runActionV622(spec.label);
+        call623(spec.label);
       });
       groups[spec.group].appendChild(btn);
     });
 
     side.appendChild(root);
-    side.dataset.v622Native = '1';
+    side.dataset.v623Static = '1';
 
-    // Activar lo que toque según contenido
-    detectActiveV622();
-
+    detectActive623();
     return true;
   }
 
-  function detectActiveV622(){
-    const content = document.getElementById('content') || document.querySelector('#main') || document.body;
-    const t = normV622(content.textContent);
+  // Arranque: unos pocos intentos, sin reconstrucción continua.
+  setTimeout(build623, 350);
+  setTimeout(build623, 1100);
+  setTimeout(build623, 2500);
 
-    if(t.includes('calendario')) return setActiveV622('Calendario de Eventos');
-    if(t.includes('albaran')) return setActiveV622('Albaranes Evento');
-    if(t.includes('control diario')) return setActiveV622('Control Diario');
-    if(t.includes('gps')) return setActiveV622('GPS Live');
-    if(t.includes('cliente')) return setActiveV622('Clientes');
-    if(t.includes('operario')) return setActiveV622('Operarios');
-    if(t.includes('document')) return setActiveV622('Documentación');
-    if(t.includes('tarifa')) return setActiveV622('Tarifas');
-    if(t.includes('finanza')) return setActiveV622('Finanzas Pro');
-    if(t.includes('informe')) return setActiveV622('Informes PDF');
-    if(t.includes('contrasena') || t.includes('password')) return setActiveV622('Contraseñas');
-    if(t.includes('ajuste') || t.includes('config')) return setActiveV622('Ajustes ERP');
-    if(t.includes('dashboard')) return setActiveV622('Dashboard');
-  }
-
-  function removeForbiddenTextV622(){
-    document.querySelectorAll('button,a,li,div').forEach(el=>{
-      const t = normV622(el.textContent);
-      if(REMOVE_TEXT.some(r=>t === normV622(r) || t.includes(normV622(r)))){
-        if(!el.closest('.v622-menu-root')){
-          el.remove();
-        }
-      }
-    });
-  }
-
-  function bootV622(){
-    const ok = buildNativeSidebarV622();
-    if(ok) removeForbiddenTextV622();
-    detectActiveV622();
-  }
-
-  // Reintentos controlados tras login/render
-  setTimeout(bootV622, 300);
-  setTimeout(bootV622, 900);
-  setTimeout(bootV622, 1800);
-  setTimeout(bootV622, 3500);
-
-  // Si la app re-renderiza el sidebar, se reconstruye una sola vez por nuevo nodo
-  if(!window.__v622Observer){
-    window.__v622Observer = true;
+  // Solo observa si aparece un sidebar NUEVO tras login. No reordena constantemente.
+  if(!window.__v623Observer){
+    window.__v623Observer = true;
     const obs = new MutationObserver(()=>{
-      const side = sidebarV622();
-      if(side && side.dataset.v622Native !== '1'){
-        setTimeout(bootV622, 50);
+      const side = findSidebar623();
+      if(side && side.dataset.v623Static !== '1' && !isLogin623()){
+        setTimeout(build623, 120);
       }
     });
     obs.observe(document.body, {childList:true, subtree:true});
   }
 
-  setInterval(detectActiveV622, 2500);
+  // Solo actualiza activo, no reconstruye menú.
+  document.addEventListener('click', ()=>{
+    setTimeout(detectActive623, 250);
+  }, true);
+
 })();

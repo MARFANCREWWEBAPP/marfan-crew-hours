@@ -1,30 +1,16 @@
 
-# V62.2 Sidebar Native Rewrite
+# V62.3 Sidebar Static Clean Fix
 
 Corrige:
-- Flash entre menú antiguo y nuevo.
-- Doble menú.
-- Operaciones y Producción Live reapareciendo.
+- Albaranes Evento pasa a ADMINISTRACIÓN.
+- Elimina efecto incómodo de selección/cambio de menú.
+- No reconstruye en intervalos.
+- No clona menú encima.
+- Solo actualiza el activo al hacer click.
 
-Qué hace:
-- Guarda acciones originales.
-- Vacía el sidebar real.
-- Reconstruye un único menú nativo.
-- No clona visualmente encima.
-- No toca calendario, login, Google Sync, formularios ni eventos.
-
-Orden:
-Dashboard
-Calendario de Eventos
-Albaranes Evento
-Control Diario
-GPS Live
-Clientes
-Operarios
-Documentación
-Tarifas
-Finanzas Pro
-Informes PDF
-Vista Operario
-Contraseñas
-Ajustes ERP
+No toca:
+- calendario
+- Google Sync
+- login
+- formularios V46
+- eventos
