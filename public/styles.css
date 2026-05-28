@@ -1535,3 +1535,30 @@ nav a.menu-active-calendar-v584{
   padding:10px;
   font-size:12px;
 }
+
+
+/* V58.6 Calendar active menu fix */
+body.calendar-view-active-v586 .sidebar button,
+body.calendar-view-active-v586 .sidebar a,
+body.calendar-view-active-v586 nav button,
+body.calendar-view-active-v586 nav a{
+  transition:all .15s ease;
+}
+
+body.calendar-view-active-v586 .sidebar button.dashboard-active-v586,
+body.calendar-view-active-v586 .sidebar a.dashboard-active-v586,
+body.calendar-view-active-v586 nav button.dashboard-active-v586,
+body.calendar-view-active-v586 nav a.dashboard-active-v586{
+  background:transparent!important;
+  color:inherit!important;
+  box-shadow:none!important;
+}
+
+body.calendar-view-active-v586 .menu-calendar-active-v586,
+body.calendar-view-active-v586 button.menu-calendar-active-v586,
+body.calendar-view-active-v586 a.menu-calendar-active-v586{
+  background:#fff!important;
+  color:#111!important;
+  font-weight:950!important;
+  box-shadow:0 10px 24px rgba(255,255,255,.2)!important;
+}

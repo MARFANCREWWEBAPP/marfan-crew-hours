@@ -7387,3 +7387,99 @@ if(__showCalendarV582_v585){
   };
   window.viewCalendar = showCalendarV582;
 }
+
+
+// ---------- V58.6 CALENDAR ACTIVE MENU FIX ----------
+function normalizeMenuTextV586(el){
+  return [
+    el.textContent || '',
+    el.getAttribute('data-view') || '',
+    el.getAttribute('data-section') || '',
+    el.getAttribute('onclick') || '',
+    el.getAttribute('href') || '',
+    el.id || '',
+    typeof el.className === 'string' ? el.className : ''
+  ].join(' ').toLowerCase();
+}
+
+function setActiveMenuV586(target){
+  const all = document.querySelectorAll('.sidebar button,.sidebar a,nav button,nav a,[data-view],[data-section]');
+  document.body.classList.remove('dashboard-view-active-v586','calendar-view-active-v586');
+
+  all.forEach(el=>{
+    const txt = normalizeMenuTextV586(el);
+    const isDashboard = txt.includes('dashboard') || txt.includes('inicio') || txt.includes('panel');
+    const isCalendar = txt.includes('calendario') || txt.includes('calendar') || txt.includes('eventos');
+
+    el.classList.remove('active','menu-active-calendar-v584','menu-calendar-active-v586','dashboard-active-v586');
+    el.removeAttribute('aria-current');
+
+    if(isDashboard) el.classList.add('dashboard-active-v586');
+
+    if(target === 'calendar' && isCalendar){
+      el.classList.add('active','menu-calendar-active-v586');
+      el.setAttribute('aria-current','page');
+    }
+
+    if(target === 'dashboard' && isDashboard && !isCalendar){
+      el.classList.add('active');
+      el.setAttribute('aria-current','page');
+    }
+  });
+
+  if(target === 'calendar') document.body.classList.add('calendar-view-active-v586');
+  if(target === 'dashboard') document.body.classList.add('dashboard-view-active-v586');
+}
+
+// Desactiva Dashboard y activa Calendario después de cargar calendario.
+const __showCalendarV582_v586 = typeof showCalendarV582 === 'function' ? showCalendarV582 : null;
+if(__showCalendarV582_v586){
+  showCalendarV582 = async function(){
+    await __showCalendarV582_v586();
+    setActiveMenuV586('calendar');
+    setTimeout(()=>setActiveMenuV586('calendar'), 100);
+    setTimeout(()=>setActiveMenuV586('calendar'), 500);
+  };
+  window.viewCalendar = showCalendarV582;
+}
+
+const __viewCalendar_v586 = typeof viewCalendar === 'function' ? viewCalendar : null;
+if(__viewCalendar_v586){
+  viewCalendar = async function(){
+    await __viewCalendar_v586();
+    setActiveMenuV586('calendar');
+    setTimeout(()=>setActiveMenuV586('calendar'), 100);
+    setTimeout(()=>setActiveMenuV586('calendar'), 500);
+  };
+}
+
+// Intercepta clics de menú: si es Calendario, limpia Dashboard inmediatamente.
+if(!window.__v586MenuClickFix){
+  window.__v586MenuClickFix = true;
+  document.addEventListener('click', ev=>{
+    const el = ev.target.closest && ev.target.closest('.sidebar button,.sidebar a,nav button,nav a,[data-view],[data-section],[onclick],a,button');
+    if(!el) return;
+    const txt = normalizeMenuTextV586(el);
+
+    const isCalendar = txt.includes('calendario') || txt.includes('calendar');
+    const isDashboard = txt.includes('dashboard') || txt.includes('inicio') || txt.includes('panel');
+
+    if(isCalendar){
+      setActiveMenuV586('calendar');
+      setTimeout(()=>setActiveMenuV586('calendar'), 80);
+      setTimeout(()=>setActiveMenuV586('calendar'), 400);
+    }else if(isDashboard && !isCalendar){
+      setActiveMenuV586('dashboard');
+    }
+  }, true);
+}
+
+// Si el contenido muestra calendario, corrige estado aunque haya entrado por ruta antigua.
+setInterval(()=>{
+  const content = document.getElementById('content') || document.querySelector('#main');
+  if(!content) return;
+  const txt = (content.textContent || '').toLowerCase();
+  if(txt.includes('calendario eventos') || txt.includes('vista mensual') || txt.includes('google conectado')){
+    setActiveMenuV586('calendar');
+  }
+}, 1000);

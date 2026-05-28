@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "58.5.0",
-  "description": "V58.5 Google Sync Modal Close Fix",
+  "version": "58.6.0",
+  "description": "V58.6 Calendar Active Menu Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

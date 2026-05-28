@@ -1,11 +1,7 @@
 
-# V58.5 Google Sync Modal Close Fix
+# V58.6 Calendar Active Menu Fix
 
 Corrige:
-- La ventana de sincronización Google siempre se puede cerrar.
-- Cierre con botón Cerrar.
-- Cierre con Cancelar/cerrar ventana.
-- Cierre haciendo click fuera.
-- Cierre con tecla Escape.
-- Timeout visual si Google tarda demasiado.
-- El modal no bloquea la app.
+- Al entrar en Calendario eventos, se desactiva Dashboard.
+- Solo Calendario queda blanco/activo.
+- Reaplica el estado tras renderizados y clicks.
