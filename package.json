@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "61.1.0",
-  "description": "V61.1 Emergency Stable Rollback",
+  "version": "61.2.0",
+  "description": "V61.2 Safe V46 Event Create Edit Form",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

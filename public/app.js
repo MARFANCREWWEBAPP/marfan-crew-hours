@@ -7841,3 +7841,255 @@ if(__showCalendarV582_v589){
 // ---------- V61.1 EMERGENCY STABLE ROLLBACK ----------
 window.__MARFAN_SAFE_VERSION = '61.1.0';
 console.log('MARFAN V61.1 Emergency Stable Rollback loaded');
+
+
+// ---------- V61.2 SAFE V46 EVENT FORM FRONTEND ----------
+function v612Esc(v){
+  if(typeof escV582 === 'function') return escV582(v);
+  if(typeof esc === 'function') return esc(v);
+  return String(v ?? '').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+}
+async function v612Fetch(path, opts={}){
+  const headers = {'Content-Type':'application/json','Accept':'application/json'};
+  try{
+    if(typeof token !== 'undefined' && token) headers.Authorization = 'Bearer '+token;
+    if(window.token) headers.Authorization = 'Bearer '+window.token;
+  }catch(e){}
+  const r = await fetch(new URL(path, window.location.origin).toString(), {
+    method:opts.method || 'GET',
+    headers:{...headers, ...(opts.headers||{})},
+    body:opts.body,
+    credentials:'same-origin',
+    cache:'no-store'
+  });
+  const text = await r.text();
+  if(text.trim().startsWith('<')) throw new Error('La API ha devuelto HTML. No está entrando en la ruta V61.2.');
+  let data = {};
+  try{ data = text ? JSON.parse(text) : {}; }catch(e){ data = {ok:false,error:text}; }
+  if(!r.ok || data.ok === false) throw new Error(data.error || text || 'HTTP '+r.status);
+  return data;
+}
+function v612ExtractGoogleMaps(){
+  const link = document.querySelector('#v612EventForm [name="google_maps_link"]')?.value || '';
+  const addressInput = document.querySelector('#v612EventForm [name="address"]');
+  const latInput = document.querySelector('#v612EventForm [name="lat"]');
+  const lngInput = document.querySelector('#v612EventForm [name="lng"]');
+  const geoInput = document.querySelector('#v612EventForm [name="geo_source"]');
+  const note = document.getElementById('v612GeoNote');
+  const text = decodeURIComponent(link);
+  let found = false;
+  let m = text.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  if(!m) m = text.match(/[?&]q=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  if(!m) m = text.match(/[?&]ll=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  if(m){ latInput.value=m[1]; lngInput.value=m[2]; geoInput.value='google_maps_link'; found=true; }
+  let q = text.match(/[?&]q=([^&]+)/);
+  if(q && addressInput && !addressInput.value){ addressInput.value=q[1].replace(/\+/g,' '); found=true; }
+  if(note) note.innerHTML = found ? 'Datos extraídos del link Google Maps.' : 'No se detectaron coordenadas. Puedes usar Detectar ubicación.';
+  v612TransportSuggest();
+}
+function v612DetectGeo(){
+  if(!navigator.geolocation){ alert('Este navegador no permite geolocalización.'); return; }
+  navigator.geolocation.getCurrentPosition(pos=>{
+    document.querySelector('#v612EventForm [name="lat"]').value = pos.coords.latitude.toFixed(6);
+    document.querySelector('#v612EventForm [name="lng"]').value = pos.coords.longitude.toFixed(6);
+    document.querySelector('#v612EventForm [name="geo_source"]').value = 'navigator.geolocation';
+    v612TransportSuggest();
+    if(typeof v534Toast === 'function') v534Toast('Ubicación detectada');
+  }, err=>alert('No se pudo detectar ubicación: '+err.message), {enableHighAccuracy:true,timeout:10000,maximumAge:60000});
+}
+function v612TransportSuggest(){
+  const address = document.querySelector('#v612EventForm [name="address"]')?.value || '';
+  const lat = document.querySelector('#v612EventForm [name="lat"]')?.value || '';
+  const lng = document.querySelector('#v612EventForm [name="lng"]')?.value || '';
+  const req = document.querySelector('#v612EventForm [name="transport_required"]');
+  const charge = document.querySelector('#v612EventForm [name="transport_charge"]');
+  const note = document.getElementById('v612TransportNote');
+  const t = address.toLowerCase();
+  const local = ['cartama','cártama','estacion de cartama','estación de cártama','malaga','málaga'].some(x=>t.includes(x));
+  if(!address && !lat && !lng){ if(note) note.innerHTML='Sin ubicación: revisar transporte manualmente.'; return; }
+  if(local){ if(req) req.value=0; if(charge && !Number(charge.value)) charge.value=0; if(note) note.innerHTML='Zona local detectada: sin cargo automático.'; }
+  else { if(req) req.value=1; if(charge && !Number(charge.value)) charge.value=25; if(note) note.innerHTML='Fuera de zona local: revisar cargo de transporte.'; }
+}
+function v612UserOptions(users, selected=''){
+  return users.map(u=>`<option value="${u.id}" ${String(selected)===String(u.id)?'selected':''}>${v612Esc((u.first_name||'')+' '+(u.last_name||''))}${u.nickname?' · '+v612Esc(u.nickname):''}</option>`).join('');
+}
+function v612RoleName(r){ return r.role || r.name || r.title || 'Rol'; }
+function v612RoleOptions(roles, selected=''){
+  return roles.map(r=>`<option value="${r.id}" data-day="${Number(r.hourly_rate||r.day_rate||r.rate||0)}" data-night="${Number(r.night_rate||r.rate_night||0)}" data-name="${v612Esc(v612RoleName(r))}" ${String(selected)===String(r.id)?'selected':''}>${v612Esc(v612RoleName(r))}</option>`).join('');
+}
+function v612CalcAssignment(row){
+  const roleSel = row.querySelector('[name="role_id"]');
+  const shift = row.querySelector('[name="shift_type"]')?.value || 'D';
+  const opt = roleSel ? roleSel.options[roleSel.selectedIndex] : null;
+  const rate = opt ? (shift === 'N' ? Number(opt.dataset.night||0) : Number(opt.dataset.day||0)) : 0;
+  const rateInput = row.querySelector('[name="hourly_rate"]');
+  const roleName = row.querySelector('[name="service_role"]');
+  if(rateInput) rateInput.value = rate.toFixed(2);
+  if(roleName && opt) roleName.value = opt.dataset.name || opt.textContent;
+  row.classList.toggle('v612-teamlead', !!row.querySelector('[name="is_team_lead"]')?.checked);
+}
+function v612AddAssignment(users, roles, a={}){
+  const box = document.getElementById('v612Assignments');
+  if(!box) return;
+  const row = document.createElement('div');
+  row.className = 'v612-assignment';
+  row.innerHTML = `
+    <select class="field" name="user_id">${v612UserOptions(users, a.user_id)}</select>
+    <select class="field" name="role_id" onchange="v612CalcAssignment(this.closest('.v612-assignment'))">${v612RoleOptions(roles, a.role_id)}</select>
+    <select class="field" name="shift_type" onchange="v612CalcAssignment(this.closest('.v612-assignment'))"><option value="D" ${a.shift_type==='D'?'selected':''}>D</option><option value="N" ${a.shift_type==='N'?'selected':''}>N</option></select>
+    <input class="field" name="planned_start" type="time" value="${v612Esc(a.planned_start||'')}">
+    <input class="field" name="planned_end" type="time" value="${v612Esc(a.planned_end||'')}">
+    <input class="field" name="hourly_rate" readonly value="${v612Esc(a.hourly_rate||'')}">
+    <button type="button" class="danger" onclick="this.closest('.v612-assignment').remove()">Quitar</button>
+    <label style="grid-column:1/-1"><input type="checkbox" name="is_team_lead" ${Number(a.is_team_lead||0)===1?'checked':''} onchange="v612CalcAssignment(this.closest('.v612-assignment'))"> Jefe de equipo</label>
+    <input type="hidden" name="service_role" value="${v612Esc(a.service_role||'')}">
+  `;
+  box.appendChild(row);
+  v612CalcAssignment(row);
+}
+function v612CollectAssignments(){
+  return [...document.querySelectorAll('#v612Assignments .v612-assignment')].map(row=>({
+    user_id:Number(row.querySelector('[name="user_id"]').value || 0),
+    role_id:row.querySelector('[name="role_id"]').value || '',
+    service_role:row.querySelector('[name="service_role"]').value || '',
+    shift_type:row.querySelector('[name="shift_type"]').value || 'D',
+    planned_start:row.querySelector('[name="planned_start"]').value || '',
+    planned_end:row.querySelector('[name="planned_end"]').value || '',
+    hourly_rate:Number(row.querySelector('[name="hourly_rate"]').value || 0),
+    is_team_lead:row.querySelector('[name="is_team_lead"]').checked ? 1 : 0,
+    status:'asignado'
+  })).filter(x=>x.user_id);
+}
+async function openV612EventForm(id=0){
+  id = Number(id || 0);
+  let data;
+  try{ data = await v612Fetch('/api/v612/event-form-data' + (id ? '?id='+encodeURIComponent(id) : '')); }
+  catch(e){ alert('Error abriendo formulario de evento: '+e.message); return; }
+  const e = data.event || {};
+  const users = data.users || [];
+  const roles = data.roles || [];
+  const assignments = data.assignments || [];
+  const root = document.getElementById('modalRoot') || document.body;
+  root.innerHTML = `
+    <div class="modal-back">
+      <div class="modal v612-modal">
+        <div class="modal-head">
+          <div><h2>${id?'Editar evento':'Crear evento'} · Formulario V46</h2><p class="muted">Google Maps · operarios · jefe de equipo · roles</p></div>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+        <form id="v612EventForm">
+          <div class="v612-section"><h3>1. Datos del evento</h3><div class="v612-grid">
+            <input class="field span-6" name="name" value="${v612Esc(e.name||'')}" placeholder="Nombre del evento" required>
+            <input class="field span-3" name="event_code" value="${v612Esc(e.event_code||'')}" placeholder="Referencia">
+            <select class="field span-3" name="status">${['programado','confirmado','pendiente','realizado','cancelado'].map(s=>`<option value="${s}" ${String(e.status||'programado')===s?'selected':''}>${s}</option>`).join('')}</select>
+            <input class="field span-4" name="client" value="${v612Esc(e.client||'')}" placeholder="Cliente">
+            <input class="field span-4" name="legal_name" value="${v612Esc(e.legal_name||'')}" placeholder="Razón social">
+            <input class="field span-4" name="cif" value="${v612Esc(e.cif||'')}" placeholder="CIF/NIF">
+          </div></div>
+          <div class="v612-section"><h3>2. Contacto</h3><div class="v612-grid">
+            <input class="field span-4" name="contact_name" value="${v612Esc(e.contact_name||'')}" placeholder="Responsable">
+            <input class="field span-4" name="contact_phone" value="${v612Esc(e.contact_phone||'')}" placeholder="Teléfono">
+            <input class="field span-4" name="contact_email" value="${v612Esc(e.contact_email||'')}" placeholder="Email">
+          </div></div>
+          <div class="v612-section"><h3>3. Fecha, horarios y ubicación</h3><div class="v612-grid">
+            <input class="field span-3" name="event_date" type="date" value="${v612Esc(e.event_date||'')}" required>
+            <input class="field span-2" name="start_time" type="time" value="${v612Esc(e.start_time||'')}">
+            <input class="field span-2" name="end_time" type="time" value="${v612Esc(e.end_time||'')}">
+            <input class="field span-2" name="load_in_time" type="time" value="${v612Esc(e.load_in_time||'')}">
+            <input class="field span-3" name="load_out_time" type="time" value="${v612Esc(e.load_out_time||'')}">
+            <input class="field span-5" name="location" value="${v612Esc(e.location||'')}" placeholder="Recinto / ubicación">
+            <input class="field span-7" name="address" value="${v612Esc(e.address||'')}" placeholder="Dirección completa" oninput="v612TransportSuggest()">
+            <input class="field span-9" name="google_maps_link" value="${v612Esc(e.google_maps_link||'')}" placeholder="Pegar link de Google Maps">
+            <button type="button" class="v612-link span-3" onclick="v612ExtractGoogleMaps()">Leer link Google</button>
+            <input class="field span-6" name="access_notes" value="${v612Esc(e.access_notes||'')}" placeholder="Accesos / carga y descarga">
+            <input class="field span-6" name="parking_notes" value="${v612Esc(e.parking_notes||'')}" placeholder="Parking / vehículos">
+          </div></div>
+          <div class="v612-section"><h3>4. Geolocalización y transporte</h3><div class="v612-grid">
+            <input class="field span-3" name="lat" value="${v612Esc(e.lat||'')}" placeholder="Latitud">
+            <input class="field span-3" name="lng" value="${v612Esc(e.lng||'')}" placeholder="Longitud">
+            <input class="field span-3" name="geo_source" value="${v612Esc(e.geo_source||'')}" placeholder="Fuente">
+            <button type="button" class="v612-geo span-3" onclick="v612DetectGeo()">Detectar ubicación</button>
+            <select class="field span-3" name="transport_required"><option value="0" ${Number(e.transport_required||0)===0?'selected':''}>Sin cargo transporte</option><option value="1" ${Number(e.transport_required||0)===1?'selected':''}>Con cargo transporte</option></select>
+            <input class="field span-3" name="transport_charge" type="number" step="0.01" value="${v612Esc(e.transport_charge||0)}" placeholder="Cargo transporte €">
+            <div class="v612-warning span-3" id="v612GeoNote">Pega un link de Google Maps para leer coordenadas.</div>
+            <div class="v612-warning span-3" id="v612TransportNote">Revisión transporte pendiente.</div>
+          </div></div>
+          <div class="v612-section"><h3>5. Operarios y jefe de equipo</h3>
+            <div id="v612Assignments"></div>
+            <button type="button" class="v612-add" onclick="v612AddAssignment(window.__v612Users, window.__v612Roles)">+ Añadir operario</button>
+          </div>
+          <div class="v612-section"><h3>6. Producción</h3><div class="v612-grid">
+            <input class="field span-4" name="service_type" value="${v612Esc(e.service_type||'')}" placeholder="Tipo de servicio">
+            <input class="field span-4" name="required_workers" type="number" value="${v612Esc(e.required_workers||'')}" placeholder="Operarios necesarios">
+            <input class="field span-4" name="required_team_leads" type="number" value="${v612Esc(e.required_team_leads||'')}" placeholder="Jefes de equipo">
+            <input class="field span-6" name="material_notes" value="${v612Esc(e.material_notes||'')}" placeholder="Material / técnica">
+            <input class="field span-6" name="crew_notes" value="${v612Esc(e.crew_notes||'')}" placeholder="Notas para crew">
+            <textarea class="field span-12" name="production_notes" placeholder="Notas producción">${v612Esc(e.production_notes||'')}</textarea>
+          </div></div>
+          <div class="v612-section"><h3>7. Costes y notas</h3><div class="v612-grid">
+            <select class="field span-3" name="payment_status">${['pendiente','facturado','cobrado','impagado'].map(s=>`<option value="${s}" ${String(e.payment_status||'pendiente')===s?'selected':''}>${s}</option>`).join('')}</select>
+            <input class="field span-3" name="estimated_external_cost" type="number" step="0.01" value="${v612Esc(e.estimated_external_cost||0)}" placeholder="Coste externo">
+            <input class="field span-3" name="estimated_transport_cost" type="number" step="0.01" value="${v612Esc(e.estimated_transport_cost||0)}" placeholder="Transporte">
+            <input class="field span-3" name="estimated_other_cost" type="number" step="0.01" value="${v612Esc(e.estimated_other_cost||0)}" placeholder="Otros">
+            <textarea class="field span-12" name="notes" placeholder="Notas internas">${v612Esc(e.notes||'')}</textarea>
+          </div></div>
+          <div class="actions"><button class="v612-save" type="submit">Guardar evento</button><button type="button" class="secondary" onclick="closeWizard()">Cancelar</button></div>
+        </form>
+      </div>
+    </div>`;
+  window.__v612Users = users; window.__v612Roles = roles;
+  if(assignments.length) assignments.forEach(a=>v612AddAssignment(users, roles, a));
+  else v612AddAssignment(users, roles, {});
+  v612TransportSuggest();
+  document.getElementById('v612EventForm').onsubmit = async ev=>{
+    ev.preventDefault();
+    const event = Object.fromEntries(new FormData(ev.target));
+    try{
+      await v612Fetch('/api/v612/event-form-save' + (id ? '?id='+encodeURIComponent(id) : ''), {method:'POST', body:JSON.stringify({event, assignments:v612CollectAssignments()})});
+      if(typeof v534Toast === 'function') v534Toast(id?'Evento editado correctamente':'Evento creado correctamente');
+      try{ closeWizard(); }catch(e){ root.innerHTML=''; }
+      if(typeof showCalendarV582 === 'function') await showCalendarV582();
+      else if(typeof viewCalendar === 'function') await viewCalendar();
+    }catch(err){ alert('Error guardando evento: '+err.message); }
+  };
+}
+window.openV612EventForm = openV612EventForm;
+window.openCreateEventV559 = function(){ return openV612EventForm(0); };
+window.openCreateEventV566 = function(){ return openV612EventForm(0); };
+window.openCreateEventV563 = function(){ return openV612EventForm(0); };
+window.openEditEventV60 = openV612EventForm;
+window.editEventV582 = openV612EventForm;
+window.editEventV587 = openV612EventForm;
+window.editEventV593 = openV612EventForm;
+window.editCalendarEventV58 = openV612EventForm;
+window.editCalendarEventV576 = openV612EventForm;
+
+function patchV612Buttons(){
+  document.querySelectorAll('button').forEach(btn=>{
+    const txt=(btn.textContent||'').toLowerCase().trim();
+    if(txt === 'editar' || txt === 'editar evento'){
+      let id=null;
+      const old=btn.getAttribute('onclick')||'';
+      const m=old.match(/\((\d+)\)/);
+      if(m) id=Number(m[1]);
+      if(!id){
+        const row=btn.closest('[data-v582-event],[data-cal-event-id],[data-event-id],[data-edit-event-id-v60]');
+        if(row) id=Number(row.dataset.v582Event||row.dataset.calEventId||row.dataset.eventId||row.dataset.editEventIdV60||0);
+      }
+      if(id){ btn.removeAttribute('onclick'); btn.onclick=(ev)=>{ev.preventDefault();ev.stopPropagation();openV612EventForm(id);}; }
+    }
+    if(txt.includes('crear evento') || txt.includes('+ crear evento')){
+      btn.onclick=(ev)=>{ev.preventDefault();openV612EventForm(0);};
+    }
+  });
+}
+setInterval(patchV612Buttons, 800);
+const __showCalendarV582_v612 = typeof showCalendarV582 === 'function' ? showCalendarV582 : null;
+if(__showCalendarV582_v612){
+  showCalendarV582 = async function(){
+    await __showCalendarV582_v612();
+    setTimeout(patchV612Buttons,50);
+    setTimeout(patchV612Buttons,400);
+  };
+  window.viewCalendar = showCalendarV582;
+}

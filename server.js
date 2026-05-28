@@ -164,6 +164,205 @@ app.get('/api/v611-health', (req,res)=>{
   res.json({ok:true, version:'61.1.0', status:'emergency-stable'});
 });
 
+
+// ---------- V61.2 SAFE V46 EVENT FORM API ----------
+function v612EnsureEventColumns(){
+  const existing = db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
+  const add = (name,type)=>{
+    if(!existing.includes(name)){
+      try{ db.prepare(`ALTER TABLE events ADD COLUMN "${name}" ${type}`).run(); }catch(e){}
+    }
+  };
+  add('event_code','TEXT DEFAULT ""');
+  add('legal_name','TEXT DEFAULT ""');
+  add('cif','TEXT DEFAULT ""');
+  add('contact_name','TEXT DEFAULT ""');
+  add('contact_phone','TEXT DEFAULT ""');
+  add('contact_email','TEXT DEFAULT ""');
+  add('address','TEXT DEFAULT ""');
+  add('google_maps_link','TEXT DEFAULT ""');
+  add('access_notes','TEXT DEFAULT ""');
+  add('parking_notes','TEXT DEFAULT ""');
+  add('load_in_time','TEXT DEFAULT ""');
+  add('load_out_time','TEXT DEFAULT ""');
+  add('service_type','TEXT DEFAULT ""');
+  add('required_workers','INTEGER DEFAULT 0');
+  add('required_team_leads','INTEGER DEFAULT 0');
+  add('material_notes','TEXT DEFAULT ""');
+  add('crew_notes','TEXT DEFAULT ""');
+  add('production_notes','TEXT DEFAULT ""');
+  add('payment_status','TEXT DEFAULT ""');
+  add('estimated_external_cost','REAL DEFAULT 0');
+  add('estimated_transport_cost','REAL DEFAULT 0');
+  add('estimated_other_cost','REAL DEFAULT 0');
+  add('lat','TEXT DEFAULT ""');
+  add('lng','TEXT DEFAULT ""');
+  add('geo_source','TEXT DEFAULT ""');
+  add('transport_required','INTEGER DEFAULT 0');
+  add('transport_charge','REAL DEFAULT 0');
+}
+function v612EnsureAssignmentsColumns(){
+  db.exec(`CREATE TABLE IF NOT EXISTS assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    service_role TEXT DEFAULT '',
+    planned_start TEXT DEFAULT '',
+    planned_end TEXT DEFAULT '',
+    status TEXT DEFAULT 'asignado',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );`);
+  const existing = db.prepare('PRAGMA table_info(assignments)').all().map(c=>c.name);
+  const add = (name,type)=>{
+    if(!existing.includes(name)){
+      try{ db.prepare(`ALTER TABLE assignments ADD COLUMN "${name}" ${type}`).run(); }catch(e){}
+    }
+  };
+  add('is_team_lead','INTEGER DEFAULT 0');
+  add('role_id','INTEGER DEFAULT NULL');
+  add('shift_type','TEXT DEFAULT "D"');
+  add('hourly_rate','REAL DEFAULT 0');
+}
+try{ v612EnsureEventColumns(); v612EnsureAssignmentsColumns(); }catch(e){}
+
+function v612CleanEventPayload(raw){
+  const b = raw || {};
+  return {
+    name:b.name || '',
+    event_code:b.event_code || '',
+    status:b.status || 'programado',
+    client:b.client || '',
+    legal_name:b.legal_name || '',
+    cif:b.cif || '',
+    contact_name:b.contact_name || '',
+    contact_phone:b.contact_phone || '',
+    contact_email:b.contact_email || '',
+    event_date:b.event_date || '',
+    start_time:b.start_time || '',
+    end_time:b.end_time || '',
+    load_in_time:b.load_in_time || '',
+    load_out_time:b.load_out_time || '',
+    location:b.location || '',
+    address:b.address || '',
+    google_maps_link:b.google_maps_link || '',
+    access_notes:b.access_notes || '',
+    parking_notes:b.parking_notes || '',
+    lat:b.lat || '',
+    lng:b.lng || '',
+    geo_source:b.geo_source || '',
+    transport_required:Number(b.transport_required || 0),
+    transport_charge:Number(b.transport_charge || 0),
+    service_type:b.service_type || '',
+    required_workers:Number(b.required_workers || 0),
+    required_team_leads:Number(b.required_team_leads || 0),
+    material_notes:b.material_notes || '',
+    crew_notes:b.crew_notes || '',
+    production_notes:b.production_notes || '',
+    payment_status:b.payment_status || 'pendiente',
+    estimated_external_cost:Number(b.estimated_external_cost || 0),
+    estimated_transport_cost:Number(b.estimated_transport_cost || 0),
+    estimated_other_cost:Number(b.estimated_other_cost || 0),
+    notes:b.notes || '',
+    operational_status:b.operational_status || ''
+  };
+}
+function v612SaveAssignments(eventId, assignments){
+  v612EnsureAssignmentsColumns();
+  const rows = Array.isArray(assignments) ? assignments : [];
+  const cols = db.prepare('PRAGMA table_info(assignments)').all().map(c=>c.name);
+  const allowed = ['event_id','user_id','service_role','planned_start','planned_end','status','is_team_lead','role_id','shift_type','hourly_rate'].filter(c=>cols.includes(c));
+  const stmt = db.prepare(`INSERT INTO assignments (${allowed.map(c=>`"${c}"`).join(',')}) VALUES (${allowed.map(()=>'?').join(',')})`);
+  const tx = db.transaction(()=>{
+    try{ db.prepare('DELETE FROM assignments WHERE event_id=?').run(eventId); }catch(e){}
+    for(const r of rows){
+      const userId = Number(r.user_id || 0);
+      if(!userId) continue;
+      const item = {
+        event_id:eventId,
+        user_id:userId,
+        service_role:r.service_role || '',
+        planned_start:r.planned_start || '',
+        planned_end:r.planned_end || '',
+        status:r.status || 'asignado',
+        is_team_lead:Number(r.is_team_lead || 0),
+        role_id:r.role_id ? Number(r.role_id) : null,
+        shift_type:r.shift_type || 'D',
+        hourly_rate:Number(r.hourly_rate || 0)
+      };
+      stmt.run(...allowed.map(c=>item[c]));
+    }
+  });
+  tx();
+}
+
+app.get('/api/v612/event-form-data', requireAdmin, (req,res)=>{
+  try{
+    v612EnsureEventColumns(); v612EnsureAssignmentsColumns();
+    const id = Number(req.query.id || 0);
+    let event = null;
+    let assignments = [];
+    if(id){
+      event = db.prepare('SELECT * FROM events WHERE id=?').get(id);
+      if(!event) return res.status(404).json({ok:false,error:'Evento no encontrado'});
+      try{
+        assignments = db.prepare(`
+          SELECT a.*, u.first_name,u.last_name,u.nickname,u.phone,u.email
+          FROM assignments a
+          LEFT JOIN users u ON u.id=a.user_id
+          WHERE a.event_id=?
+          ORDER BY COALESCE(a.is_team_lead,0) DESC,u.first_name,u.last_name
+        `).all(id);
+      }catch(e){}
+    }
+    let users = [];
+    try{
+      users = db.prepare(`
+        SELECT id, first_name,last_name,nickname,phone,email,role,active,operator_role_name,operator_role_id
+        FROM users
+        WHERE COALESCE(active,1)!=0 AND COALESCE(role,'')!='admin'
+        ORDER BY first_name,last_name
+      `).all();
+    }catch(e){
+      try{ users = db.prepare(`SELECT id, first_name,last_name,nickname,phone,email,role FROM users WHERE COALESCE(role,'')!='admin' ORDER BY first_name,last_name`).all(); }catch(_e){}
+    }
+    let roles = [];
+    try{
+      roles = db.prepare(`SELECT * FROM rates WHERE COALESCE(active,1)!=0 ORDER BY role COLLATE NOCASE`).all();
+    }catch(e){
+      try{ roles = db.prepare(`SELECT * FROM operator_roles ORDER BY role COLLATE NOCASE`).all(); }catch(_e){}
+    }
+    res.setHeader('Content-Type','application/json; charset=utf-8');
+    res.json({ok:true,event,assignments,users,roles});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+
+app.post('/api/v612/event-form-save', requireAdmin, (req,res)=>{
+  try{
+    v612EnsureEventColumns(); v612EnsureAssignmentsColumns();
+    const id = Number(req.query.id || 0);
+    const body = req.body || {};
+    const payload = v612CleanEventPayload(body.event || body);
+    const cols = db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
+    const keys = Object.keys(payload).filter(k=>cols.includes(k));
+    let eventId = id;
+    if(eventId){
+      const exists = db.prepare('SELECT id FROM events WHERE id=?').get(eventId);
+      if(!exists) return res.status(404).json({ok:false,error:'Evento no encontrado'});
+      db.prepare(`UPDATE events SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>payload[k]), eventId);
+    }else{
+      const info = db.prepare(`INSERT INTO events (${keys.map(k=>`"${k}"`).join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>payload[k]));
+      eventId = info.lastInsertRowid;
+    }
+    v612SaveAssignments(eventId, body.assignments || []);
+    res.setHeader('Content-Type','application/json; charset=utf-8');
+    res.json({ok:true,event_id:eventId,updated:!!id});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+
+app.get('/api/v612-route-test', requireAdmin, (req,res)=>{
+  res.json({ok:true, version:'61.2.0', route:'v46-safe-event-form'});
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads'), { maxAge: 0 }));
 

@@ -1,11 +1,16 @@
 
-# V61.1 Emergency Stable Rollback
+# V61.2 Safe V46 Event Form
 
-Objetivo:
-- Recuperar carga de la app.
-- No tocar login.
-- No tocar render principal.
-- No añadir gates ni wrappers agresivos.
-- Mantiene base V58.9, que incluía sync modal hard close y borrado seguro.
+Base estable: V61.1, que carga correctamente.
 
-Esta versión es para estabilizar primero.
+Añade sin tocar login:
+- Crear evento con formulario tipo V46.
+- Editar evento con el mismo formulario tipo V46.
+- Link Google Maps y extracción de coordenadas.
+- Geolocalización del navegador.
+- Añadir operarios.
+- Marcar jefe de equipo.
+- Rol por operario, turno D/N y tarifa.
+- Guardado de fecha/hora real.
+
+Las rutas API se insertan antes del fallback para evitar que devuelvan HTML.

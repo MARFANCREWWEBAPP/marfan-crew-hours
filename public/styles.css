@@ -1631,3 +1631,20 @@ body.calendar-view-active-v586 a.menu-calendar-active-v586{
   border-color:#fecaca;
   color:#991b1b;
 }
+
+
+/* V61.2 Safe V46 Event Form */
+.v612-modal{max-width:1280px!important}
+.v612-section{background:#f8fafc;border:1px solid #e5e7eb;border-radius:18px;padding:16px;margin:12px 0}
+.v612-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px}
+.v612-save{background:#16a34a!important;color:#fff!important;font-weight:950!important}
+.v612-geo{background:#111!important;color:#fff!important;font-weight:950!important}
+.v612-link{background:#2563eb!important;color:#fff!important;font-weight:950!important}
+.v612-add{background:#111827!important;color:#fff!important;font-weight:950!important}
+.v612-warning{background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:14px;padding:10px}
+.v612-assignment{display:grid;grid-template-columns:2fr 1.8fr .7fr 1fr 1fr .9fr auto;gap:8px;align-items:center;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:10px;margin:8px 0}
+.v612-teamlead{outline:2px solid #f59e0b}
+@media(max-width:980px){
+  .v612-grid,.v612-assignment{grid-template-columns:1fr}
+  .span-12,.span-9,.span-8,.span-7,.span-6,.span-5,.span-4,.span-3,.span-2{grid-column:span 1!important}
+}
