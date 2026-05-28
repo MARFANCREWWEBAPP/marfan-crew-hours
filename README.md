@@ -1,12 +1,19 @@
 
-# V59.4 Login Submit Fix
+# V60 Edit Event Direct Real Fix
 
-Corrige:
-- En V59.3 el login aparecía, pero al pulsar Entrar se quedaba en la misma página.
-- Se desactiva el gate agresivo V59.2 que bloqueaba vistas internas tras login.
-- El login original vuelve a mandar.
+Objetivo:
+- Solucionar definitivamente que Editar evento no funcione.
+
+Cambios:
+- Botón Editar pasa a data-edit-event-id-v60.
+- Listener real por addEventListener en captura.
+- Formulario de edición tipo V46.
+- Endpoint nuevo independiente:
+  - GET /api/events/:id/v60-edit
+  - POST /api/events/:id/v60-edit
+- Geolocalización y sugerencia de transporte.
 - Mantiene:
-  - Editar evento formulario V46
-  - Sincronización Google
-  - Borrar eventos
-  - Bloqueo de eventos borrados para que no vuelvan al sincronizar
+  - login fix
+  - Google Sync
+  - borrar eventos
+  - eventos borrados no se reimportan

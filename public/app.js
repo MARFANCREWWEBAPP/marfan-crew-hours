@@ -8404,3 +8404,284 @@ setTimeout(()=>{
     if(typeof showCalendarV582 === 'function') window.viewCalendar = showCalendarV582;
   }catch(e){}
 }, 1000);
+
+
+// ---------- V60 EDIT EVENT DIRECT REAL FIX FRONTEND ----------
+function v60Esc(v){
+  if(typeof escV582 === 'function') return escV582(v);
+  if(typeof esc === 'function') return esc(v);
+  return String(v ?? '').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+}
+
+async function v60Api(url, opts={}){
+  if(typeof api === 'function') return api(url, opts);
+  const headers = {'Content-Type':'application/json'};
+  if(typeof token !== 'undefined' && token) headers.Authorization = 'Bearer '+token;
+  const r = await fetch(url, {...opts, headers:{...headers, ...(opts.headers||{})}});
+  const text = await r.text();
+  let data = {};
+  try{ data = text ? JSON.parse(text) : {}; }catch(e){ data = {error:text}; }
+  if(!r.ok) throw new Error(data.error || text || 'HTTP '+r.status);
+  return data;
+}
+
+function v60TransportSuggest(){
+  const address = document.querySelector('#v60EditForm [name="address"]')?.value || '';
+  const lat = document.querySelector('#v60EditForm [name="lat"]')?.value || '';
+  const lng = document.querySelector('#v60EditForm [name="lng"]')?.value || '';
+  const t = address.toLowerCase();
+  const local = ['cartama','cártama','estacion de cartama','estación de cártama','malaga','málaga'].some(x=>t.includes(x));
+  const req = document.querySelector('#v60EditForm [name="transport_required"]');
+  const charge = document.querySelector('#v60EditForm [name="transport_charge"]');
+  const note = document.getElementById('v60TransportNote');
+
+  if(!address && !lat && !lng){
+    if(note) note.innerHTML = 'Sin dirección/geolocalización. Revisa transporte manualmente.';
+    return;
+  }
+
+  if(local){
+    if(req) req.value = 0;
+    if(charge && !Number(charge.value)) charge.value = 0;
+    if(note) note.innerHTML = 'Zona local detectada. Sin cargo automático de transporte.';
+  }else{
+    if(req) req.value = 1;
+    if(charge && !Number(charge.value)) charge.value = 25;
+    if(note) note.innerHTML = 'Fuera de zona local. Se recomienda revisar/aplicar cargo de transporte.';
+  }
+}
+
+function v60DetectGeo(){
+  if(!navigator.geolocation){
+    alert('Este navegador no permite geolocalización.');
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(pos=>{
+    document.querySelector('#v60EditForm [name="lat"]').value = pos.coords.latitude.toFixed(6);
+    document.querySelector('#v60EditForm [name="lng"]').value = pos.coords.longitude.toFixed(6);
+    document.querySelector('#v60EditForm [name="geo_source"]').value = 'navigator.geolocation';
+    v60TransportSuggest();
+    if(typeof v534Toast === 'function') v534Toast('Ubicación detectada');
+  }, err=>{
+    alert('No se pudo detectar ubicación: '+err.message);
+  }, {enableHighAccuracy:true,timeout:10000,maximumAge:60000});
+}
+
+async function openEditEventV60(id){
+  id = Number(id);
+  if(!id){
+    alert('No se ha podido identificar el evento para editar.');
+    return;
+  }
+
+  let data;
+  try{
+    data = await v60Api('/api/events/'+id+'/v60-edit');
+  }catch(e){
+    alert('Error cargando evento para editar: '+e.message);
+    return;
+  }
+
+  const e = data.event || {};
+  const assignments = data.assignments || [];
+
+  const html = `
+    <div class="modal-back">
+      <div class="modal v60-edit-modal">
+        <div class="modal-head">
+          <div>
+            <h2>Editar evento</h2>
+            <p class="muted">Formulario tipo V46 · ${v60Esc(e.name||'Evento')}</p>
+          </div>
+          <button class="secondary" type="button" onclick="closeWizard()">Cerrar</button>
+        </div>
+
+        <form id="v60EditForm">
+          <div class="v60-section">
+            <h3>1. Datos del evento</h3>
+            <div class="v60-grid">
+              <input class="field span-6" name="name" value="${v60Esc(e.name||'')}" placeholder="Nombre del evento" required>
+              <input class="field span-3" name="event_code" value="${v60Esc(e.event_code||'')}" placeholder="Referencia">
+              <select class="field span-3" name="status">
+                ${['programado','confirmado','pendiente','realizado','cancelado'].map(s=>`<option value="${s}" ${String(e.status||'')===s?'selected':''}>${s}</option>`).join('')}
+              </select>
+              <input class="field span-4" name="client" value="${v60Esc(e.client||'')}" placeholder="Cliente">
+              <input class="field span-4" name="legal_name" value="${v60Esc(e.legal_name||'')}" placeholder="Razón social">
+              <input class="field span-4" name="cif" value="${v60Esc(e.cif||'')}" placeholder="CIF/NIF">
+            </div>
+          </div>
+
+          <div class="v60-section">
+            <h3>2. Contacto</h3>
+            <div class="v60-grid">
+              <input class="field span-4" name="contact_name" value="${v60Esc(e.contact_name||'')}" placeholder="Responsable">
+              <input class="field span-4" name="contact_phone" value="${v60Esc(e.contact_phone||'')}" placeholder="Teléfono">
+              <input class="field span-4" name="contact_email" value="${v60Esc(e.contact_email||'')}" placeholder="Email">
+            </div>
+          </div>
+
+          <div class="v60-section">
+            <h3>3. Fecha, horarios y ubicación</h3>
+            <div class="v60-grid">
+              <input class="field span-3" name="event_date" type="date" value="${v60Esc(e.event_date||'')}" required>
+              <input class="field span-2" name="start_time" type="time" value="${v60Esc(e.start_time||'')}">
+              <input class="field span-2" name="end_time" type="time" value="${v60Esc(e.end_time||'')}">
+              <input class="field span-2" name="load_in_time" type="time" value="${v60Esc(e.load_in_time||'')}">
+              <input class="field span-3" name="load_out_time" type="time" value="${v60Esc(e.load_out_time||'')}">
+              <input class="field span-5" name="location" value="${v60Esc(e.location||'')}" placeholder="Recinto / ubicación">
+              <input class="field span-7" name="address" value="${v60Esc(e.address||'')}" placeholder="Dirección completa" oninput="v60TransportSuggest()">
+              <input class="field span-6" name="access_notes" value="${v60Esc(e.access_notes||'')}" placeholder="Accesos / carga y descarga">
+              <input class="field span-6" name="parking_notes" value="${v60Esc(e.parking_notes||'')}" placeholder="Parking / vehículos">
+            </div>
+          </div>
+
+          <div class="v60-section">
+            <h3>4. Geolocalización y transporte</h3>
+            <div class="v60-grid">
+              <input class="field span-3" name="lat" value="${v60Esc(e.lat||'')}" placeholder="Latitud">
+              <input class="field span-3" name="lng" value="${v60Esc(e.lng||'')}" placeholder="Longitud">
+              <input class="field span-3" name="geo_source" value="${v60Esc(e.geo_source||'')}" placeholder="Fuente geolocalización">
+              <button type="button" class="v60-geo span-3" onclick="v60DetectGeo()">Detectar ubicación</button>
+              <select class="field span-3" name="transport_required">
+                <option value="0" ${Number(e.transport_required||0)===0?'selected':''}>Sin cargo transporte</option>
+                <option value="1" ${Number(e.transport_required||0)===1?'selected':''}>Con cargo transporte</option>
+              </select>
+              <input class="field span-3" name="transport_charge" type="number" step="0.01" value="${v60Esc(e.transport_charge||0)}" placeholder="Cargo transporte €">
+              <div class="v60-note span-6" id="v60TransportNote">Revisión automática pendiente.</div>
+            </div>
+          </div>
+
+          <div class="v60-section">
+            <h3>5. Producción</h3>
+            <div class="v60-grid">
+              <input class="field span-4" name="service_type" value="${v60Esc(e.service_type||'')}" placeholder="Tipo de servicio">
+              <input class="field span-4" name="required_workers" type="number" value="${v60Esc(e.required_workers||'')}" placeholder="Operarios necesarios">
+              <input class="field span-4" name="required_team_leads" type="number" value="${v60Esc(e.required_team_leads||'')}" placeholder="Jefes de equipo">
+              <input class="field span-6" name="material_notes" value="${v60Esc(e.material_notes||'')}" placeholder="Material / técnica">
+              <input class="field span-6" name="crew_notes" value="${v60Esc(e.crew_notes||'')}" placeholder="Notas para crew">
+              <textarea class="field span-12" name="production_notes" placeholder="Notas producción">${v60Esc(e.production_notes||'')}</textarea>
+            </div>
+          </div>
+
+          <div class="v60-section">
+            <h3>6. Costes</h3>
+            <div class="v60-grid">
+              <select class="field span-3" name="payment_status">
+                ${['pendiente','facturado','cobrado','impagado'].map(s=>`<option value="${s}" ${String(e.payment_status||'')===s?'selected':''}>${s}</option>`).join('')}
+              </select>
+              <input class="field span-3" name="estimated_external_cost" type="number" step="0.01" value="${v60Esc(e.estimated_external_cost||0)}" placeholder="Coste externo">
+              <input class="field span-3" name="estimated_transport_cost" type="number" step="0.01" value="${v60Esc(e.estimated_transport_cost||0)}" placeholder="Transporte">
+              <input class="field span-3" name="estimated_other_cost" type="number" step="0.01" value="${v60Esc(e.estimated_other_cost||0)}" placeholder="Otros">
+            </div>
+          </div>
+
+          <div class="v60-section">
+            <h3>7. Operarios asignados</h3>
+            ${assignments.map(a=>`
+              <div style="border-bottom:1px solid #e5e7eb;padding:8px 0">
+                <b>${v60Esc((a.first_name||'')+' '+(a.last_name||''))}${a.nickname?' · '+v60Esc(a.nickname):''}</b><br>
+                ${v60Esc(a.service_role||'')} · ${v60Esc(a.planned_start||'')} - ${v60Esc(a.planned_end||'')}
+              </div>
+            `).join('') || '<p class="muted">Sin operarios asignados.</p>'}
+          </div>
+
+          <div class="v60-section">
+            <h3>8. Notas internas</h3>
+            <textarea class="field" name="notes">${v60Esc(e.notes||'')}</textarea>
+          </div>
+
+          <div class="actions">
+            <button class="v60-save" type="submit">Guardar cambios</button>
+            <button class="secondary" type="button" onclick="closeWizard()">Cancelar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  const root = document.getElementById('modalRoot') || document.body;
+  root.innerHTML = html;
+
+  v60TransportSuggest();
+
+  document.getElementById('v60EditForm').addEventListener('submit', async ev=>{
+    ev.preventDefault();
+    const payload = Object.fromEntries(new FormData(ev.target));
+    try{
+      await v60Api('/api/events/'+id+'/v60-edit',{method:'POST',body:JSON.stringify(payload)});
+      if(typeof v534Toast === 'function') v534Toast('Evento editado correctamente');
+      try{ closeWizard(); }catch(e){ root.innerHTML = ''; }
+      if(typeof showCalendarV582 === 'function') await showCalendarV582();
+      else if(typeof viewCalendar === 'function') await viewCalendar();
+    }catch(err){
+      alert('Error guardando evento: '+err.message);
+    }
+  });
+}
+
+// Forzar edición a V60 en TODOS los caminos.
+window.openEditEventV60 = openEditEventV60;
+window.editEventV582 = openEditEventV60;
+window.editEventV587 = openEditEventV60;
+window.editEventV593 = openEditEventV60;
+window.editCalendarEventV58 = openEditEventV60;
+window.editCalendarEventV576 = openEditEventV60;
+
+// Reemplazar botones editar inline por listener real.
+function patchEditButtonsV60(){
+  document.querySelectorAll('button').forEach(btn=>{
+    const txt = (btn.textContent||'').toLowerCase().trim();
+    if(txt === 'editar' || txt === 'editar evento'){
+      let id = null;
+      const old = btn.getAttribute('onclick') || '';
+      const m = old.match(/\((\d+)\)/);
+      if(m) id = Number(m[1]);
+
+      if(!id){
+        const row = btn.closest('[data-v582-event],[data-cal-event-id],[data-event-id],[data-event-id-v60]');
+        if(row) id = Number(row.dataset.v582Event || row.dataset.calEventId || row.dataset.eventId || row.dataset.eventIdV60 || 0);
+      }
+
+      if(id){
+        btn.removeAttribute('onclick');
+        btn.classList.add('v60-edit-btn');
+        btn.dataset.editEventIdV60 = String(id);
+      }
+    }
+  });
+}
+
+// Captura click directa sobre cualquier botón marcado.
+if(!window.__v60EditClickInstalled){
+  window.__v60EditClickInstalled = true;
+  document.addEventListener('click', ev=>{
+    const btn = ev.target.closest && ev.target.closest('[data-edit-event-id-v60], .v60-edit-btn');
+    if(!btn) return;
+
+    let id = Number(btn.dataset.editEventIdV60 || 0);
+    if(!id){
+      const old = btn.getAttribute('onclick') || '';
+      const m = old.match(/\((\d+)\)/);
+      if(m) id = Number(m[1]);
+    }
+
+    if(!id) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    ev.stopImmediatePropagation();
+    openEditEventV60(id);
+  }, true);
+}
+
+setInterval(patchEditButtonsV60, 700);
+
+const __showCalendarV582_v60 = typeof showCalendarV582 === 'function' ? showCalendarV582 : null;
+if(__showCalendarV582_v60){
+  showCalendarV582 = async function(){
+    await __showCalendarV582_v60();
+    setTimeout(patchEditButtonsV60, 50);
+    setTimeout(patchEditButtonsV60, 300);
+    setTimeout(patchEditButtonsV60, 800);
+  };
+  window.viewCalendar = showCalendarV582;
+}

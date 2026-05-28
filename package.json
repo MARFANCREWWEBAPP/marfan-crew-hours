@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "59.4.0",
-  "description": "V59.4 Login Submit Fix",
+  "version": "60.0.0",
+  "description": "V60 Edit Event Direct Real Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

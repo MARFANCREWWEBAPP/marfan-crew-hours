@@ -6059,3 +6059,101 @@ app.post('/api/events/:id/v46-edit-save-v593', requireAdmin, (req,res)=>{
     res.status(500).json({error:e.message});
   }
 });
+
+
+// ---------- V60 EDIT EVENT DIRECT REAL FIX ----------
+function v60EnsureEventColumns(){
+  const existing = db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
+  const add = (name,type)=>{
+    if(!existing.includes(name)){
+      try{ db.prepare(`ALTER TABLE events ADD COLUMN "${name}" ${type}`).run(); }catch(e){}
+    }
+  };
+  add('event_code','TEXT DEFAULT ""');
+  add('legal_name','TEXT DEFAULT ""');
+  add('cif','TEXT DEFAULT ""');
+  add('contact_name','TEXT DEFAULT ""');
+  add('contact_phone','TEXT DEFAULT ""');
+  add('contact_email','TEXT DEFAULT ""');
+  add('address','TEXT DEFAULT ""');
+  add('access_notes','TEXT DEFAULT ""');
+  add('parking_notes','TEXT DEFAULT ""');
+  add('load_in_time','TEXT DEFAULT ""');
+  add('load_out_time','TEXT DEFAULT ""');
+  add('service_type','TEXT DEFAULT ""');
+  add('required_workers','INTEGER DEFAULT 0');
+  add('required_team_leads','INTEGER DEFAULT 0');
+  add('material_notes','TEXT DEFAULT ""');
+  add('crew_notes','TEXT DEFAULT ""');
+  add('production_notes','TEXT DEFAULT ""');
+  add('payment_status','TEXT DEFAULT ""');
+  add('estimated_external_cost','REAL DEFAULT 0');
+  add('estimated_transport_cost','REAL DEFAULT 0');
+  add('estimated_other_cost','REAL DEFAULT 0');
+  add('lat','TEXT DEFAULT ""');
+  add('lng','TEXT DEFAULT ""');
+  add('geo_source','TEXT DEFAULT ""');
+  add('transport_required','INTEGER DEFAULT 0');
+  add('transport_charge','REAL DEFAULT 0');
+}
+try{ v60EnsureEventColumns(); }catch(e){}
+
+app.get('/api/events/:id/v60-edit', requireAdmin, (req,res)=>{
+  try{
+    v60EnsureEventColumns();
+    const event = db.prepare('SELECT * FROM events WHERE id=?').get(req.params.id);
+    if(!event) return res.status(404).json({ok:false,error:'Evento no encontrado'});
+    let assignments = [];
+    try{
+      assignments = db.prepare(`
+        SELECT a.*, u.first_name,u.last_name,u.nickname,u.phone
+        FROM assignments a
+        LEFT JOIN users u ON u.id=a.user_id
+        WHERE a.event_id=?
+        ORDER BY u.first_name,u.last_name
+      `).all(req.params.id);
+    }catch(e){}
+    res.json({ok:true,event,assignments});
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+app.post('/api/events/:id/v60-edit', requireAdmin, (req,res)=>{
+  try{
+    v60EnsureEventColumns();
+    const id = Number(req.params.id);
+    const event = db.prepare('SELECT * FROM events WHERE id=?').get(id);
+    if(!event) return res.status(404).json({ok:false,error:'Evento no encontrado'});
+
+    const b = req.body || {};
+    const cols = db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
+
+    const fields = [
+      'name','event_code','status',
+      'client','legal_name','cif',
+      'contact_name','contact_phone','contact_email',
+      'event_date','start_time','end_time','load_in_time','load_out_time',
+      'location','address','access_notes','parking_notes',
+      'lat','lng','geo_source','transport_required','transport_charge',
+      'service_type','required_workers','required_team_leads',
+      'material_notes','crew_notes','production_notes',
+      'payment_status','estimated_external_cost','estimated_transport_cost','estimated_other_cost',
+      'notes','operational_status'
+    ].filter(k => cols.includes(k) && Object.prototype.hasOwnProperty.call(b,k));
+
+    const values = fields.map(k=>{
+      if(['required_workers','required_team_leads','transport_required'].includes(k)) return Number(b[k] || 0);
+      if(['estimated_external_cost','estimated_transport_cost','estimated_other_cost','transport_charge'].includes(k)) return Number(b[k] || 0);
+      return b[k] == null ? '' : b[k];
+    });
+
+    if(fields.length){
+      db.prepare(`UPDATE events SET ${fields.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...values, id);
+    }
+
+    res.json({ok:true,updated:fields.length,event_id:id});
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
