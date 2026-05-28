@@ -381,6 +381,159 @@ app.get('/api/v613-session', (req,res)=>{
   }
 });
 
+
+// ---------- V61.4 GOOGLE CALENDAR PUSH FIX ----------
+function v614EnsureGoogleLinks(){
+  db.exec(`CREATE TABLE IF NOT EXISTS google_event_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL,
+    google_event_id TEXT NOT NULL,
+    calendar_id TEXT DEFAULT '',
+    synced_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );`);
+}
+
+function v614EventDateTime(date, time, fallbackHour){
+  const d = String(date || '').slice(0,10);
+  let t = String(time || '').trim();
+  if(!/^\d{2}:\d{2}/.test(t)) t = fallbackHour || '09:00';
+  if(!d) return null;
+  return `${d}T${t.slice(0,5)}:00`;
+}
+
+function v614GoogleDescription(event){
+  const lines = [];
+  lines.push('Evento creado/actualizado desde Marfan Crew Hours.');
+  if(event.client) lines.push('Cliente: ' + event.client);
+  if(event.contact_name) lines.push('Contacto: ' + event.contact_name);
+  if(event.contact_phone) lines.push('Teléfono: ' + event.contact_phone);
+  if(event.service_type) lines.push('Servicio: ' + event.service_type);
+  if(event.access_notes) lines.push('Accesos: ' + event.access_notes);
+  if(event.parking_notes) lines.push('Parking: ' + event.parking_notes);
+  if(event.production_notes) lines.push('Producción: ' + event.production_notes);
+  if(event.notes) lines.push('Notas: ' + event.notes);
+  return lines.filter(Boolean).join('\n');
+}
+
+async function v614ResolveWritableCalendar(calendar){
+  if(typeof v574ResolveCalendar === 'function'){
+    const resolved = await v574ResolveCalendar(calendar);
+    return resolved.calendar;
+  }
+
+  const targetId = String(process.env.GOOGLE_TARGET_CALENDAR_ID || '').trim();
+  const targetName = String(process.env.GOOGLE_TARGET_CALENDAR_NAME || 'MARFAN').trim().toLowerCase();
+
+  const list = await calendar.calendarList.list({maxResults:250, showHidden:true});
+  const items = list.data.items || [];
+  if(targetId){
+    const found = items.find(c => c.id === targetId);
+    if(found) return found;
+  }
+  return items.find(c => String(c.summary||'').toLowerCase() === targetName)
+    || items.find(c => String(c.summary||'').toLowerCase().includes('marfan'))
+    || items[0];
+}
+
+async function v614PushEventToGoogle(eventId){
+  try{
+    if(typeof v574CalendarClient !== 'function'){
+      return {ok:false, skipped:true, reason:'Google no conectado o motor OAuth no disponible'};
+    }
+
+    v614EnsureGoogleLinks();
+
+    const event = db.prepare('SELECT * FROM events WHERE id=?').get(eventId);
+    if(!event) return {ok:false, error:'Evento no encontrado'};
+
+    const calendar = await v574CalendarClient();
+    const cal = await v614ResolveWritableCalendar(calendar);
+    if(!cal || !cal.id) return {ok:false, error:'No encuentro calendario Google MARFAN'};
+
+    const startDateTime = v614EventDateTime(event.event_date, event.start_time, '09:00');
+    const endDateTime = v614EventDateTime(event.event_date, event.end_time, '10:00');
+    if(!startDateTime) return {ok:false, error:'Evento sin fecha válida para Google'};
+
+    const payload = {
+      summary: event.name || 'Evento MARFAN',
+      location: event.address || event.location || '',
+      description: v614GoogleDescription(event),
+      start: {dateTime:startDateTime, timeZone:'Europe/Madrid'},
+      end: {dateTime:endDateTime || startDateTime, timeZone:'Europe/Madrid'}
+    };
+
+    let link = null;
+    try{ link = db.prepare('SELECT * FROM google_event_links WHERE event_id=? ORDER BY id DESC').get(eventId); }catch(e){}
+
+    if(link && link.google_event_id){
+      try{
+        const updated = await calendar.events.update({
+          calendarId: link.calendar_id || cal.id,
+          eventId: link.google_event_id,
+          requestBody: payload
+        });
+        db.prepare('UPDATE google_event_links SET calendar_id=?, synced_at=CURRENT_TIMESTAMP WHERE id=?').run(link.calendar_id || cal.id, link.id);
+        return {ok:true, action:'updated', google_event_id:link.google_event_id, calendar_id:link.calendar_id || cal.id};
+      }catch(e){
+        // Si fue borrado en Google, crear uno nuevo.
+      }
+    }
+
+    const created = await calendar.events.insert({
+      calendarId: cal.id,
+      requestBody: payload
+    });
+    const googleId = created.data.id;
+    db.prepare('INSERT INTO google_event_links (event_id, google_event_id, calendar_id) VALUES (?,?,?)').run(eventId, googleId, cal.id);
+    return {ok:true, action:'created', google_event_id:googleId, calendar_id:cal.id};
+  }catch(e){
+    return {ok:false, error:e.message};
+  }
+}
+
+// Guardado V61.4: reutiliza el mismo formulario V61.2, pero después empuja a Google.
+app.post('/api/v614/event-form-save', requireAdmin, async (req,res)=>{
+  try{
+    if(typeof v612EnsureEventColumns === 'function') v612EnsureEventColumns();
+    if(typeof v612EnsureAssignmentsColumns === 'function') v612EnsureAssignmentsColumns();
+
+    const id = Number(req.query.id || 0);
+    const body = req.body || {};
+    const payload = (typeof v612CleanEventPayload === 'function')
+      ? v612CleanEventPayload(body.event || body)
+      : (body.event || body);
+
+    const cols = db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
+    const keys = Object.keys(payload).filter(k=>cols.includes(k));
+
+    let eventId = id;
+    if(eventId){
+      const exists = db.prepare('SELECT id FROM events WHERE id=?').get(eventId);
+      if(!exists) return res.status(404).json({ok:false,error:'Evento no encontrado'});
+      db.prepare(`UPDATE events SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>payload[k]), eventId);
+    }else{
+      const info = db.prepare(`INSERT INTO events (${keys.map(k=>`"${k}"`).join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>payload[k]));
+      eventId = info.lastInsertRowid;
+    }
+
+    if(typeof v612SaveAssignments === 'function'){
+      v612SaveAssignments(eventId, body.assignments || []);
+    }
+
+    const google = await v614PushEventToGoogle(eventId);
+
+    res.setHeader('Content-Type','application/json; charset=utf-8');
+    res.json({ok:true,event_id:eventId,updated:!!id,google});
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+app.post('/api/v614/events/:id/push-google', requireAdmin, async (req,res)=>{
+  const result = await v614PushEventToGoogle(Number(req.params.id));
+  res.json(result);
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads'), { maxAge: 0 }));
 

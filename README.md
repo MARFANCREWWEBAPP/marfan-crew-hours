@@ -1,16 +1,13 @@
 
-# V61.3 Solo Login Fix
+# V61.4 Google Calendar Push Fix
 
-Base: V61.2, calendario y formulario V46 intactos.
+Base: V61.3.
 
-Corrige solo:
-- Evitar entrada directa a la app sin sesión real.
-- No toca calendario.
-- No toca crear/editar evento.
-- No bloquea submit del login.
+Corrige:
+- Crear/editar evento en la app no aparecía en Google Calendar.
 
-Estrategia:
-- Si ya se ve login, no hace nada.
-- Si el usuario acaba de pulsar Entrar, no bloquea.
-- Si hay token/sesión, no bloquea.
-- Si no hay sesión y detecta que está dentro de la app, fuerza login/logout.
+Añade:
+- Al guardar desde el formulario V61.2, crea/actualiza evento en Google Calendar MARFAN.
+- Si ya existe enlace google_event_links, actualiza el evento Google.
+- Si no existe, crea evento nuevo y guarda enlace.
+- Mantiene calendario, login y formulario V46 intactos.

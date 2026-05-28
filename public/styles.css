@@ -1673,3 +1673,19 @@ body.calendar-view-active-v586 a.menu-calendar-active-v586{
   color:#fff!important;
   font-weight:950!important;
 }
+
+
+/* V61.4 Google Calendar Push */
+.v614-google-status{
+  background:#eff6ff;
+  border:1px solid #bfdbfe;
+  color:#1e40af;
+  border-radius:14px;
+  padding:10px;
+  margin-top:10px;
+}
+.v614-google-status.bad{
+  background:#fee2e2;
+  border-color:#fecaca;
+  color:#991b1b;
+}

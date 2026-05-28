@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "61.3.0",
-  "description": "V61.3 Solo Login Fix - calendar untouched",
+  "version": "61.4.0",
+  "description": "V61.4 Google Calendar Push Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

@@ -8219,3 +8219,90 @@ setTimeout(v613EnforceLoginOnce, 900);
 setTimeout(v613EnforceLoginOnce, 2200);
 
 // No se ejecuta en bucle agresivo para no bloquear calendario ni login.
+
+
+// ---------- V61.4 GOOGLE CALENDAR PUSH FIX FRONTEND ----------
+// Mantiene el formulario V61.2, pero cambia el guardado a /api/v614/event-form-save para crear/actualizar Google Calendar.
+
+async function v614Fetch(path, opts={}){
+  const headers = {'Content-Type':'application/json','Accept':'application/json'};
+  try{
+    if(typeof token !== 'undefined' && token) headers.Authorization = 'Bearer '+token;
+    if(window.token) headers.Authorization = 'Bearer '+window.token;
+  }catch(e){}
+  const r = await fetch(new URL(path, window.location.origin).toString(), {
+    method:opts.method || 'GET',
+    headers:{...headers, ...(opts.headers||{})},
+    body:opts.body,
+    credentials:'same-origin',
+    cache:'no-store'
+  });
+  const text = await r.text();
+  if(text.trim().startsWith('<')) throw new Error('La API ha devuelto HTML. No está entrando en la ruta V61.4.');
+  let data = {};
+  try{ data = text ? JSON.parse(text) : {}; }catch(e){ data = {ok:false,error:text}; }
+  if(!r.ok || data.ok === false) throw new Error(data.error || text || 'HTTP '+r.status);
+  return data;
+}
+
+// Reabre el formulario V61.2 y sustituye SOLO el submit para que empuje a Google.
+const __openV612EventForm_v614 = typeof openV612EventForm === 'function' ? openV612EventForm : null;
+if(__openV612EventForm_v614){
+  openV612EventForm = async function(id=0){
+    await __openV612EventForm_v614(id);
+    setTimeout(()=>{
+      const form = document.getElementById('v612EventForm');
+      if(!form || form.__v614Patched) return;
+      form.__v614Patched = true;
+
+      const info = document.createElement('div');
+      info.className = 'v614-google-status';
+      info.innerHTML = 'Al guardar, este evento se creará/actualizará también en Google Calendar MARFAN.';
+      form.querySelector('.actions')?.prepend(info);
+
+      form.onsubmit = async ev=>{
+        ev.preventDefault();
+        const event = Object.fromEntries(new FormData(ev.target));
+        try{
+          const saved = await v614Fetch('/api/v614/event-form-save' + (Number(id) ? '?id='+encodeURIComponent(Number(id)) : ''), {
+            method:'POST',
+            body:JSON.stringify({event, assignments: typeof v612CollectAssignments === 'function' ? v612CollectAssignments() : []})
+          });
+
+          if(saved.google && saved.google.ok){
+            if(typeof v534Toast === 'function') v534Toast(Number(id) ? 'Evento editado y sincronizado con Google' : 'Evento creado y sincronizado con Google');
+          }else{
+            alert('Evento guardado en la app, pero Google no se pudo sincronizar: ' + ((saved.google && (saved.google.error || saved.google.reason)) || 'sin detalle'));
+          }
+
+          try{ closeWizard(); }catch(e){ const root=document.getElementById('modalRoot'); if(root) root.innerHTML=''; }
+          if(typeof showCalendarV582 === 'function') await showCalendarV582();
+          else if(typeof viewCalendar === 'function') await viewCalendar();
+        }catch(err){
+          alert('Error guardando evento: '+err.message);
+        }
+      };
+    }, 80);
+  };
+
+  window.openV612EventForm = openV612EventForm;
+  window.openCreateEventV559 = function(){ return openV612EventForm(0); };
+  window.openCreateEventV566 = function(){ return openV612EventForm(0); };
+  window.openCreateEventV563 = function(){ return openV612EventForm(0); };
+  window.openEditEventV60 = openV612EventForm;
+  window.editEventV582 = openV612EventForm;
+  window.editEventV587 = openV612EventForm;
+  window.editEventV593 = openV612EventForm;
+  window.editCalendarEventV58 = openV612EventForm;
+  window.editCalendarEventV576 = openV612EventForm;
+}
+
+async function pushEventToGoogleV614(id){
+  try{
+    const r = await v614Fetch('/api/v614/events/'+Number(id)+'/push-google',{method:'POST'});
+    if(r.ok) alert('Evento sincronizado con Google correctamente.');
+    else alert('No se pudo sincronizar con Google: '+(r.error || r.reason || 'sin detalle'));
+  }catch(e){
+    alert('Error sincronizando con Google: '+e.message);
+  }
+}
