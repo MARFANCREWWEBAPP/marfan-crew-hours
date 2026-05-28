@@ -7641,3 +7641,69 @@ if(__showCalendarV582_v587){
   };
   window.viewCalendar = showCalendarV582;
 }
+
+
+// ---------- V58.8 CALENDAR DELETE SYNC FIX FRONTEND ----------
+async function forceGoogleSyncV583(){
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back" onclick="if(event.target===this) closeSyncModalV585 && closeSyncModalV585()">
+      <div class="modal sync-modal-safe-v585" onclick="event.stopPropagation()">
+        <div class="sync-modal-head-v585">
+          <h2>Sincronización Google MARFAN</h2>
+          <button class="sync-close-v585" onclick="closeSyncModalV585 && closeSyncModalV585()">Cerrar</button>
+        </div>
+        <div class="v583-sync">Sincronizando y respetando eventos borrados...</div>
+      </div>
+    </div>`;
+
+  try{
+    const r = await api('/api/google/sync-calendar-v588',{method:'POST'});
+    $('#modalRoot').innerHTML = `
+      <div class="modal-back">
+        <div class="modal sync-modal-safe-v585">
+          <div class="sync-modal-head-v585">
+            <h2>Sincronización completada ✅</h2>
+            <button class="sync-close-v585" onclick="closeWizard(); showCalendarV582 && showCalendarV582()">Cerrar</button>
+          </div>
+          <div class="v583-sync ok">
+            <b>Calendario:</b> ${escV582((r.calendar||{}).summary||'MARFAN')}<br>
+            <b>Eventos leídos:</b> ${r.read}<br>
+            <b>Saltados porque fueron borrados:</b> ${r.skipped_deleted}<br>
+            <b>Creados:</b> ${r.created}<br>
+            <b>Actualizados:</b> ${r.updated}<br>
+            <b>Errores:</b> ${r.errors}
+          </div>
+          ${r.skipped_deleted ? `<div class="v583-sync"><b>No reimportados:</b><pre>${escV582(JSON.stringify(r.skipped_deleted_examples||[],null,2))}</pre></div>` : ''}
+        </div>
+      </div>`;
+  }catch(e){
+    $('#modalRoot').innerHTML = `
+      <div class="modal-back">
+        <div class="modal sync-modal-safe-v585">
+          <div class="sync-modal-head-v585">
+            <h2>Error sincronizando</h2>
+            <button class="sync-close-v585" onclick="closeWizard()">Cerrar</button>
+          </div>
+          <div class="v583-sync bad">${escV582(e.message)}</div>
+        </div>
+      </div>`;
+  }
+}
+
+async function deleteEventV582(id, name){
+  if(!confirm(`¿Seguro que quieres borrar este evento?\n\n${name}\n\nTambién se bloqueará para que NO vuelva a importarse desde Google Calendar.`)) return;
+  await api('/api/events/'+id+'/remove-v588',{method:'DELETE'});
+  if(typeof v534Toast==='function') v534Toast('Evento borrado y bloqueado para no reimportarse');
+  closeWizard();
+  await showCalendarV582();
+}
+
+// Alias para todos los borrados
+deleteCalendarEventV58 = deleteEventV582;
+deleteCalendarEventV576 = deleteEventV582;
+deleteCalendarEventV588 = deleteEventV582;
+
+// Reforzar botones de sincronización a la versión v588
+if(typeof forceGoogleSyncNoPatternV574 === 'function') forceGoogleSyncNoPatternV574 = forceGoogleSyncV583;
+if(typeof forceGoogleSyncV572 === 'function') forceGoogleSyncV572 = forceGoogleSyncV583;
+if(typeof forceSyncGoogleV569 === 'function') forceSyncGoogleV569 = forceGoogleSyncV583;

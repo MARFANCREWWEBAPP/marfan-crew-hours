@@ -5800,3 +5800,152 @@ app.post('/api/events/:id/edit-save-v587', requireAdmin, (req,res)=>{
     res.status(500).json({error:e.message});
   }
 });
+
+
+// ---------- V58.8 CALENDAR DELETE SYNC FIX ----------
+function v588EnsureDeletedGoogleEventsTable(){
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS deleted_google_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      google_event_id TEXT NOT NULL UNIQUE,
+      calendar_id TEXT DEFAULT '',
+      event_name TEXT DEFAULT '',
+      deleted_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      source TEXT DEFAULT 'app'
+    );
+  `);
+}
+
+function v588RememberDeletedGoogleEvent(googleEventId, calendarId='', eventName=''){
+  if(!googleEventId) return;
+  v588EnsureDeletedGoogleEventsTable();
+  db.prepare(`
+    INSERT OR IGNORE INTO deleted_google_events
+    (google_event_id, calendar_id, event_name, source)
+    VALUES (?,?,?,?)
+  `).run(googleEventId, calendarId || '', eventName || '', 'app-delete');
+}
+
+function v588IsGoogleEventDeleted(googleEventId){
+  if(!googleEventId) return false;
+  v588EnsureDeletedGoogleEventsTable();
+  return !!db.prepare('SELECT id FROM deleted_google_events WHERE google_event_id=?').get(googleEventId);
+}
+
+async function v588TryDeleteFromGoogle(googleEventId, calendarId){
+  try{
+    if(!googleEventId) return {ok:false, reason:'no_google_event_id'};
+    if(typeof v574CalendarClient !== 'function') return {ok:false, reason:'google_client_not_available'};
+    const calendar = await v574CalendarClient();
+    const cid = calendarId || process.env.GOOGLE_TARGET_CALENDAR_ID || 'primary';
+    await calendar.events.delete({calendarId:cid, eventId:googleEventId});
+    return {ok:true};
+  }catch(e){
+    // Si no existe o no hay permisos, no bloqueamos el borrado local.
+    return {ok:false, error:e.message};
+  }
+}
+
+// Borrado definitivo desde calendario: local + tombstone + intento Google.
+app.delete('/api/events/:id/remove-v588', requireAdmin, async (req,res)=>{
+  try{
+    const id = Number(req.params.id);
+    const event = db.prepare('SELECT * FROM events WHERE id=?').get(id);
+    if(!event) return res.status(404).json({error:'Evento no encontrado'});
+
+    let links = [];
+    try{
+      links = db.prepare('SELECT * FROM google_event_links WHERE event_id=?').all(id);
+    }catch(e){}
+
+    const googleDeleteResults = [];
+    for(const l of links){
+      v588RememberDeletedGoogleEvent(l.google_event_id, l.calendar_id, event.name || '');
+      googleDeleteResults.push(await v588TryDeleteFromGoogle(l.google_event_id, l.calendar_id));
+    }
+
+    const tx = db.transaction(()=>{
+      try{db.prepare('DELETE FROM assignments WHERE event_id=?').run(id);}catch(e){}
+      try{db.prepare('DELETE FROM event_role_lines WHERE event_id=?').run(id);}catch(e){}
+      try{db.prepare('DELETE FROM google_event_links WHERE event_id=?').run(id);}catch(e){}
+      try{db.prepare('DELETE FROM delivery_notes WHERE event_id=?').run(id);}catch(e){}
+      try{db.prepare('DELETE FROM event_delivery_notes WHERE event_id=?').run(id);}catch(e){}
+      db.prepare('DELETE FROM events WHERE id=?').run(id);
+    });
+    tx();
+
+    res.json({ok:true,deleted:true,google_links:links.length,google_delete_results:googleDeleteResults});
+  }catch(e){
+    res.status(500).json({error:e.message});
+  }
+});
+
+// Sync seguro: ignora eventos Google borrados desde la app.
+app.post('/api/google/sync-calendar-v588', requireAdmin, async (req,res)=>{
+  try{
+    if(typeof v574CalendarClient !== 'function' || typeof v574ResolveCalendar !== 'function' || typeof v574Upsert !== 'function'){
+      return res.status(500).json({ok:false,error:'Motor de sincronización Google no disponible'});
+    }
+
+    v588EnsureDeletedGoogleEventsTable();
+
+    const calendar = await v574CalendarClient();
+    const resolved = await v574ResolveCalendar(calendar);
+
+    let pageToken = undefined;
+    const items = [];
+    do{
+      const params = {
+        calendarId:resolved.calendar.id,
+        maxResults:250,
+        singleEvents:true
+      };
+      if(pageToken) params.pageToken = pageToken;
+      const response = await calendar.events.list(params);
+      items.push(...(response.data.items || []).filter(i=>i.status !== 'cancelled'));
+      pageToken = response.data.nextPageToken || undefined;
+    }while(pageToken && items.length < 2500);
+
+    const skippedDeleted = [];
+    const results = [];
+
+    for(const item of items){
+      if(v588IsGoogleEventDeleted(item.id)){
+        skippedDeleted.push(item.summary || item.id);
+        continue;
+      }
+      try{ results.push(v574Upsert(item, resolved.calendar.id)); }
+      catch(e){ results.push({action:'error', summary:item.summary || item.id, error:e.message}); }
+    }
+
+    res.json({
+      ok:true,
+      calendar:{id:resolved.calendar.id,summary:resolved.calendar.summary,accessRole:resolved.calendar.accessRole},
+      read:items.length,
+      skipped_deleted:skippedDeleted.length,
+      created:results.filter(r=>r.action==='created').length,
+      updated:results.filter(r=>r.action==='updated').length,
+      errors:results.filter(r=>r.action==='error').length,
+      skipped_deleted_examples:skippedDeleted.slice(0,30),
+      results:results.slice(0,100)
+    });
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message,stack:e.stack});
+  }
+});
+
+app.get('/api/google/deleted-events-v588', requireAdmin, (req,res)=>{
+  try{
+    v588EnsureDeletedGoogleEventsTable();
+    const rows = db.prepare('SELECT * FROM deleted_google_events ORDER BY deleted_at DESC').all();
+    res.json({ok:true,rows});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+
+app.delete('/api/google/deleted-events-v588/:googleEventId', requireAdmin, (req,res)=>{
+  try{
+    v588EnsureDeletedGoogleEventsTable();
+    db.prepare('DELETE FROM deleted_google_events WHERE google_event_id=?').run(req.params.googleEventId);
+    res.json({ok:true});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});

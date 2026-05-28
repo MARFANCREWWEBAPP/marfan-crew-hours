@@ -1,13 +1,11 @@
 
-# V58.7 Calendar Edit Fix
+# V58.8 Calendar Delete Sync Fix
 
-Mantiene:
-- Borrar funcionando.
-- Sincronización Google funcionando.
-- Menú activo funcionando.
+## Problema corregido
+Al borrar eventos sincronizados, al volver a sincronizar Google Calendar reaparecían.
 
-Corrige:
-- Editar evento.
-- Abre formulario completo.
-- Guarda cambios.
-- Refresca calendario.
+## Solución
+- Al borrar evento con enlace Google, se guarda una marca en `deleted_google_events`.
+- La sincronización ignora eventos marcados como borrados.
+- Además intenta borrar el evento en Google Calendar si hay permisos.
+- El modal de sync muestra cuántos eventos ha saltado por estar borrados.
