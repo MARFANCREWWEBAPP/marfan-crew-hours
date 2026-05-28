@@ -1652,3 +1652,15 @@ body.app-menu-ready-v591 nav a.v591-menu-inactive{
   color:rgba(255,255,255,.62)!important;
   box-shadow:none!important;
 }
+
+
+/* V59.2 Login Gate Fix */
+.login-gate-warning-v592{
+  max-width:520px;
+  margin:40px auto;
+  background:#fff;
+  color:#111;
+  border-radius:20px;
+  padding:24px;
+  box-shadow:0 20px 50px rgba(0,0,0,.18);
+}

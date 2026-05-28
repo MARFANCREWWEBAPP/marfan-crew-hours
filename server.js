@@ -158,6 +158,17 @@ app.get('/api/version-v582', (req,res)=>{
   res.json({ok:true, version:'58.2.0', message:'Calendar Override Real loaded'});
 });
 
+
+// ---------- V59.2 LOGIN GATE FIX ----------
+app.get('/api/session-check-v592', (req,res)=>{
+  try{
+    const ok = !!(req.session && (req.session.user || req.session.userId || req.session.admin || req.session.role));
+    res.json({ok, user:req.session ? (req.session.user || null) : null});
+  }catch(e){
+    res.json({ok:false});
+  }
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads'), { maxAge: 0 }));
 

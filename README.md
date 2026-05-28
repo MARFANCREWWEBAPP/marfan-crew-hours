@@ -1,10 +1,8 @@
 
-# V59.1 Safe Menu Fix
-
-Base estable: V58.9.
+# V59.2 Login Gate Fix
 
 Corrige:
-- V59 anterior bloqueaba login/carga.
-- Este fix NO se ejecuta hasta que existe menú lateral y contenido de app.
-- Dashboard y Calendario ya no quedan ambos activos.
-- Mantiene: sincronización Google, borrar, editar y bloqueo de eventos borrados.
+- La V59.1 podía entrar directamente en la app sin pasar por login.
+- Ahora las vistas internas quedan bloqueadas si no existe token/sesión local.
+- No toca el login si ya está visible.
+- Mantiene base V58.9 + menú seguro.

@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "59.1.0",
-  "description": "V59.1 Safe Menu Fix based on stable V58.9",
+  "version": "59.2.0",
+  "description": "V59.2 Login Gate Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

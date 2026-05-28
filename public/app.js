@@ -7968,3 +7968,104 @@ v591WrapView('viewDashboard','dashboard');
 
 setInterval(v591DetectFromContent, 1500);
 setTimeout(v591DetectFromContent, 1500);
+
+
+// ---------- V59.2 LOGIN GATE FIX FRONTEND ----------
+window.__v592Authenticated = false;
+
+function v592HasLocalAuth(){
+  try{
+    if(typeof token !== 'undefined' && token) return true;
+    if(window.token) return true;
+    const possible = [
+      localStorage.getItem('token'),
+      localStorage.getItem('authToken'),
+      localStorage.getItem('marfan_token'),
+      sessionStorage.getItem('token'),
+      sessionStorage.getItem('authToken')
+    ];
+    return possible.some(Boolean);
+  }catch(e){
+    return false;
+  }
+}
+
+function v592IsLoginVisible(){
+  const txt = (document.body.textContent || '').toLowerCase();
+  return txt.includes('iniciar sesión') || txt.includes('usuario') && txt.includes('contraseña') || txt.includes('login');
+}
+
+function v592ShowLoginHard(){
+  try{
+    if(typeof showLogin === 'function') return showLogin();
+    if(typeof renderLogin === 'function') return renderLogin();
+    if(typeof viewLogin === 'function') return viewLogin();
+    if(typeof logout === 'function') return logout();
+  }catch(e){}
+
+  const root = document.getElementById('app') || document.getElementById('content') || document.body;
+  root.innerHTML = `
+    <div class="login-gate-warning-v592">
+      <h2>Acceso requerido</h2>
+      <p>Por seguridad, debes iniciar sesión para entrar en Marfan Crew Hours.</p>
+      <p>Recarga la página para mostrar el formulario de acceso.</p>
+      <button onclick="location.reload()">Recargar login</button>
+    </div>
+  `;
+}
+
+function v592GuardInternalView(fn){
+  if(typeof fn !== 'function') return fn;
+  if(fn.__v592Guarded) return fn;
+  const guarded = async function(...args){
+    if(!v592HasLocalAuth()){
+      v592ShowLoginHard();
+      return null;
+    }
+    return await fn.apply(this,args);
+  };
+  guarded.__v592Guarded = true;
+  return guarded;
+}
+
+function v592ApplyViewGuards(){
+  [
+    'viewDashboard',
+    'dashboard',
+    'showCalendarV582',
+    'viewCalendar',
+    'viewUsers',
+    'viewOperators',
+    'viewRates',
+    'viewFinancePro',
+    'viewFinance',
+    'viewDocuments',
+    'viewConfig',
+    'viewReportsV562',
+    'viewClients'
+  ].forEach(name=>{
+    try{
+      if(typeof window[name] === 'function') window[name] = v592GuardInternalView(window[name]);
+    }catch(e){}
+  });
+}
+
+function v592EnforceLoginOnBoot(){
+  setTimeout(()=>{
+    if(v592HasLocalAuth()) return;
+    if(v592IsLoginVisible()) return;
+
+    const bodyText = (document.body.textContent || '').toLowerCase();
+    if(bodyText.includes('dashboard') || bodyText.includes('calendario eventos') || bodyText.includes('operarios') || bodyText.includes('finanzas')){
+      v592ShowLoginHard();
+    }
+  }, 500);
+}
+
+v592ApplyViewGuards();
+v592EnforceLoginOnBoot();
+
+window.addEventListener('load', ()=>{
+  v592ApplyViewGuards();
+  v592EnforceLoginOnBoot();
+});
