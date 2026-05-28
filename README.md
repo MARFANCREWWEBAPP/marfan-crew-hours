@@ -1,16 +1,8 @@
 
-# V58.9 Sync Modal Hard Close Fix
+# V59 Single Active Menu Fix
 
-Corrige definitivamente:
-- El modal de sincronización se queda bloqueado.
-- Botón Cerrar no responde.
-- Overlay no se libera.
-
-Solución:
-- hardCloseModalV589 elimina modalRoot directamente.
-- Cierra con botón Cerrar.
-- Cierra con botón Cerrar ventana.
-- Cierra con Escape.
-- Cierra con click fuera.
-- Limpia clases loading.
-- Reengancha todos los botones de sincronización.
+Corrige:
+- Dashboard y Calendario quedaban los dos en blanco.
+- Limpia todos los estados activos antes de marcar el nuevo.
+- Solo un menú puede estar activo.
+- Si otro script vuelve a marcar Dashboard, MutationObserver lo corrige.

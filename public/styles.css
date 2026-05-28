@@ -1631,3 +1631,40 @@ body.calendar-view-active-v586 a.menu-calendar-active-v586{
   border-color:#fecaca;
   color:#991b1b;
 }
+
+
+/* V59 SINGLE ACTIVE MENU FIX */
+.sidebar button,
+.sidebar a,
+nav button,
+nav a{
+  transition:all .12s ease;
+}
+
+/* Estado limpio forzado */
+body.v59-single-active-menu .sidebar button:not(.v59-menu-active),
+body.v59-single-active-menu .sidebar a:not(.v59-menu-active),
+body.v59-single-active-menu nav button:not(.v59-menu-active),
+body.v59-single-active-menu nav a:not(.v59-menu-active){
+  background:#050505!important;
+  color:rgba(255,255,255,.62)!important;
+  box-shadow:none!important;
+}
+
+/* Único activo */
+body.v59-single-active-menu .v59-menu-active{
+  background:#ffffff!important;
+  color:#111111!important;
+  font-weight:950!important;
+  box-shadow:0 10px 24px rgba(255,255,255,.18)!important;
+}
+
+/* Mata clases antiguas activas si no son la actual */
+body.v59-single-active-menu .active:not(.v59-menu-active),
+body.v59-single-active-menu .menu-active-calendar-v584:not(.v59-menu-active),
+body.v59-single-active-menu .menu-calendar-active-v586:not(.v59-menu-active),
+body.v59-single-active-menu .dashboard-active-v586:not(.v59-menu-active){
+  background:#050505!important;
+  color:rgba(255,255,255,.62)!important;
+  box-shadow:none!important;
+}

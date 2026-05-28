@@ -7836,3 +7836,155 @@ if(__showCalendarV582_v589){
   };
   window.viewCalendar = showCalendarV582;
 }
+
+
+// ---------- V59 SINGLE ACTIVE MENU FIX ----------
+window.__currentMenuV59 = window.__currentMenuV59 || 'dashboard';
+
+function menuTextV59(el){
+  return [
+    el.textContent || '',
+    el.getAttribute('data-view') || '',
+    el.getAttribute('data-section') || '',
+    el.getAttribute('onclick') || '',
+    el.getAttribute('href') || '',
+    el.id || '',
+    typeof el.className === 'string' ? el.className : ''
+  ].join(' ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+}
+
+function menuKeyV59(el){
+  const t = menuTextV59(el);
+
+  if(t.includes('calendario') || t.includes('calendar')) return 'calendar';
+  if(t.includes('dashboard') || t.includes('inicio') || t.includes('panel')) return 'dashboard';
+  if(t.includes('control diario')) return 'control';
+  if(t.includes('operaciones')) return 'operaciones';
+  if(t.includes('clientes')) return 'clientes';
+  if(t.includes('informes pdf')) return 'informes';
+  if(t.includes('eventos realizados')) return 'realizados';
+  if(t.includes('operarios')) return 'operarios';
+  if(t.includes('tarifas')) return 'tarifas';
+  if(t.includes('gps')) return 'gps';
+  if(t.includes('produccion') || t.includes('producción')) return 'produccion';
+  if(t.includes('finanzas')) return 'finanzas';
+  if(t.includes('documentacion') || t.includes('documentación')) return 'documentacion';
+  if(t.includes('vista operario')) return 'vista_operario';
+  if(t.includes('albaranes')) return 'albaranes';
+  if(t.includes('contraseñas') || t.includes('contrasenas')) return 'passwords';
+
+  return '';
+}
+
+function clearAllMenuStatesV59(){
+  document.body.classList.add('v59-single-active-menu');
+
+  document.querySelectorAll('.sidebar button,.sidebar a,nav button,nav a,[data-view],[data-section]').forEach(el=>{
+    el.classList.remove(
+      'active',
+      'selected',
+      'current',
+      'menu-active-calendar-v584',
+      'menu-calendar-active-v586',
+      'dashboard-active-v586',
+      'v59-menu-active'
+    );
+    el.removeAttribute('aria-current');
+
+    // Limpieza de estilos inline que puedan dejar blanco Dashboard.
+    const key = menuKeyV59(el);
+    if(key !== window.__currentMenuV59){
+      try{
+        el.style.background = '';
+        el.style.color = '';
+        el.style.boxShadow = '';
+      }catch(e){}
+    }
+  });
+}
+
+function setOnlyActiveMenuV59(key){
+  window.__currentMenuV59 = key || window.__currentMenuV59 || 'dashboard';
+  clearAllMenuStatesV59();
+
+  document.querySelectorAll('.sidebar button,.sidebar a,nav button,nav a,[data-view],[data-section]').forEach(el=>{
+    const k = menuKeyV59(el);
+    if(k && k === window.__currentMenuV59){
+      el.classList.add('active','v59-menu-active');
+      el.setAttribute('aria-current','page');
+    }
+  });
+}
+
+// Wrappers para vistas principales conocidas.
+function wrapViewV59(fnName, key){
+  try{
+    if(typeof window[fnName] === 'function' && !window[fnName].__v59Wrapped){
+      const old = window[fnName];
+      const wrapped = async function(...args){
+        setOnlyActiveMenuV59(key);
+        const r = await old.apply(this,args);
+        setTimeout(()=>setOnlyActiveMenuV59(key),50);
+        setTimeout(()=>setOnlyActiveMenuV59(key),300);
+        return r;
+      };
+      wrapped.__v59Wrapped = true;
+      window[fnName] = wrapped;
+    }
+  }catch(e){}
+}
+
+wrapViewV59('showCalendarV582','calendar');
+wrapViewV59('viewCalendar','calendar');
+wrapViewV59('viewDashboard','dashboard');
+wrapViewV59('dashboard','dashboard');
+wrapViewV59('viewClients','clientes');
+wrapViewV59('viewOperators','operarios');
+wrapViewV59('viewRates','tarifas');
+wrapViewV59('viewFinance','finanzas');
+wrapViewV59('viewDocumentation','documentacion');
+
+// Click del menú: detecta y deja solo uno activo inmediatamente.
+if(!window.__v59MenuClickInstalled){
+  window.__v59MenuClickInstalled = true;
+  document.addEventListener('click', ev=>{
+    const el = ev.target.closest && ev.target.closest('.sidebar button,.sidebar a,nav button,nav a,[data-view],[data-section],[onclick],a,button');
+    if(!el) return;
+    const key = menuKeyV59(el);
+    if(!key) return;
+
+    setOnlyActiveMenuV59(key);
+    setTimeout(()=>setOnlyActiveMenuV59(key),80);
+    setTimeout(()=>setOnlyActiveMenuV59(key),400);
+    setTimeout(()=>setOnlyActiveMenuV59(key),1000);
+  }, true);
+}
+
+// Observador: si otro código vuelve a poner Dashboard blanco, lo quita.
+if(!window.__v59MenuObserverInstalled){
+  window.__v59MenuObserverInstalled = true;
+  const obs = new MutationObserver(()=>{
+    setOnlyActiveMenuV59(window.__currentMenuV59 || 'dashboard');
+  });
+  const side = document.querySelector('.sidebar') || document.querySelector('nav') || document.body;
+  obs.observe(side,{attributes:true, childList:true, subtree:true, attributeFilter:['class','style','aria-current']});
+}
+
+// Detección por contenido actual.
+function detectCurrentViewFromContentV59(){
+  const content = document.getElementById('content') || document.querySelector('#main');
+  if(!content) return;
+  const txt = (content.textContent || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+
+  if(txt.includes('calendario eventos') || txt.includes('vista mensual') || txt.includes('sincronizacion google') || txt.includes('google conectado')){
+    setOnlyActiveMenuV59('calendar');
+    return;
+  }
+
+  if(txt.includes('dashboard') || txt.includes('eventos activos') || txt.includes('albaranes sin firma')){
+    setOnlyActiveMenuV59('dashboard');
+  }
+}
+
+setInterval(detectCurrentViewFromContentV59, 1200);
+setTimeout(()=>setOnlyActiveMenuV59(window.__currentMenuV59 || 'dashboard'),500);
