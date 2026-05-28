@@ -1398,3 +1398,68 @@ button.warn{background:#f59e0b;color:#111}
 @media(max-width:980px){
   .event-list-row-v581{grid-template-columns:1fr}
 }
+
+
+/* V58.2 Calendar Override Real */
+.v582-calendar-force-banner{
+  background:#111827;
+  color:#fff;
+  border-radius:18px;
+  padding:16px;
+  margin-bottom:14px;
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+  align-items:center;
+}
+.v582-calendar-force-banner button{
+  background:#f59e0b!important;
+  color:#111!important;
+  font-weight:950!important;
+}
+.v582-event-row{
+  display:grid;
+  grid-template-columns:1.1fr 2fr 1.3fr auto;
+  gap:10px;
+  align-items:center;
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:14px;
+  padding:10px;
+  margin:8px 0;
+}
+.v582-event-actions{
+  display:flex;
+  gap:6px;
+  flex-wrap:wrap;
+}
+.v582-edit{background:#2563eb!important;color:#fff!important;font-weight:950!important}
+.v582-delete{background:#dc2626!important;color:#fff!important;font-weight:950!important}
+.v582-calendar-card{
+  background:#f8fafc;
+  border:1px solid #e5e7eb;
+  border-radius:18px;
+  padding:14px;
+}
+.v582-day{
+  border:1px solid #e5e7eb;
+  border-radius:14px;
+  min-height:120px;
+  padding:8px;
+  background:#fff;
+}
+.v582-event-pill{
+  display:block;
+  width:100%;
+  text-align:left;
+  border:0;
+  border-radius:10px;
+  margin:5px 0;
+  padding:7px;
+  background:#111;
+  color:#fff;
+  cursor:pointer;
+}
+.v582-event-pill.google{background:#2563eb}
+@media(max-width:980px){.v582-event-row{grid-template-columns:1fr}}

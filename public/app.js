@@ -6839,3 +6839,188 @@ if(typeof v55SetView === 'function' && !window.__v581SetViewPatched){
     setTimeout(viewCalendar, 50);
   };
 }
+
+
+// ---------- V58.2 CALENDAR OVERRIDE REAL ----------
+window.__MARFAN_V582_LOADED = true;
+
+async function apiV582(url, opts={}){
+  if(typeof api === 'function') return api(url, opts);
+  const headers = {'Content-Type':'application/json'};
+  if(typeof token !== 'undefined' && token) headers.Authorization = 'Bearer '+token;
+  const r = await fetch(url, {...opts, headers:{...headers, ...(opts.headers||{})}});
+  const t = await r.text();
+  let j = {};
+  try{ j = t ? JSON.parse(t) : {}; }catch(e){ j = {error:t}; }
+  if(!r.ok) throw new Error(j.error || t || 'HTTP '+r.status);
+  return j;
+}
+
+function escV582(s){
+  if(typeof esc === 'function') return esc(s);
+  return String(s??'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+}
+
+function dateKeyV582(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function startWeekV582(d){
+  const x = new Date(d);
+  const day = (x.getDay()+6)%7;
+  x.setDate(x.getDate()-day);
+  return x;
+}
+function addDaysV582(d,n){ const x = new Date(d); x.setDate(x.getDate()+n); return x; }
+
+async function editEventV582(id){
+  if(typeof editCalendarEventV58 === 'function') return editCalendarEventV58(id);
+  alert('Editar evento '+id);
+}
+async function deleteEventV582(id, name){
+  if(typeof deleteCalendarEventV58 === 'function') return deleteCalendarEventV58(id, name);
+  if(!confirm('¿Borrar evento? '+name)) return;
+  await apiV582('/api/events/'+id+'/remove-v58',{method:'DELETE'});
+  await showCalendarV582();
+}
+
+async function openEventV582(id){
+  if(typeof openCalendarEventV58 === 'function') return openCalendarEventV58(id);
+  if(typeof openCalendarEventActionsV576 === 'function') return openCalendarEventActionsV576(id);
+  return editEventV582(id);
+}
+
+function eventPillV582(e){
+  const id = Number(e.id);
+  if(!id) return '';
+  const google = e.operational_status === 'google_marfan';
+  return `<button class="v582-event-pill ${google?'google':''}" data-v582-event="${id}" type="button">
+    ${escV582(e.start_time||'')} ${escV582(e.name||'Evento')}
+  </button>
+  <div class="v582-event-actions">
+    <button class="v582-edit" type="button" onclick="editEventV582(${id})">Editar</button>
+    <button class="v582-delete" type="button" onclick="deleteEventV582(${id}, '${escV582((e.name||'Evento')).replace(/'/g,"\\'")}')">Borrar</button>
+  </div>`;
+}
+
+function renderMonthV582(events){
+  const calDate = (typeof v55CalDate !== 'undefined' && v55CalDate) ? v55CalDate : new Date();
+  const first = new Date(calDate.getFullYear(), calDate.getMonth(), 1);
+  const start = startWeekV582(first);
+  const days = Array.from({length:42}, (_,i)=>addDaysV582(start,i));
+  return `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px">
+    ${days.map(day=>{
+      const key = dateKeyV582(day);
+      const evs = events.filter(e=>e.event_date===key);
+      return `<div class="v582-day">
+        <b>${day.getDate()}</b>
+        ${evs.map(eventPillV582).join('')}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function renderEventRowsV582(events){
+  const sorted = [...events].sort((a,b)=>String(a.event_date||'').localeCompare(String(b.event_date||'')) || String(a.start_time||'').localeCompare(String(b.start_time||'')));
+  return `<div class="card">
+    <h3>Eventos · acciones directas</h3>
+    ${sorted.map(e=>`
+      <div class="v582-event-row">
+        <div><b>${escV582(e.event_date||'')}</b><br>${escV582(e.start_time||'')} - ${escV582(e.end_time||'')}</div>
+        <div><b>${escV582(e.name||'Evento')}</b><br><span class="muted">${escV582(e.client||'')} · ${escV582(e.location||'')}</span></div>
+        <div>${e.operational_status==='google_marfan' ? '<span class="status-badge status-ok">Google</span>' : '<span class="status-badge">Local</span>'}</div>
+        <div class="v582-event-actions">
+          <button class="v582-edit" onclick="editEventV582(${Number(e.id)})">Editar</button>
+          <button class="v582-delete" onclick="deleteEventV582(${Number(e.id)}, '${escV582((e.name||'Evento')).replace(/'/g,"\\'")}')">Borrar</button>
+        </div>
+      </div>
+    `).join('') || '<p class="muted">No hay eventos.</p>'}
+  </div>`;
+}
+
+async function showCalendarV582(){
+  const events = await apiV582('/api/events').catch(()=>[]);
+  const googleStatus = await apiV582('/api/google/status-v557').catch(()=>({connected:false}));
+  const content = document.getElementById('content') || document.querySelector('#main') || document.body;
+
+  content.innerHTML = `
+    <div class="v582-calendar-force-banner">
+      <div>
+        <h2 style="margin:0">Calendario eventos · V58.2</h2>
+        <div>Vista forzada real con botones Editar/Borrar visibles.</div>
+      </div>
+      <div class="v582-event-actions">
+        <button onclick="showCalendarV582()">Actualizar calendario</button>
+        <button onclick="openCreateEventV559()">+ Crear evento</button>
+        ${googleStatus.connected ? '<span class="status-badge status-ok">Google conectado</span>' : '<span class="status-badge status-warn">Google no conectado</span>'}
+      </div>
+    </div>
+
+    <div class="card v582-calendar-card">
+      <h3>Vista mensual</h3>
+      ${renderMonthV582(events)}
+    </div>
+
+    ${renderEventRowsV582(events)}
+  `;
+
+  document.querySelectorAll('[data-v582-event]').forEach(btn=>{
+    btn.addEventListener('click', ev=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      openEventV582(Number(btn.dataset.v582Event));
+    });
+  });
+}
+
+// Alias por todos los nombres posibles.
+window.viewCalendar = showCalendarV582;
+window.viewCalendarV579Final = showCalendarV582;
+window.viewCalendarV582Final = showCalendarV582;
+
+try{
+  if(typeof routes !== 'undefined' && routes){
+    routes.calendario = showCalendarV582;
+    routes.calendar = showCalendarV582;
+    routes.eventos = showCalendarV582;
+  }
+}catch(e){}
+try{
+  if(typeof views !== 'undefined' && views){
+    views.calendario = showCalendarV582;
+    views.calendar = showCalendarV582;
+    views.eventos = showCalendarV582;
+  }
+}catch(e){}
+
+// Intercepta clics del menú que digan calendario/eventos.
+if(!window.__v582MenuInterceptor){
+  window.__v582MenuInterceptor = true;
+  document.addEventListener('click', ev=>{
+    const el = ev.target.closest && ev.target.closest('button,a,[data-view],[data-section],[onclick]');
+    if(!el) return;
+    const txt = (el.textContent || '').toLowerCase();
+    const attrs = [el.getAttribute('data-view'), el.getAttribute('data-section'), el.getAttribute('onclick'), el.getAttribute('href')].join(' ').toLowerCase();
+    if(txt.includes('calendario') || attrs.includes('calendario') || attrs.includes('calendar')){
+      ev.preventDefault();
+      ev.stopPropagation();
+      setTimeout(showCalendarV582, 10);
+    }
+  }, true);
+}
+
+// Si ya estamos en calendario viejo, añade botón de forzado arriba.
+setInterval(()=>{
+  const content = document.getElementById('content');
+  if(!content) return;
+  const txt = (content.textContent||'').toLowerCase();
+  if(txt.includes('calendario eventos') && !document.getElementById('forceCalendarV582')){
+    const btn = document.createElement('button');
+    btn.id = 'forceCalendarV582';
+    btn.className = 'v582-edit';
+    btn.textContent = 'ABRIR CALENDARIO V58.2 CON EDITAR/BORRAR';
+    btn.onclick = showCalendarV582;
+    content.prepend(btn);
+  }
+}, 1000);
+
+console.log('V58.2 Calendar Override Real loaded');

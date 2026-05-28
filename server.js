@@ -142,6 +142,22 @@ app.use(session({
   saveUninitialized: false,
   cookie: { httpOnly: true, sameSite: 'lax', maxAge: 1000 * 60 * 60 * 12 }
 }));
+
+// ---------- V58.2 NO CACHE + CALENDAR ROUTES ----------
+app.use((req,res,next)=>{
+  if(String(req.url||'').includes('/app.js') || String(req.url||'').includes('/styles.css')){
+    res.setHeader('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma','no-cache');
+    res.setHeader('Expires','0');
+    res.setHeader('Surrogate-Control','no-store');
+  }
+  next();
+});
+
+app.get('/api/version-v582', (req,res)=>{
+  res.json({ok:true, version:'58.2.0', message:'Calendar Override Real loaded'});
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads'), { maxAge: 0 }));
 

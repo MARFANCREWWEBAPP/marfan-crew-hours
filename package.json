@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "58.1.0",
-  "description": "V58.1 Calendar Visible Edit Delete Actions",
+  "version": "58.2.0",
+  "description": "V58.2 Calendar Override Real",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
