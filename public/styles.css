@@ -1664,3 +1664,43 @@ body.app-menu-ready-v591 nav a.v591-menu-inactive{
   padding:24px;
   box-shadow:0 20px 50px rgba(0,0,0,.18);
 }
+
+
+/* V59.3 Edit Event V46 Form */
+.v593-event-modal{
+  max-width:1240px!important;
+}
+.v593-section{
+  background:#f8fafc;
+  border:1px solid #e5e7eb;
+  border-radius:18px;
+  padding:16px;
+  margin:12px 0;
+}
+.v593-grid{
+  display:grid;
+  grid-template-columns:repeat(12,minmax(0,1fr));
+  gap:12px;
+}
+.v593-save{
+  background:#2563eb!important;
+  color:#fff!important;
+  font-weight:950!important;
+}
+.v593-geo{
+  background:#111!important;
+  color:#fff!important;
+  font-weight:950!important;
+}
+.v593-warning{
+  background:#fff7ed;
+  border:1px solid #fed7aa;
+  color:#9a3412;
+  border-radius:14px;
+  padding:10px;
+  margin-top:8px;
+}
+@media(max-width:980px){
+  .v593-grid{grid-template-columns:1fr}
+  .span-12,.span-9,.span-8,.span-7,.span-6,.span-5,.span-4,.span-3,.span-2{grid-column:span 1!important}
+}

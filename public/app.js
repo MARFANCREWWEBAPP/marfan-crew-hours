@@ -8069,3 +8069,338 @@ window.addEventListener('load', ()=>{
   v592ApplyViewGuards();
   v592EnforceLoginOnBoot();
 });
+
+
+// ---------- V59.3 EDIT EVENT V46 FORM FIX FRONTEND ----------
+function safeEscV593(v){
+  return (typeof escV582 === 'function') ? escV582(v) : String(v ?? '').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+}
+
+function v593CalcTransportByAddress(address, lat, lng){
+  const txt = String(address||'').toLowerCase();
+  // Base operativa aproximada: Cártama / Málaga área. Se deja editable.
+  const localHints = ['cartama','cártama','estacion de cartama','estación de cártama','malaga','málaga'];
+  const isLocal = localHints.some(x=>txt.includes(x));
+  if(!address && !lat && !lng) return {required:0, charge:0, note:'Sin dirección/geolocalización'};
+  if(isLocal) return {required:0, charge:0, note:'Zona local detectada'};
+  return {required:1, charge:25, note:'Fuera de zona local: revisar cargo de transporte'};
+}
+
+function v593ApplyTransportSuggestion(){
+  const address = document.querySelector('#eventEditFormV593 [name="address"]')?.value || '';
+  const lat = document.querySelector('#eventEditFormV593 [name="lat"]')?.value || '';
+  const lng = document.querySelector('#eventEditFormV593 [name="lng"]')?.value || '';
+  const r = v593CalcTransportByAddress(address, lat, lng);
+  const req = document.querySelector('#eventEditFormV593 [name="transport_required"]');
+  const charge = document.querySelector('#eventEditFormV593 [name="transport_charge"]');
+  const note = document.getElementById('geoTransportNoteV593');
+  if(req) req.value = r.required;
+  if(charge) charge.value = r.charge;
+  if(note) note.innerHTML = r.note;
+}
+
+function v593DetectLocation(){
+  if(!navigator.geolocation){
+    alert('Este navegador no permite geolocalización.');
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(pos=>{
+    const lat = pos.coords.latitude.toFixed(6);
+    const lng = pos.coords.longitude.toFixed(6);
+    document.querySelector('#eventEditFormV593 [name="lat"]').value = lat;
+    document.querySelector('#eventEditFormV593 [name="lng"]').value = lng;
+    document.querySelector('#eventEditFormV593 [name="geo_source"]').value = 'navigator.geolocation';
+    v593ApplyTransportSuggestion();
+    if(typeof v534Toast === 'function') v534Toast('Geolocalización detectada');
+  }, err=>{
+    alert('No se pudo detectar la ubicación: '+err.message);
+  }, {enableHighAccuracy:true, timeout:10000, maximumAge:60000});
+}
+
+async function editEventV593(id){
+  id = Number(id);
+  if(!id){
+    alert('No se ha podido identificar el evento.');
+    return;
+  }
+
+  const data = await api('/api/events/'+id+'/v46-edit-data-v593');
+  const e = data.event || {};
+  const assignments = data.assignments || [];
+
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal v593-event-modal">
+        <div class="modal-head">
+          <div>
+            <h2>Editar evento · Formulario V46</h2>
+            <p class="muted">${safeEscV593(e.name||'Evento')}</p>
+          </div>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+
+        <form id="eventEditFormV593">
+          <div class="v593-section">
+            <h3>1. Datos del evento</h3>
+            <div class="v593-grid">
+              <input class="field span-6" name="name" value="${safeEscV593(e.name||'')}" placeholder="Nombre del evento" required>
+              <input class="field span-3" name="event_code" value="${safeEscV593(e.event_code||'')}" placeholder="Referencia">
+              <select class="field span-3" name="status">
+                ${['programado','confirmado','pendiente','realizado','cancelado'].map(s=>`<option value="${s}" ${String(e.status||'')===s?'selected':''}>${s}</option>`).join('')}
+              </select>
+              <input class="field span-4" name="client" value="${safeEscV593(e.client||'')}" placeholder="Cliente">
+              <input class="field span-4" name="legal_name" value="${safeEscV593(e.legal_name||'')}" placeholder="Razón social">
+              <input class="field span-4" name="cif" value="${safeEscV593(e.cif||'')}" placeholder="CIF/NIF">
+            </div>
+          </div>
+
+          <div class="v593-section">
+            <h3>2. Responsable y contacto</h3>
+            <div class="v593-grid">
+              <input class="field span-4" name="contact_name" value="${safeEscV593(e.contact_name||'')}" placeholder="Responsable del evento">
+              <input class="field span-4" name="contact_phone" value="${safeEscV593(e.contact_phone||'')}" placeholder="Teléfono">
+              <input class="field span-4" name="contact_email" value="${safeEscV593(e.contact_email||'')}" placeholder="Email">
+            </div>
+          </div>
+
+          <div class="v593-section">
+            <h3>3. Fecha, horarios y ubicación</h3>
+            <div class="v593-grid">
+              <input class="field span-3" name="event_date" type="date" value="${safeEscV593(e.event_date||'')}" required>
+              <input class="field span-2" name="start_time" type="time" value="${safeEscV593(e.start_time||'')}">
+              <input class="field span-2" name="end_time" type="time" value="${safeEscV593(e.end_time||'')}">
+              <input class="field span-2" name="load_in_time" type="time" value="${safeEscV593(e.load_in_time||'')}">
+              <input class="field span-3" name="load_out_time" type="time" value="${safeEscV593(e.load_out_time||'')}">
+              <input class="field span-5" name="location" value="${safeEscV593(e.location||'')}" placeholder="Recinto / ubicación">
+              <input class="field span-7" name="address" value="${safeEscV593(e.address||'')}" placeholder="Dirección completa" oninput="v593ApplyTransportSuggestion()">
+              <input class="field span-6" name="access_notes" value="${safeEscV593(e.access_notes||'')}" placeholder="Accesos / carga y descarga">
+              <input class="field span-6" name="parking_notes" value="${safeEscV593(e.parking_notes||'')}" placeholder="Parking / vehículos">
+            </div>
+          </div>
+
+          <div class="v593-section">
+            <h3>4. Geolocalización y transporte</h3>
+            <div class="v593-grid">
+              <input class="field span-3" name="lat" value="${safeEscV593(e.lat||'')}" placeholder="Latitud">
+              <input class="field span-3" name="lng" value="${safeEscV593(e.lng||'')}" placeholder="Longitud">
+              <input class="field span-3" name="geo_source" value="${safeEscV593(e.geo_source||'')}" placeholder="Fuente geolocalización">
+              <button type="button" class="v593-geo span-3" onclick="v593DetectLocation()">Detectar ubicación</button>
+              <select class="field span-3" name="transport_required">
+                <option value="0" ${Number(e.transport_required||0)===0?'selected':''}>Sin cargo transporte</option>
+                <option value="1" ${Number(e.transport_required||0)===1?'selected':''}>Con cargo transporte</option>
+              </select>
+              <input class="field span-3" name="transport_charge" type="number" step="0.01" value="${safeEscV593(e.transport_charge||0)}" placeholder="Cargo transporte €">
+              <div class="v593-warning span-6" id="geoTransportNoteV593">Revisión automática de transporte pendiente.</div>
+            </div>
+          </div>
+
+          <div class="v593-section">
+            <h3>5. Producción y operación</h3>
+            <div class="v593-grid">
+              <input class="field span-4" name="service_type" value="${safeEscV593(e.service_type||'')}" placeholder="Tipo de servicio">
+              <input class="field span-4" name="required_workers" type="number" value="${safeEscV593(e.required_workers||'')}" placeholder="Operarios necesarios">
+              <input class="field span-4" name="required_team_leads" type="number" value="${safeEscV593(e.required_team_leads||'')}" placeholder="Jefes de equipo">
+              <input class="field span-6" name="material_notes" value="${safeEscV593(e.material_notes||'')}" placeholder="Material / técnica">
+              <input class="field span-6" name="crew_notes" value="${safeEscV593(e.crew_notes||'')}" placeholder="Notas para crew">
+              <textarea class="field span-12" name="production_notes" placeholder="Notas producción">${safeEscV593(e.production_notes||'')}</textarea>
+            </div>
+          </div>
+
+          <div class="v593-section">
+            <h3>6. Facturación y costes</h3>
+            <div class="v593-grid">
+              <select class="field span-3" name="payment_status">
+                ${['pendiente','facturado','cobrado','impagado'].map(s=>`<option value="${s}" ${String(e.payment_status||'')===s?'selected':''}>${s}</option>`).join('')}
+              </select>
+              <input class="field span-3" name="estimated_external_cost" type="number" step="0.01" value="${safeEscV593(e.estimated_external_cost||0)}" placeholder="Coste externo">
+              <input class="field span-3" name="estimated_transport_cost" type="number" step="0.01" value="${safeEscV593(e.estimated_transport_cost||0)}" placeholder="Transporte">
+              <input class="field span-3" name="estimated_other_cost" type="number" step="0.01" value="${safeEscV593(e.estimated_other_cost||0)}" placeholder="Otros">
+            </div>
+          </div>
+
+          <div class="v593-section">
+            <h3>7. Operarios asignados</h3>
+            ${assignments.map(a=>`
+              <div style="border-bottom:1px solid #e5e7eb;padding:8px 0">
+                <b>${safeEscV593((a.first_name||'')+' '+(a.last_name||''))}${a.nickname?' · '+safeEscV593(a.nickname):''}</b><br>
+                ${safeEscV593(a.service_role||'')} · ${safeEscV593(a.planned_start||'')} - ${safeEscV593(a.planned_end||'')}
+              </div>
+            `).join('') || '<p class="muted">Sin operarios asignados.</p>'}
+          </div>
+
+          <div class="v593-section">
+            <h3>8. Notas internas</h3>
+            <textarea class="field" name="notes" placeholder="Notas internas">${safeEscV593(e.notes||'')}</textarea>
+          </div>
+
+          <div class="actions">
+            <button class="v593-save">Guardar cambios</button>
+            <button type="button" class="secondary" onclick="closeWizard()">Cancelar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  v593ApplyTransportSuggestion();
+
+  $('#eventEditFormV593').onsubmit = async ev=>{
+    ev.preventDefault();
+    const payload = Object.fromEntries(new FormData(ev.target));
+    await api('/api/events/'+id+'/v46-edit-save-v593',{
+      method:'POST',
+      body:JSON.stringify(payload)
+    });
+    if(typeof v534Toast === 'function') v534Toast('Evento editado correctamente');
+    closeWizard();
+    if(typeof showCalendarV582 === 'function') await showCalendarV582();
+    else if(typeof viewCalendar === 'function') await viewCalendar();
+  };
+}
+
+// Forzar todos los caminos de edición al formulario V46.
+editEventV582 = editEventV593;
+editEventV587 = editEventV593;
+editCalendarEventV58 = editEventV593;
+editCalendarEventV576 = editEventV593;
+
+// Reenganche de botones Editar ya pintados.
+function patchEditButtonsV593(){
+  document.querySelectorAll('button').forEach(btn=>{
+    const txt = (btn.textContent||'').toLowerCase().trim();
+    if(txt === 'editar' || txt === 'editar evento'){
+      const onclick = btn.getAttribute('onclick') || '';
+      let id = null;
+      const m = onclick.match(/\((\d+)\)/);
+      if(m) id = Number(m[1]);
+      if(!id){
+        const wrap = btn.closest('[data-v582-event],[data-cal-event-id],[data-event-id]');
+        if(wrap) id = Number(wrap.dataset.v582Event || wrap.dataset.calEventId || wrap.dataset.eventId || 0);
+      }
+      if(id){
+        btn.onclick = function(ev){
+          ev.preventDefault();
+          ev.stopPropagation();
+          editEventV593(id);
+        };
+      }
+    }
+  });
+}
+
+setInterval(patchEditButtonsV593, 1000);
+
+const __showCalendarV582_v593 = typeof showCalendarV582 === 'function' ? showCalendarV582 : null;
+if(__showCalendarV582_v593){
+  showCalendarV582 = async function(){
+    await __showCalendarV582_v593();
+    setTimeout(patchEditButtonsV593,100);
+    setTimeout(patchEditButtonsV593,500);
+  };
+  window.viewCalendar = showCalendarV582;
+}
+
+
+// ---------- V59.4 LOGIN SUBMIT FIX ----------
+// La V59.2 bloqueaba vistas internas mirando solo localStorage/token y podía impedir avanzar tras login.
+// Esta versión deja que el login original mande y solo corrige menú cuando la app ya está dentro.
+
+window.__v594LoginJustSubmitted = false;
+window.__v594AppUnlocked = false;
+
+function v594HasAnyAuth(){
+  try{
+    if(typeof token !== 'undefined' && token) return true;
+    if(window.token) return true;
+    if(localStorage.getItem('token')) return true;
+    if(localStorage.getItem('authToken')) return true;
+    if(localStorage.getItem('marfan_token')) return true;
+    if(sessionStorage.getItem('token')) return true;
+    if(sessionStorage.getItem('authToken')) return true;
+    // Muchas versiones usan sesión cookie; si ya hay menú visible, lo consideramos app cargada.
+    const side = document.querySelector('.sidebar') || document.querySelector('aside') || document.querySelector('nav');
+    const content = document.getElementById('content') || document.querySelector('#main');
+    if(side && content && (side.textContent||'').toLowerCase().includes('dashboard')) return true;
+    return false;
+  }catch(e){ return false; }
+}
+
+function v594IsRealLoginScreen(){
+  const body = (document.body.textContent || '').toLowerCase();
+  const hasPassword = !!document.querySelector('input[type="password"]');
+  const hasSubmit = !!document.querySelector('button, input[type="submit"]');
+  return hasPassword && hasSubmit && (body.includes('entrar') || body.includes('login') || body.includes('usuario') || body.includes('contraseña'));
+}
+
+// Sobrescribir el gate anterior para que NO bloquee justo después de pulsar entrar.
+function v592HasLocalAuth(){
+  return v594HasAnyAuth() || window.__v594LoginJustSubmitted || window.__v594AppUnlocked;
+}
+
+function v592ShowLoginHard(){
+  // Si estamos en pantalla login real, no la machacamos.
+  if(v594IsRealLoginScreen()) return;
+  // Si acabamos de enviar login, esperamos.
+  if(window.__v594LoginJustSubmitted) return;
+  try{
+    if(typeof showLogin === 'function') return showLogin();
+    if(typeof renderLogin === 'function') return renderLogin();
+    if(typeof viewLogin === 'function') return viewLogin();
+  }catch(e){}
+}
+
+function v592EnforceLoginOnBoot(){
+  // Desactivado: el login original de la app decide.
+  return;
+}
+
+function v592ApplyViewGuards(){
+  // Desactivado: no envolver vistas para no bloquear submit/login.
+  return;
+}
+
+// Detectar envío del formulario de login y permitir transición.
+if(!window.__v594LoginSubmitListener){
+  window.__v594LoginSubmitListener = true;
+
+  document.addEventListener('submit', ev=>{
+    const form = ev.target;
+    if(!form) return;
+    if(form.querySelector && form.querySelector('input[type="password"]')){
+      window.__v594LoginJustSubmitted = true;
+      setTimeout(()=>{ window.__v594LoginJustSubmitted = false; }, 8000);
+    }
+  }, true);
+
+  document.addEventListener('click', ev=>{
+    const btn = ev.target.closest && ev.target.closest('button,input[type="submit"]');
+    if(!btn) return;
+    const txt = (btn.textContent || btn.value || '').toLowerCase();
+    const form = btn.closest && btn.closest('form');
+    if((txt.includes('entrar') || txt.includes('login') || txt.includes('acceder')) || (form && form.querySelector('input[type="password"]'))){
+      window.__v594LoginJustSubmitted = true;
+      setTimeout(()=>{ window.__v594LoginJustSubmitted = false; }, 8000);
+    }
+  }, true);
+}
+
+// Cuando detecte que ya estamos dentro, desbloquea definitivamente esta sesión frontend.
+setInterval(()=>{
+  const side = document.querySelector('.sidebar') || document.querySelector('aside') || document.querySelector('nav');
+  const content = document.getElementById('content') || document.querySelector('#main');
+  if(side && content){
+    const txt = (side.textContent || '').toLowerCase();
+    if(txt.includes('dashboard') || txt.includes('calendario') || txt.includes('operarios')){
+      window.__v594AppUnlocked = true;
+      window.__v594LoginJustSubmitted = false;
+    }
+  }
+}, 500);
+
+// En caso de que algún wrapper anterior haya quedado aplicado, reponer vistas críticas sin bloquear.
+// No tocamos su lógica, solo evitamos que vuelvan a llamar al gate anterior.
+setTimeout(()=>{
+  try{
+    if(typeof showCalendarV582 === 'function') window.viewCalendar = showCalendarV582;
+  }catch(e){}
+}, 1000);

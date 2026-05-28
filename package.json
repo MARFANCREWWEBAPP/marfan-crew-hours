@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "59.2.0",
-  "description": "V59.2 Login Gate Fix",
+  "version": "59.4.0",
+  "description": "V59.4 Login Submit Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
