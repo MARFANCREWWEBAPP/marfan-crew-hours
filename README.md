@@ -1,13 +1,17 @@
 
-# V61.4 Google Calendar Push Fix
+# V62.0 Phase 1 Sidebar Reorder Stable
 
-Base: V61.3.
+IMPORTANTE:
+- NO toca calendario.
+- NO toca sincronización Google.
+- NO toca login.
+- NO toca formularios V46.
+- NO toca eventos.
 
-Corrige:
-- Crear/editar evento en la app no aparecía en Google Calendar.
+Solo:
+- reorganiza sidebar
+- elimina visualmente Operaciones y Producción Live
+- agrupa menús por categorías
+- mejora operatividad visual
 
-Añade:
-- Al guardar desde el formulario V61.2, crea/actualiza evento en Google Calendar MARFAN.
-- Si ya existe enlace google_event_links, actualiza el evento Google.
-- Si no existe, crea evento nuevo y guarda enlace.
-- Mantiene calendario, login y formulario V46 intactos.
+Base: V61.4 estable.

@@ -1689,3 +1689,53 @@ body.calendar-view-active-v586 a.menu-calendar-active-v586{
   border-color:#fecaca;
   color:#991b1b;
 }
+
+
+/* ---------- V62.0 PHASE 1 SIDEBAR REORDER ---------- */
+
+.v620-sidebar{
+  display:flex;
+  flex-direction:column;
+  gap:18px;
+  padding:12px 8px 20px;
+}
+
+.v620-section{
+  border-bottom:1px solid rgba(255,255,255,.08);
+  padding-bottom:14px;
+}
+
+.v620-title{
+  font-size:11px;
+  letter-spacing:1.6px;
+  opacity:.6;
+  font-weight:900;
+  padding:8px 14px;
+  text-transform:uppercase;
+}
+
+.v620-body{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+
+.v620-menu-item{
+  width:100%;
+  border-radius:14px;
+  padding:12px 14px;
+  transition:.18s ease;
+  cursor:pointer;
+  font-weight:700;
+}
+
+.v620-menu-item:hover{
+  background:rgba(255,255,255,.08);
+}
+
+.v620-active{
+  background:#fff!important;
+  color:#111!important;
+  font-weight:900!important;
+  box-shadow:0 6px 20px rgba(0,0,0,.18);
+}

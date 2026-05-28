@@ -8306,3 +8306,178 @@ async function pushEventToGoogleV614(id){
     alert('Error sincronizando con Google: '+e.message);
   }
 }
+
+
+// ---------- V62.0 PHASE 1 SIDEBAR REORDER STABLE ----------
+// NO toca calendario, sync Google, login ni formularios.
+// Solo reorganiza menús visualmente.
+
+(function(){
+
+function v620FindSidebar(){
+  return document.querySelector('.sidebar')
+    || document.querySelector('aside')
+    || document.querySelector('nav')
+    || document.querySelector('[class*="sidebar"]');
+}
+
+function v620MenuText(el){
+  return (el.textContent || '').trim().toLowerCase();
+}
+
+function v620IsMenuItem(el){
+  const t = v620MenuText(el);
+  return t.length > 0 && (
+    el.tagName === 'A' ||
+    el.tagName === 'BUTTON' ||
+    el.onclick ||
+    el.querySelector('a,button')
+  );
+}
+
+function v620FindMenuItems(sidebar){
+  const candidates = [...sidebar.querySelectorAll('a,button,li,div')];
+  return candidates.filter(v620IsMenuItem);
+}
+
+function v620Match(items, keywords){
+  return items.find(el=>{
+    const t = v620MenuText(el);
+    return keywords.some(k=>t.includes(k));
+  });
+}
+
+function v620Section(title){
+  const wrap = document.createElement('div');
+  wrap.className = 'v620-section';
+
+  const h = document.createElement('div');
+  h.className = 'v620-title';
+  h.textContent = title;
+
+  const body = document.createElement('div');
+  body.className = 'v620-body';
+
+  wrap.appendChild(h);
+  wrap.appendChild(body);
+
+  return {wrap, body};
+}
+
+function v620Move(el){
+  const clone = el.cloneNode(true);
+
+  // mantener onclick inline
+  if(el.getAttribute && el.getAttribute('onclick')){
+    clone.setAttribute('onclick', el.getAttribute('onclick'));
+  }
+
+  // mantener listeners básicos
+  clone.addEventListener('click', e=>{
+    try{ el.click(); }catch(err){}
+  });
+
+  clone.classList.add('v620-menu-item');
+  return clone;
+}
+
+function v620BuildSidebar(){
+  const sidebar = v620FindSidebar();
+  if(!sidebar) return;
+  if(sidebar.__v620Done) return;
+
+  const items = v620FindMenuItems(sidebar);
+
+  const mapping = [
+    ['Dashboard',['dashboard']],
+    ['Calendario de Eventos',['calendario']],
+    ['Albaranes Evento',['albaran']],
+    ['Control Diario',['control diario']],
+    ['GPS Live',['gps']],
+    ['Clientes',['cliente']],
+    ['Operarios',['operario']],
+    ['Documentación',['document']],
+    ['Tarifas',['tarifa']],
+    ['Finanzas Pro',['finanza']],
+    ['Informes PDF',['informes pdf','pdf']],
+    ['Vista Operario',['vista operario']],
+    ['Contraseñas',['contraseña','password']],
+    ['Ajustes ERP',['ajustes','erp']]
+  ];
+
+  const found = [];
+
+  mapping.forEach(([label,keys])=>{
+    const el = v620Match(items, keys);
+    if(el) found.push([label, el]);
+  });
+
+  const root = document.createElement('div');
+  root.className = 'v620-sidebar';
+
+  const op = v620Section('OPERATIVA');
+  const gest = v620Section('GESTIÓN');
+  const admin = v620Section('ADMINISTRACIÓN');
+  const sys = v620Section('SISTEMA');
+
+  root.appendChild(op.wrap);
+  root.appendChild(gest.wrap);
+  root.appendChild(admin.wrap);
+  root.appendChild(sys.wrap);
+
+  const operative = ['Dashboard','Calendario de Eventos','Control Diario','GPS Live'];
+  const gestion = ['Clientes','Operarios','Documentación','Tarifas'];
+  const administracion = ['Albaranes Evento','Finanzas Pro','Informes PDF','Vista Operario','Contraseñas'];
+  const sistema = ['Ajustes ERP'];
+
+  found.forEach(([label,el])=>{
+    const node = v620Move(el);
+
+    if(label === 'Operaciones' || label === 'Produccion Live') return;
+
+    if(operative.includes(label)) op.body.appendChild(node);
+    else if(gestion.includes(label)) gest.body.appendChild(node);
+    else if(administracion.includes(label)) admin.body.appendChild(node);
+    else if(sistema.includes(label)) sys.body.appendChild(node);
+  });
+
+  // ocultar sidebar original visualmente SIN romper lógica
+  const oldChildren = [...sidebar.children];
+  oldChildren.forEach(c=>c.style.display='none');
+
+  sidebar.appendChild(root);
+  sidebar.__v620Done = true;
+}
+
+function v620RefreshSelection(){
+  const sidebar = document.querySelector('.v620-sidebar');
+  if(!sidebar) return;
+
+  const items = sidebar.querySelectorAll('.v620-menu-item');
+  items.forEach(i=>i.classList.remove('v620-active'));
+
+  const page = (document.body.textContent || '').toLowerCase();
+
+  items.forEach(i=>{
+    const t = (i.textContent || '').toLowerCase();
+
+    if(
+      (t.includes('dashboard') && page.includes('dashboard')) ||
+      (t.includes('calendario') && page.includes('calendario')) ||
+      (t.includes('operario') && page.includes('operario')) ||
+      (t.includes('cliente') && page.includes('cliente')) ||
+      (t.includes('finanza') && page.includes('finanza')) ||
+      (t.includes('tarifa') && page.includes('tarifa')) ||
+      (t.includes('gps') && page.includes('gps')) ||
+      (t.includes('informes') && page.includes('informes'))
+    ){
+      i.classList.add('v620-active');
+    }
+  });
+}
+
+setTimeout(v620BuildSidebar, 1000);
+setTimeout(v620RefreshSelection, 1400);
+setInterval(v620RefreshSelection, 2500);
+
+})();
