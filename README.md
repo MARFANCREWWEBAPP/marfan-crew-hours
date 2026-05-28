@@ -1,17 +1,31 @@
 
-# V62.0 Phase 1 Sidebar Reorder Stable
+# V62.1 Sidebar Real Reorder
 
-IMPORTANTE:
-- NO toca calendario.
-- NO toca sincronización Google.
-- NO toca login.
-- NO toca formularios V46.
-- NO toca eventos.
+Corrige V62.0:
+- Ahora no crea una capa que puede no verse.
+- Oculta de verdad los menús originales.
+- Quita Operaciones y Producción Live.
+- Reconstruye el sidebar visible con el orden pedido.
 
-Solo:
-- reorganiza sidebar
-- elimina visualmente Operaciones y Producción Live
-- agrupa menús por categorías
-- mejora operatividad visual
+Orden:
+Dashboard
+Calendario de Eventos
+Albaranes Evento
+Control Diario
+GPS Live
+Clientes
+Operarios
+Documentación
+Tarifas
+Finanzas Pro
+Informes PDF
+Vista Operario
+Contraseñas
+Ajustes ERP
 
-Base: V61.4 estable.
+No toca:
+- calendario
+- Google Sync
+- login
+- formularios V46
+- eventos

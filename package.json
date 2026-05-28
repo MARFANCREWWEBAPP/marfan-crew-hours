@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.0.0",
-  "description": "V62.0 Phase 1 Sidebar Reorder Stable",
+  "version": "62.1.0",
+  "description": "V62.1 Sidebar Real Reorder",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
