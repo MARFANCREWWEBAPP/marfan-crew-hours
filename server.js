@@ -5558,3 +5558,59 @@ app.delete('/api/events/:id/delete-v576', requireAdmin, (req,res)=>{
     res.status(500).json({error:e.message});
   }
 });
+
+
+// ---------- V58 CALENDAR EVENT EDIT DELETE DIRECT ----------
+app.get('/api/events/:id/detail-v58', requireAdmin, (req,res)=>{
+  try{
+    const event = db.prepare('SELECT * FROM events WHERE id=?').get(req.params.id);
+    if(!event) return res.status(404).json({error:'Evento no encontrado'});
+    let assignments = [];
+    try{
+      assignments = db.prepare(`
+        SELECT a.*, u.first_name,u.last_name,u.nickname,u.phone
+        FROM assignments a
+        LEFT JOIN users u ON u.id=a.user_id
+        WHERE a.event_id=?
+        ORDER BY u.first_name,u.last_name
+      `).all(req.params.id);
+    }catch(e){}
+    res.json({ok:true,event,assignments});
+  }catch(e){res.status(500).json({error:e.message});}
+});
+
+app.put('/api/events/:id/save-v58', requireAdmin, (req,res)=>{
+  try{
+    const id = Number(req.params.id);
+    const event = db.prepare('SELECT * FROM events WHERE id=?').get(id);
+    if(!event) return res.status(404).json({error:'Evento no encontrado'});
+    const b = req.body || {};
+    const cols = db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
+    const allowed = [
+      'name','client','event_date','start_time','end_time','location','address',
+      'contact_name','contact_phone','contact_email','status','operational_status',
+      'notes','production_notes','access_notes','parking_notes','service_type'
+    ].filter(k=>cols.includes(k) && Object.prototype.hasOwnProperty.call(b,k));
+    if(!allowed.length) return res.json({ok:true,updated:0});
+    db.prepare(`UPDATE events SET ${allowed.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...allowed.map(k=>b[k]), id);
+    res.json({ok:true,updated:1});
+  }catch(e){res.status(500).json({error:e.message});}
+});
+
+app.delete('/api/events/:id/remove-v58', requireAdmin, (req,res)=>{
+  try{
+    const id = Number(req.params.id);
+    const event = db.prepare('SELECT * FROM events WHERE id=?').get(id);
+    if(!event) return res.status(404).json({error:'Evento no encontrado'});
+    const tx = db.transaction(()=>{
+      try{db.prepare('DELETE FROM assignments WHERE event_id=?').run(id);}catch(e){}
+      try{db.prepare('DELETE FROM event_role_lines WHERE event_id=?').run(id);}catch(e){}
+      try{db.prepare('DELETE FROM google_event_links WHERE event_id=?').run(id);}catch(e){}
+      try{db.prepare('DELETE FROM delivery_notes WHERE event_id=?').run(id);}catch(e){}
+      try{db.prepare('DELETE FROM event_delivery_notes WHERE event_id=?').run(id);}catch(e){}
+      db.prepare('DELETE FROM events WHERE id=?').run(id);
+    });
+    tx();
+    res.json({ok:true,deleted:true});
+  }catch(e){res.status(500).json({error:e.message});}
+});

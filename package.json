@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "57.9.0",
-  "description": "V57.9 Calendar Click Final Fix",
+  "version": "58.0.0",
+  "description": "V58 Calendar Event Edit Delete Direct",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

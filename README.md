@@ -107,3 +107,13 @@ Reemplaza completamente el render del calendario:
 - Listener en pointerdown y click, fase captura.
 - MutationObserver para repintados.
 - Si no hay data-id, intenta resolver evento por texto/nombre/hora.
+
+
+# V58 Calendar Event Edit/Delete Direct
+
+Al pulsar evento:
+- abre subventana
+- opción Editar evento
+- opción Borrar evento
+- confirmación antes de borrar
+- refresco calendario

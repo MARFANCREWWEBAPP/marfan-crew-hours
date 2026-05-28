@@ -6549,3 +6549,134 @@ setTimeout(async ()=>{
   await getEventsCacheV579();
   bindEveryCalendarEventV579();
 }, 800);
+
+
+// ---------- V58 CALENDAR EVENT EDIT DELETE DIRECT FRONTEND ----------
+async function openCalendarEventV58(id){
+  const data = await api('/api/events/'+id+'/detail-v58');
+  const e = data.event || {};
+  const assignments = data.assignments || [];
+
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal event-v58-modal">
+        <div class="modal-head">
+          <div>
+            <h2>${esc(e.name||'Evento')}</h2>
+            <p class="muted">${esc(e.event_date||'')} · ${esc(e.start_time||'')} - ${esc(e.end_time||'')}</p>
+          </div>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+
+        <div class="event-v58-section">
+          <h3>¿Qué quieres hacer?</h3>
+          <div class="event-v58-actions">
+            <button class="event-v58-edit" onclick="editCalendarEventV58(${id})">Editar evento</button>
+            <button class="event-v58-delete" onclick="deleteCalendarEventV58(${id}, '${esc((e.name||'Evento')).replace(/'/g, "\\'")}')">Borrar evento</button>
+            <button class="secondary" onclick="closeWizard()">Cancelar</button>
+          </div>
+        </div>
+
+        <div class="event-v58-section">
+          <h3>Información del evento</h3>
+          <div class="event-v58-grid">
+            <p class="span-6"><b>Cliente</b><br>${esc(e.client||'—')}</p>
+            <p class="span-6"><b>Ubicación</b><br>${esc(e.location||e.address||'—')}</p>
+            <p class="span-3"><b>Estado</b><br>${esc(e.status||'—')}</p>
+            <p class="span-3"><b>Producción</b><br>${esc(e.operational_status||'—')}</p>
+            <p class="span-6"><b>Contacto</b><br>${esc(e.contact_name||'—')} · ${esc(e.contact_phone||'')}</p>
+            <p class="span-12"><b>Notas</b><br>${esc(e.notes||e.production_notes||'—')}</p>
+          </div>
+        </div>
+
+        <div class="event-v58-section">
+          <h3>Operarios asignados</h3>
+          ${assignments.map(a=>`
+            <div style="border-bottom:1px solid #e5e7eb;padding:8px 0">
+              <b>${esc((a.first_name||'')+' '+(a.last_name||''))}${a.nickname?' · '+esc(a.nickname):''}</b><br>
+              ${esc(a.service_role||'')} · ${esc(a.planned_start||'')} - ${esc(a.planned_end||'')}
+            </div>
+          `).join('') || '<p class="muted">Sin operarios asignados.</p>'}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function editCalendarEventV58(id){
+  const data = await api('/api/events/'+id+'/detail-v58');
+  const e = data.event || {};
+
+  $('#modalRoot').innerHTML = `
+    <div class="modal-back">
+      <div class="modal event-v58-modal">
+        <div class="modal-head">
+          <h2>Editar evento</h2>
+          <button class="secondary" onclick="openCalendarEventV58(${id})">Volver</button>
+        </div>
+
+        <form id="editEventFormV58">
+          <div class="event-v58-section">
+            <div class="event-v58-grid">
+              <input class="field span-6" name="name" value="${esc(e.name||'')}" placeholder="Nombre">
+              <input class="field span-3" name="event_date" type="date" value="${esc(e.event_date||'')}">
+              <select class="field span-3" name="status">
+                ${['programado','confirmado','pendiente','realizado','cancelado'].map(s=>`<option value="${s}" ${e.status===s?'selected':''}>${s}</option>`).join('')}
+              </select>
+              <input class="field span-3" name="start_time" type="time" value="${esc(e.start_time||'')}">
+              <input class="field span-3" name="end_time" type="time" value="${esc(e.end_time||'')}">
+              <input class="field span-6" name="client" value="${esc(e.client||'')}" placeholder="Cliente">
+              <input class="field span-6" name="location" value="${esc(e.location||'')}" placeholder="Ubicación">
+              <input class="field span-6" name="address" value="${esc(e.address||'')}" placeholder="Dirección">
+              <input class="field span-4" name="contact_name" value="${esc(e.contact_name||'')}" placeholder="Contacto">
+              <input class="field span-4" name="contact_phone" value="${esc(e.contact_phone||'')}" placeholder="Teléfono">
+              <input class="field span-4" name="contact_email" value="${esc(e.contact_email||'')}" placeholder="Email">
+              <textarea class="field span-12" name="notes" placeholder="Notas">${esc(e.notes||'')}</textarea>
+            </div>
+          </div>
+          <div class="event-v58-actions">
+            <button class="event-v58-edit">Guardar cambios</button>
+            <button type="button" class="secondary" onclick="openCalendarEventV58(${id})">Cancelar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  $('#editEventFormV58').onsubmit = async ev=>{
+    ev.preventDefault();
+    await api('/api/events/'+id+'/save-v58',{method:'PUT',body:JSON.stringify(Object.fromEntries(new FormData(ev.target)))});
+    if(typeof v534Toast==='function') v534Toast('Evento actualizado');
+    closeWizard();
+    await viewCalendar();
+  };
+}
+
+async function deleteCalendarEventV58(id, name='Evento'){
+  if(!confirm(`¿Seguro que quieres borrar este evento?\n\n${name}\n\nEsta acción no se puede deshacer.`)) return;
+  await api('/api/events/'+id+'/remove-v58',{method:'DELETE'});
+  if(typeof v534Toast==='function') v534Toast('Evento borrado');
+  closeWizard();
+  await viewCalendar();
+}
+
+// Forzar todas las funciones antiguas hacia V58.
+openEventDetail = async function(id){ return openCalendarEventV58(id); };
+openCalendarEventActionsV576 = async function(id){ return openCalendarEventV58(id); };
+openCalendarEventFinalV579 = async function(id){ return openCalendarEventV58(id); };
+
+// Reforzar listener directo.
+if(!window.__v58EventClickInstalled){
+  window.__v58EventClickInstalled = true;
+  document.addEventListener('click', ev=>{
+    const el = ev.target.closest && ev.target.closest('[data-cal-event-id],[data-event-id],.cal-event-v578,.v55-event,.calendar-event-click-v577');
+    if(!el) return;
+    const raw = el.dataset.calEventId || el.dataset.eventId || '';
+    const id = Number(String(raw).replace(/[^0-9]/g,''));
+    if(!id) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    ev.stopImmediatePropagation();
+    openCalendarEventV58(id);
+  }, true);
+}
