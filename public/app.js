@@ -7838,24 +7838,30 @@ if(__showCalendarV582_v589){
 }
 
 
-// ---------- V59 SINGLE ACTIVE MENU FIX ----------
-window.__currentMenuV59 = window.__currentMenuV59 || 'dashboard';
+// ---------- V59.1 SAFE MENU FIX ----------
+window.__v591CurrentMenu = window.__v591CurrentMenu || '';
 
-function menuTextV59(el){
+function v591IsAppReady(){
+  const side = document.querySelector('.sidebar') || document.querySelector('aside') || document.querySelector('nav');
+  const content = document.getElementById('content') || document.querySelector('#main');
+  // No tocar nada en login: necesitamos menú y contenido de app.
+  if(!side || !content) return false;
+  const sideText = (side.textContent || '').toLowerCase();
+  return sideText.includes('dashboard') || sideText.includes('calendario') || sideText.includes('operarios');
+}
+
+function v591MenuText(el){
   return [
     el.textContent || '',
     el.getAttribute('data-view') || '',
     el.getAttribute('data-section') || '',
     el.getAttribute('onclick') || '',
-    el.getAttribute('href') || '',
-    el.id || '',
-    typeof el.className === 'string' ? el.className : ''
+    el.getAttribute('href') || ''
   ].join(' ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
 }
 
-function menuKeyV59(el){
-  const t = menuTextV59(el);
-
+function v591MenuKey(el){
+  const t = v591MenuText(el);
   if(t.includes('calendario') || t.includes('calendar')) return 'calendar';
   if(t.includes('dashboard') || t.includes('inicio') || t.includes('panel')) return 'dashboard';
   if(t.includes('control diario')) return 'control';
@@ -7872,119 +7878,93 @@ function menuKeyV59(el){
   if(t.includes('vista operario')) return 'vista_operario';
   if(t.includes('albaranes')) return 'albaranes';
   if(t.includes('contraseñas') || t.includes('contrasenas')) return 'passwords';
-
   return '';
 }
 
-function clearAllMenuStatesV59(){
-  document.body.classList.add('v59-single-active-menu');
+function v591MenuItems(){
+  return [...document.querySelectorAll('.sidebar button,.sidebar a,aside button,aside a,nav button,nav a,[data-view],[data-section]')]
+    .filter(el => {
+      const key = v591MenuKey(el);
+      return !!key;
+    });
+}
 
-  document.querySelectorAll('.sidebar button,.sidebar a,nav button,nav a,[data-view],[data-section]').forEach(el=>{
+function v591SetOnlyActive(key){
+  if(!v591IsAppReady()) return;
+  if(!key) return;
+  window.__v591CurrentMenu = key;
+  document.body.classList.add('app-menu-ready-v591');
+
+  v591MenuItems().forEach(el=>{
+    const k = v591MenuKey(el);
     el.classList.remove(
-      'active',
-      'selected',
-      'current',
+      'v591-menu-active',
+      'v591-menu-inactive',
       'menu-active-calendar-v584',
       'menu-calendar-active-v586',
-      'dashboard-active-v586',
-      'v59-menu-active'
+      'dashboard-active-v586'
     );
+    // Importante: no quitamos "active" global a toda la app, solo en elementos del menú.
+    el.classList.remove('active','selected','current');
     el.removeAttribute('aria-current');
 
-    // Limpieza de estilos inline que puedan dejar blanco Dashboard.
-    const key = menuKeyV59(el);
-    if(key !== window.__currentMenuV59){
-      try{
-        el.style.background = '';
-        el.style.color = '';
-        el.style.boxShadow = '';
-      }catch(e){}
-    }
-  });
-}
-
-function setOnlyActiveMenuV59(key){
-  window.__currentMenuV59 = key || window.__currentMenuV59 || 'dashboard';
-  clearAllMenuStatesV59();
-
-  document.querySelectorAll('.sidebar button,.sidebar a,nav button,nav a,[data-view],[data-section]').forEach(el=>{
-    const k = menuKeyV59(el);
-    if(k && k === window.__currentMenuV59){
-      el.classList.add('active','v59-menu-active');
+    if(k === key){
+      el.classList.add('v591-menu-active','active');
       el.setAttribute('aria-current','page');
+    }else{
+      el.classList.add('v591-menu-inactive');
     }
   });
 }
 
-// Wrappers para vistas principales conocidas.
-function wrapViewV59(fnName, key){
-  try{
-    if(typeof window[fnName] === 'function' && !window[fnName].__v59Wrapped){
-      const old = window[fnName];
-      const wrapped = async function(...args){
-        setOnlyActiveMenuV59(key);
-        const r = await old.apply(this,args);
-        setTimeout(()=>setOnlyActiveMenuV59(key),50);
-        setTimeout(()=>setOnlyActiveMenuV59(key),300);
-        return r;
-      };
-      wrapped.__v59Wrapped = true;
-      window[fnName] = wrapped;
-    }
-  }catch(e){}
-}
-
-wrapViewV59('showCalendarV582','calendar');
-wrapViewV59('viewCalendar','calendar');
-wrapViewV59('viewDashboard','dashboard');
-wrapViewV59('dashboard','dashboard');
-wrapViewV59('viewClients','clientes');
-wrapViewV59('viewOperators','operarios');
-wrapViewV59('viewRates','tarifas');
-wrapViewV59('viewFinance','finanzas');
-wrapViewV59('viewDocumentation','documentacion');
-
-// Click del menú: detecta y deja solo uno activo inmediatamente.
-if(!window.__v59MenuClickInstalled){
-  window.__v59MenuClickInstalled = true;
-  document.addEventListener('click', ev=>{
-    const el = ev.target.closest && ev.target.closest('.sidebar button,.sidebar a,nav button,nav a,[data-view],[data-section],[onclick],a,button');
-    if(!el) return;
-    const key = menuKeyV59(el);
-    if(!key) return;
-
-    setOnlyActiveMenuV59(key);
-    setTimeout(()=>setOnlyActiveMenuV59(key),80);
-    setTimeout(()=>setOnlyActiveMenuV59(key),400);
-    setTimeout(()=>setOnlyActiveMenuV59(key),1000);
-  }, true);
-}
-
-// Observador: si otro código vuelve a poner Dashboard blanco, lo quita.
-if(!window.__v59MenuObserverInstalled){
-  window.__v59MenuObserverInstalled = true;
-  const obs = new MutationObserver(()=>{
-    setOnlyActiveMenuV59(window.__currentMenuV59 || 'dashboard');
-  });
-  const side = document.querySelector('.sidebar') || document.querySelector('nav') || document.body;
-  obs.observe(side,{attributes:true, childList:true, subtree:true, attributeFilter:['class','style','aria-current']});
-}
-
-// Detección por contenido actual.
-function detectCurrentViewFromContentV59(){
+function v591DetectFromContent(){
+  if(!v591IsAppReady()) return;
   const content = document.getElementById('content') || document.querySelector('#main');
-  if(!content) return;
   const txt = (content.textContent || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
 
   if(txt.includes('calendario eventos') || txt.includes('vista mensual') || txt.includes('sincronizacion google') || txt.includes('google conectado')){
-    setOnlyActiveMenuV59('calendar');
+    v591SetOnlyActive('calendar');
     return;
   }
-
   if(txt.includes('dashboard') || txt.includes('eventos activos') || txt.includes('albaranes sin firma')){
-    setOnlyActiveMenuV59('dashboard');
+    v591SetOnlyActive('dashboard');
   }
 }
 
-setInterval(detectCurrentViewFromContentV59, 1200);
-setTimeout(()=>setOnlyActiveMenuV59(window.__currentMenuV59 || 'dashboard'),500);
+// Click de menú, seguro: solo actúa cuando la app ya está cargada.
+if(!window.__v591MenuClickInstalled){
+  window.__v591MenuClickInstalled = true;
+  document.addEventListener('click', ev=>{
+    if(!v591IsAppReady()) return;
+    const el = ev.target.closest && ev.target.closest('.sidebar button,.sidebar a,aside button,aside a,nav button,nav a,[data-view],[data-section],[onclick],a,button');
+    if(!el) return;
+    const key = v591MenuKey(el);
+    if(!key) return;
+    v591SetOnlyActive(key);
+    setTimeout(()=>v591SetOnlyActive(key),150);
+    setTimeout(()=>v591SetOnlyActive(key),600);
+  }, true);
+}
+
+// Wrappers seguros: no afectan al login porque solo se ejecutan al llamar vistas.
+function v591WrapView(name,key){
+  try{
+    const fn = window[name];
+    if(typeof fn === 'function' && !fn.__v591Wrapped){
+      const wrapped = async function(...args){
+        const result = await fn.apply(this,args);
+        setTimeout(()=>v591SetOnlyActive(key),50);
+        setTimeout(()=>v591SetOnlyActive(key),400);
+        return result;
+      };
+      wrapped.__v591Wrapped = true;
+      window[name] = wrapped;
+    }
+  }catch(e){}
+}
+v591WrapView('showCalendarV582','calendar');
+v591WrapView('viewCalendar','calendar');
+v591WrapView('viewDashboard','dashboard');
+
+setInterval(v591DetectFromContent, 1500);
+setTimeout(v591DetectFromContent, 1500);

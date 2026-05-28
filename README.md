@@ -1,8 +1,10 @@
 
-# V59 Single Active Menu Fix
+# V59.1 Safe Menu Fix
+
+Base estable: V58.9.
 
 Corrige:
-- Dashboard y Calendario quedaban los dos en blanco.
-- Limpia todos los estados activos antes de marcar el nuevo.
-- Solo un menú puede estar activo.
-- Si otro script vuelve a marcar Dashboard, MutationObserver lo corrige.
+- V59 anterior bloqueaba login/carga.
+- Este fix NO se ejecuta hasta que existe menú lateral y contenido de app.
+- Dashboard y Calendario ya no quedan ambos activos.
+- Mantiene: sincronización Google, borrar, editar y bloqueo de eventos borrados.
