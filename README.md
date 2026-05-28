@@ -1,16 +1,16 @@
 
-# V62.3 Sidebar Static Clean Fix
+# V62.4 Sidebar Instant Navigation
 
 Corrige:
-- Albaranes Evento pasa a ADMINISTRACIÓN.
-- Elimina efecto incómodo de selección/cambio de menú.
-- No reconstruye en intervalos.
-- No clona menú encima.
-- Solo actualiza el activo al hacer click.
+- Sensación lenta/incómoda al cambiar de menú.
+- Evita hacer click sobre el menú original.
+- Navega directo a funciones internas.
+- El activo se marca instantáneamente.
+- Sin transiciones pesadas.
 
-No toca:
-- calendario
+Mantiene:
+- Calendario
 - Google Sync
-- login
-- formularios V46
-- eventos
+- Login
+- Formularios V46
+- Eventos

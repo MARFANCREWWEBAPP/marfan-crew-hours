@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.3.0",
-  "description": "V62.3 Sidebar Static Clean Fix",
+  "version": "62.4.0",
+  "description": "V62.4 Sidebar Instant Navigation",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

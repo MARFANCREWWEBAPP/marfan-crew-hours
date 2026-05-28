@@ -1907,3 +1907,61 @@ body.calendar-view-active-v586 a.menu-calendar-active-v586{
   font-weight:950!important;
   box-shadow:0 8px 24px rgba(255,255,255,.18)!important;
 }
+
+
+/* ---------- V62.4 SIDEBAR INSTANT NAVIGATION ---------- */
+.v624-menu-root{
+  display:flex;
+  flex-direction:column;
+  gap:17px;
+  padding:16px 8px 24px;
+  contain:layout style;
+}
+
+.v624-menu-group{
+  padding-bottom:14px;
+  border-bottom:1px solid rgba(255,255,255,.08);
+}
+
+.v624-menu-title{
+  font-size:10px;
+  letter-spacing:1.8px;
+  font-weight:950;
+  opacity:.52;
+  color:#fff;
+  padding:8px 12px;
+  text-transform:uppercase;
+}
+
+.v624-menu-body{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+
+.v624-menu-btn{
+  appearance:none;
+  border:0;
+  width:100%;
+  text-align:left;
+  border-radius:14px;
+  padding:12px 14px;
+  background:transparent;
+  color:rgba(255,255,255,.74);
+  cursor:pointer;
+  font-weight:850;
+  transition:none!important;
+  will-change:auto!important;
+}
+
+.v624-menu-btn:hover{
+  background:rgba(255,255,255,.08);
+  color:#fff;
+}
+
+.v624-menu-btn.v624-active{
+  background:#fff!important;
+  color:#111!important;
+  font-weight:950!important;
+  box-shadow:none!important;
+}
