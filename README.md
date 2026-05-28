@@ -1,11 +1,17 @@
 
-# V62.1 Sidebar Real Reorder
+# V62.2 Sidebar Native Rewrite
 
-Corrige V62.0:
-- Ahora no crea una capa que puede no verse.
-- Oculta de verdad los menús originales.
-- Quita Operaciones y Producción Live.
-- Reconstruye el sidebar visible con el orden pedido.
+Corrige:
+- Flash entre menú antiguo y nuevo.
+- Doble menú.
+- Operaciones y Producción Live reapareciendo.
+
+Qué hace:
+- Guarda acciones originales.
+- Vacía el sidebar real.
+- Reconstruye un único menú nativo.
+- No clona visualmente encima.
+- No toca calendario, login, Google Sync, formularios ni eventos.
 
 Orden:
 Dashboard
@@ -22,10 +28,3 @@ Informes PDF
 Vista Operario
 Contraseñas
 Ajustes ERP
-
-No toca:
-- calendario
-- Google Sync
-- login
-- formularios V46
-- eventos

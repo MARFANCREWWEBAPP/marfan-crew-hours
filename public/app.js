@@ -8310,52 +8310,40 @@ async function pushEventToGoogleV614(id){
 
 
 
-// ---------- V62.1 SIDEBAR REAL REORDER ----------
-// Reordena el menú real, no una copia. Oculta Operaciones y Producción Live de verdad.
-// No toca calendario, login, sync ni formularios.
+
+
+// ---------- V62.2 SIDEBAR NATIVE REWRITE ----------
+// Reescribe el sidebar real. No duplica, no clona, no parpadea.
+// No toca calendario, Google Sync, login ni formularios.
 
 (function(){
-  const ORDER_V621 = [
-    {label:'Dashboard', match:['dashboard'], group:'OPERATIVA'},
-    {label:'Calendario de Eventos', match:['calendario'], group:'OPERATIVA'},
-    {label:'Albaranes Evento', match:['albaran','albarán'], group:'OPERATIVA'},
-    {label:'Control Diario', match:['control diario'], group:'OPERATIVA'},
-    {label:'GPS Live', match:['gps'], group:'OPERATIVA'},
+  const V622_MENU = [
+    {group:'OPERATIVA', label:'Dashboard', keys:['dashboard'], fallbacks:['viewDashboard','dashboard']},
+    {group:'OPERATIVA', label:'Calendario de Eventos', keys:['calendario'], fallbacks:['viewCalendar','showCalendarV582']},
+    {group:'OPERATIVA', label:'Albaranes Evento', keys:['albaran','albarán'], fallbacks:['viewDeliveryNotes','viewEventDeliveryNotes','viewAlbaranes']},
+    {group:'OPERATIVA', label:'Control Diario', keys:['control diario'], fallbacks:['viewDailyControl','viewControlDiario']},
+    {group:'OPERATIVA', label:'GPS Live', keys:['gps'], fallbacks:['viewGpsLive','viewGPSLive']},
 
-    {label:'Clientes', match:['cliente'], group:'GESTIÓN'},
-    {label:'Operarios', match:['operario'], group:'GESTIÓN'},
-    {label:'Documentación', match:['document'], group:'GESTIÓN'},
-    {label:'Tarifas', match:['tarifa'], group:'GESTIÓN'},
+    {group:'GESTIÓN', label:'Clientes', keys:['cliente'], fallbacks:['viewClients']},
+    {group:'GESTIÓN', label:'Operarios', keys:['operario'], fallbacks:['viewUsers','viewOperators','viewOperarios']},
+    {group:'GESTIÓN', label:'Documentación', keys:['document'], fallbacks:['viewDocuments','viewDocumentation']},
+    {group:'GESTIÓN', label:'Tarifas', keys:['tarifa'], fallbacks:['viewRates','viewTarifas']},
 
-    {label:'Finanzas Pro', match:['finanza'], group:'ADMINISTRACIÓN'},
-    {label:'Informes PDF', match:['informe','pdf'], group:'ADMINISTRACIÓN'},
-    {label:'Vista Operario', match:['vista operario'], group:'ADMINISTRACIÓN'},
-    {label:'Contraseñas', match:['contraseña','contrasena','password'], group:'ADMINISTRACIÓN'},
-    {label:'Ajustes ERP', match:['ajuste','erp','config'], group:'SISTEMA'}
+    {group:'ADMINISTRACIÓN', label:'Finanzas Pro', keys:['finanza'], fallbacks:['viewFinancePro','viewFinance']},
+    {group:'ADMINISTRACIÓN', label:'Informes PDF', keys:['informe','pdf'], fallbacks:['viewReportsV562','viewReports','viewInformesPDF']},
+    {group:'ADMINISTRACIÓN', label:'Vista Operario', keys:['vista operario'], fallbacks:['viewWorkerPortal','viewVistaOperario']},
+    {group:'ADMINISTRACIÓN', label:'Contraseñas', keys:['contraseña','contrasena','password'], fallbacks:['viewPasswords','viewContrasenas']},
+
+    {group:'SISTEMA', label:'Ajustes ERP', keys:['ajuste','config','erp'], fallbacks:['viewConfig','viewSettings','viewAjustes']}
   ];
 
-  const REMOVE_V621 = ['operaciones','produccion live','producción live','produccion','producción live'];
+  const REMOVE_TEXT = ['operaciones','produccion live','producción live','produccion','producción','eventos realizados'];
 
-  function txtV621(el){
-    return (el.textContent || '')
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g,'')
-      .trim();
+  function normV622(s){
+    return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
   }
 
-  function attrsV621(el){
-    return [
-      el.getAttribute && el.getAttribute('onclick'),
-      el.getAttribute && el.getAttribute('data-view'),
-      el.getAttribute && el.getAttribute('data-section'),
-      el.getAttribute && el.getAttribute('href'),
-      el.id,
-      typeof el.className === 'string' ? el.className : ''
-    ].filter(Boolean).join(' ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-  }
-
-  function sidebarV621(){
+  function sidebarV622(){
     const candidates = [
       document.querySelector('.sidebar'),
       document.querySelector('aside.sidebar'),
@@ -8365,147 +8353,218 @@ async function pushEventToGoogleV614(id){
     ].filter(Boolean);
 
     return candidates.find(el=>{
-      const t = txtV621(el);
+      const t = normV622(el.textContent);
       return t.includes('dashboard') && (t.includes('calendario') || t.includes('operario') || t.includes('finanza'));
     }) || candidates[0];
   }
 
-  function itemListV621(side){
-    const all = [...side.querySelectorAll('button,a')];
-    let items = all.filter(el=>{
-      const t = txtV621(el);
-      if(!t) return false;
-      return ['dashboard','calendario','albaran','control diario','gps','cliente','operario','document','tarifa','finanza','informe','vista operario','contrasena','contraseña','password','ajuste','erp','operaciones','produccion','producción'].some(k=>t.includes(k.normalize('NFD').replace(/[\u0300-\u036f]/g,'')));
-    });
+  function itemTextV622(el){
+    return normV622([
+      el.textContent,
+      el.getAttribute && el.getAttribute('onclick'),
+      el.getAttribute && el.getAttribute('data-view'),
+      el.getAttribute && el.getAttribute('data-section'),
+      el.getAttribute && el.getAttribute('href'),
+      el.id,
+      typeof el.className === 'string' ? el.className : ''
+    ].filter(Boolean).join(' '));
+  }
 
-    // Si no están como button/a, usar hijos directos clicables
-    if(items.length < 5){
-      items = [...side.querySelectorAll('*')].filter(el=>{
-        const t = txtV621(el);
-        if(!t || t.length > 40) return false;
-        return el.onclick || el.getAttribute('onclick') || el.getAttribute('data-view') || el.getAttribute('data-section');
+  function discoverOriginalActionsV622(side){
+    const all = [...side.querySelectorAll('button,a,[onclick],[data-view],[data-section]')];
+
+    const map = {};
+
+    V622_MENU.forEach(spec=>{
+      const found = all.find(el=>{
+        const t = itemTextV622(el);
+        return spec.keys.some(k=>t.includes(normV622(k)));
       });
-    }
-    return items;
-  }
-
-  function matchItemV621(items, spec){
-    return items.find(el=>{
-      const t = txtV621(el) + ' ' + attrsV621(el);
-      return spec.match.some(k=>t.includes(k.normalize('NFD').replace(/[\u0300-\u036f]/g,'')));
+      if(found) map[spec.label] = found;
     });
+
+    return map;
   }
 
-  function clickCloneV621(original, label){
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'v621-menu-btn';
-    btn.textContent = label;
-
-    // Guardar referencias útiles para debug
-    btn.dataset.v621Label = label;
-
-    btn.addEventListener('click', ev=>{
-      ev.preventDefault();
-      ev.stopPropagation();
-
-      // Click real del elemento original
-      try { original.click(); } catch(e){}
-
-      // Fallbacks por label por si el original estaba oculto/raro
-      const l = label.toLowerCase();
+  function callFallbackV622(spec){
+    for(const name of spec.fallbacks || []){
       try{
-        if(l.includes('dashboard') && typeof viewDashboard === 'function') viewDashboard();
-        else if(l.includes('calendario') && typeof viewCalendar === 'function') viewCalendar();
-        else if(l.includes('cliente') && typeof viewClients === 'function') viewClients();
-        else if(l.includes('operario') && typeof viewUsers === 'function') viewUsers();
-        else if(l.includes('tarifa') && typeof viewRates === 'function') viewRates();
-        else if(l.includes('finanza') && typeof viewFinancePro === 'function') viewFinancePro();
-        else if(l.includes('document') && typeof viewDocuments === 'function') viewDocuments();
-        else if(l.includes('gps') && typeof viewGpsLive === 'function') viewGpsLive();
-        else if(l.includes('informe') && typeof viewReportsV562 === 'function') viewReportsV562();
-        else if(l.includes('ajuste') && typeof viewConfig === 'function') viewConfig();
+        if(typeof window[name] === 'function'){
+          window[name]();
+          return true;
+        }
+        if(typeof globalThis[name] === 'function'){
+          globalThis[name]();
+          return true;
+        }
       }catch(e){}
-
-      setActiveV621(label);
-    });
-
-    return btn;
+    }
+    return false;
   }
 
-  function makeGroupV621(title){
-    const group = document.createElement('div');
-    group.className = 'v621-menu-group';
+  function runActionV622(label){
+    const spec = V622_MENU.find(x=>x.label === label);
+    const original = window.__v622OriginalActions && window.__v622OriginalActions[label];
 
-    const h = document.createElement('div');
-    h.className = 'v621-menu-title';
-    h.textContent = title;
+    let ok = false;
 
-    const body = document.createElement('div');
-    body.className = 'v621-menu-body';
-
-    group.appendChild(h);
-    group.appendChild(body);
-    return {group, body};
-  }
-
-  function setActiveV621(label){
-    document.querySelectorAll('.v621-menu-btn').forEach(b=>{
-      b.classList.toggle('v621-active', b.dataset.v621Label === label);
-    });
-  }
-
-  function applyV621(){
-    const side = sidebarV621();
-    if(!side) return;
-
-    // Siempre ocultar menús prohibidos originales
-    itemListV621(side).forEach(el=>{
-      const t = txtV621(el);
-      if(REMOVE_V621.some(r=>t.includes(r.replace('ó','o')) || t.includes(r))){
-        el.style.display = 'none';
-        el.setAttribute('aria-hidden','true');
+    if(original){
+      try{
+        original.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, view:window}));
+        ok = true;
+      }catch(e){}
+      if(!ok){
+        try{ original.click(); ok = true; }catch(e){}
       }
+    }
+
+    if(!ok && spec) ok = callFallbackV622(spec);
+
+    setActiveV622(label);
+  }
+
+  function setActiveV622(label){
+    document.querySelectorAll('.v622-menu-btn').forEach(btn=>{
+      btn.classList.toggle('v622-active', btn.dataset.label === label);
+    });
+  }
+
+  function buildNativeSidebarV622(){
+    const side = sidebarV622();
+    if(!side) return false;
+
+    // Si está en login, no tocar
+    const bodyText = normV622(document.body.textContent);
+    const hasPassword = !!document.querySelector('input[type="password"]');
+    if(hasPassword && (bodyText.includes('entrar') || bodyText.includes('login') || bodyText.includes('contrasena'))) return false;
+
+    // Si ya lo hemos reconstruido, no repetir
+    if(side.dataset.v622Native === '1') return true;
+
+    window.__v622OriginalActions = discoverOriginalActionsV622(side);
+
+    // Mantener cabecera/logo/usuario/salir si existen, borrar solo zona de menú.
+    const children = [...side.children];
+
+    // Detectar bloques que deben quedarse arriba: logo/título/email/salir.
+    const keep = [];
+    children.forEach(ch=>{
+      const t = normV622(ch.textContent);
+      const isMenuHeavy = ['dashboard','calendario','control diario','operaciones','clientes','informes','operario','tarifa','gps','finanza','document','vista operario','albaran','contrasena','produccion'].some(k=>t.includes(k));
+      const isLogoHeader = t.includes('marfan') || t.includes('admin@') || t.includes('salir') || ch.querySelector('img');
+      if(isLogoHeader && !isMenuHeavy) keep.push(ch);
     });
 
-    if(side.querySelector('.v621-menu-root')) return;
+    // Si no ha sabido separar, conservar los primeros elementos hasta antes de Dashboard.
+    if(!keep.length){
+      for(const ch of children){
+        const t = normV622(ch.textContent);
+        if(t.includes('dashboard')) break;
+        keep.push(ch);
+      }
+    }
 
-    const originalItems = itemListV621(side);
+    // Vaciar sidebar y reconstruir
+    side.innerHTML = '';
+    keep.forEach(ch=>side.appendChild(ch));
 
     const root = document.createElement('div');
-    root.className = 'v621-menu-root';
+    root.className = 'v622-menu-root';
 
-    const groups = {
-      'OPERATIVA': makeGroupV621('OPERATIVA'),
-      'GESTIÓN': makeGroupV621('GESTIÓN'),
-      'ADMINISTRACIÓN': makeGroupV621('ADMINISTRACIÓN'),
-      'SISTEMA': makeGroupV621('SISTEMA')
-    };
+    const groups = {};
+    ['OPERATIVA','GESTIÓN','ADMINISTRACIÓN','SISTEMA'].forEach(g=>{
+      const wrap = document.createElement('div');
+      wrap.className = 'v622-menu-group';
 
-    Object.values(groups).forEach(g=>root.appendChild(g.group));
+      const title = document.createElement('div');
+      title.className = 'v622-menu-title';
+      title.textContent = g;
 
-    const used = new Set();
+      const body = document.createElement('div');
+      body.className = 'v622-menu-body';
 
-    ORDER_V621.forEach(spec=>{
-      const found = matchItemV621(originalItems, spec);
-      if(found && !used.has(found)){
-        used.add(found);
-        groups[spec.group].body.appendChild(clickCloneV621(found, spec.label));
-      }
+      wrap.appendChild(title);
+      wrap.appendChild(body);
+      root.appendChild(wrap);
+      groups[g] = body;
     });
 
-    // Ocultar TODOS los items originales de menú para que no dupliquen ni mantengan Operaciones/Producción
-    originalItems.forEach(el=>{
-      el.style.display = 'none';
-      el.setAttribute('aria-hidden','true');
+    V622_MENU.forEach(spec=>{
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'v622-menu-btn';
+      btn.textContent = spec.label;
+      btn.dataset.label = spec.label;
+      btn.addEventListener('click', ev=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+        runActionV622(spec.label);
+      });
+      groups[spec.group].appendChild(btn);
     });
 
     side.appendChild(root);
+    side.dataset.v622Native = '1';
+
+    // Activar lo que toque según contenido
+    detectActiveV622();
+
+    return true;
   }
 
-  // Reintentos por si la app pinta sidebar después del login
-  setTimeout(applyV621, 300);
-  setTimeout(applyV621, 1000);
-  setTimeout(applyV621, 2200);
-  setInterval(applyV621, 3000);
+  function detectActiveV622(){
+    const content = document.getElementById('content') || document.querySelector('#main') || document.body;
+    const t = normV622(content.textContent);
+
+    if(t.includes('calendario')) return setActiveV622('Calendario de Eventos');
+    if(t.includes('albaran')) return setActiveV622('Albaranes Evento');
+    if(t.includes('control diario')) return setActiveV622('Control Diario');
+    if(t.includes('gps')) return setActiveV622('GPS Live');
+    if(t.includes('cliente')) return setActiveV622('Clientes');
+    if(t.includes('operario')) return setActiveV622('Operarios');
+    if(t.includes('document')) return setActiveV622('Documentación');
+    if(t.includes('tarifa')) return setActiveV622('Tarifas');
+    if(t.includes('finanza')) return setActiveV622('Finanzas Pro');
+    if(t.includes('informe')) return setActiveV622('Informes PDF');
+    if(t.includes('contrasena') || t.includes('password')) return setActiveV622('Contraseñas');
+    if(t.includes('ajuste') || t.includes('config')) return setActiveV622('Ajustes ERP');
+    if(t.includes('dashboard')) return setActiveV622('Dashboard');
+  }
+
+  function removeForbiddenTextV622(){
+    document.querySelectorAll('button,a,li,div').forEach(el=>{
+      const t = normV622(el.textContent);
+      if(REMOVE_TEXT.some(r=>t === normV622(r) || t.includes(normV622(r)))){
+        if(!el.closest('.v622-menu-root')){
+          el.remove();
+        }
+      }
+    });
+  }
+
+  function bootV622(){
+    const ok = buildNativeSidebarV622();
+    if(ok) removeForbiddenTextV622();
+    detectActiveV622();
+  }
+
+  // Reintentos controlados tras login/render
+  setTimeout(bootV622, 300);
+  setTimeout(bootV622, 900);
+  setTimeout(bootV622, 1800);
+  setTimeout(bootV622, 3500);
+
+  // Si la app re-renderiza el sidebar, se reconstruye una sola vez por nuevo nodo
+  if(!window.__v622Observer){
+    window.__v622Observer = true;
+    const obs = new MutationObserver(()=>{
+      const side = sidebarV622();
+      if(side && side.dataset.v622Native !== '1'){
+        setTimeout(bootV622, 50);
+      }
+    });
+    obs.observe(document.body, {childList:true, subtree:true});
+  }
+
+  setInterval(detectActiveV622, 2500);
 })();
