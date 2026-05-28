@@ -1,13 +1,22 @@
 
-# V60.2 Edit API Route Order Fix
+# V61 Stable Login + V46 Event Form
 
-Corrige:
-- Editar devolvía index.html en lugar de JSON.
-- Causa: endpoint definido después del fallback SPA.
+Base: V60.2.
 
-Solución:
-- Nuevos endpoints tempranos ANTES de express.static/fallback:
-  - GET /api/event-v602-edit?id=ID
-  - POST /api/event-v602-edit?id=ID
-- Frontend usa Accept: application/json.
-- Si vuelve HTML, muestra diagnóstico claro.
+Objetivos:
+- Login obligatorio: no entrar directo a la app sin sesión/token.
+- Crear evento y editar evento usan el mismo formulario tipo V46.
+- Link de Google Maps:
+  - campo para pegar link
+  - lectura de coordenadas @lat,lng o q=lat,lng
+- Geolocalización navegador.
+- Operarios:
+  - añadir operarios
+  - seleccionar rol
+  - turno D/N
+  - tarifa automática
+  - marcar jefe de equipo
+- Mantiene:
+  - Google Sync
+  - borrar evento
+  - bloqueo de eventos borrados para que no vuelvan al sincronizar

@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "60.2.0",
-  "description": "V60.2 Edit API Route Order Fix",
+  "version": "61.0.0",
+  "description": "V61 Stable Login + V46 Event Create/Edit Form",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

@@ -9077,3 +9077,326 @@ window.editEventV587 = openEditEventV60;
 window.editEventV593 = openEditEventV60;
 window.editCalendarEventV58 = openEditEventV60;
 window.editCalendarEventV576 = openEditEventV60;
+
+
+// ---------- V61 STABLE LOGIN + V46 EVENT FORM FRONTEND ----------
+window.__v61LoggedIn = false;
+
+function v61Esc(v){
+  if(typeof escV582 === 'function') return escV582(v);
+  if(typeof esc === 'function') return esc(v);
+  return String(v ?? '').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+}
+async function v61Fetch(path, opts={}){
+  const headers = {'Content-Type':'application/json','Accept':'application/json'};
+  try{
+    if(typeof token !== 'undefined' && token) headers.Authorization = 'Bearer '+token;
+    if(window.token) headers.Authorization = 'Bearer '+window.token;
+  }catch(e){}
+  const r = await fetch(new URL(path, window.location.origin).toString(), {
+    method:opts.method || 'GET',
+    headers:{...headers, ...(opts.headers||{})},
+    body:opts.body,
+    credentials:'same-origin',
+    cache:'no-store'
+  });
+  const text = await r.text();
+  if(text.trim().startsWith('<')) throw new Error('La API ha devuelto HTML. La versión V61 no está cargando las rutas API antes del fallback.');
+  let data = {};
+  try{ data = text ? JSON.parse(text) : {}; }catch(e){ data={ok:false,error:text}; }
+  if(!r.ok || data.ok === false) throw new Error(data.error || text || 'HTTP '+r.status);
+  return data;
+}
+
+// LOGIN: no entrar directo. No se fuerza dashboard si no hay token/sesión visual.
+function v61HasAuth(){
+  try{
+    if(typeof token !== 'undefined' && token) return true;
+    if(window.token) return true;
+    if(localStorage.getItem('token') || localStorage.getItem('authToken') || localStorage.getItem('marfan_token')) return true;
+    if(sessionStorage.getItem('token') || sessionStorage.getItem('authToken')) return true;
+  }catch(e){}
+  return window.__v61LoggedIn === true;
+}
+function v61LoginScreenVisible(){
+  const txt = (document.body.textContent || '').toLowerCase();
+  return !!document.querySelector('input[type="password"]') && (txt.includes('entrar') || txt.includes('usuario') || txt.includes('contraseña') || txt.includes('login'));
+}
+function v61MarkLoggedInIfAppVisible(){
+  const side = document.querySelector('.sidebar') || document.querySelector('aside') || document.querySelector('nav');
+  const content = document.getElementById('content') || document.querySelector('#main');
+  if(side && content){
+    const txt = (side.textContent||'').toLowerCase();
+    if(txt.includes('dashboard') || txt.includes('calendario') || txt.includes('operarios')){
+      window.__v61LoggedIn = true;
+    }
+  }
+}
+function v61SafeLoginGate(){
+  v61MarkLoggedInIfAppVisible();
+  if(v61HasAuth() || v61LoginScreenVisible()) return;
+  const txt = (document.body.textContent||'').toLowerCase();
+  if(txt.includes('dashboard') || txt.includes('calendario eventos') || txt.includes('finanzas') || txt.includes('operarios')){
+    try{
+      if(typeof logout === 'function') return logout();
+      if(typeof showLogin === 'function') return showLogin();
+      if(typeof renderLogin === 'function') return renderLogin();
+    }catch(e){}
+  }
+}
+document.addEventListener('submit', ev=>{
+  if(ev.target && ev.target.querySelector && ev.target.querySelector('input[type="password"]')){
+    window.__v61LoggedIn = true;
+  }
+}, true);
+document.addEventListener('click', ev=>{
+  const btn = ev.target.closest && ev.target.closest('button,input[type="submit"]');
+  if(!btn) return;
+  const form = btn.closest && btn.closest('form');
+  if(form && form.querySelector('input[type="password"]')) window.__v61LoggedIn = true;
+}, true);
+setTimeout(v61SafeLoginGate, 600);
+setInterval(v61SafeLoginGate, 2500);
+
+function v61ExtractGoogleMaps(){
+  const link = document.querySelector('#v61EventForm [name="google_maps_link"]')?.value || '';
+  const addressInput = document.querySelector('#v61EventForm [name="address"]');
+  const latInput = document.querySelector('#v61EventForm [name="lat"]');
+  const lngInput = document.querySelector('#v61EventForm [name="lng"]');
+  const geoInput = document.querySelector('#v61EventForm [name="geo_source"]');
+  const note = document.getElementById('v61GeoNote');
+  const text = decodeURIComponent(link);
+  let found = false;
+
+  let m = text.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  if(!m) m = text.match(/[?&]q=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  if(!m) m = text.match(/[?&]ll=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  if(m){
+    latInput.value = m[1];
+    lngInput.value = m[2];
+    geoInput.value = 'google_maps_link';
+    found = true;
+  }
+
+  let q = text.match(/[?&]q=([^&]+)/);
+  if(q && addressInput && !addressInput.value){
+    addressInput.value = q[1].replace(/\+/g,' ');
+    found = true;
+  }
+
+  if(note) note.innerHTML = found ? 'Datos extraídos del enlace Google Maps.' : 'No se detectaron coordenadas. Puedes pegar dirección o usar Detectar ubicación.';
+  v61TransportSuggest();
+}
+function v61DetectGeo(){
+  if(!navigator.geolocation){ alert('Este navegador no permite geolocalización.'); return; }
+  navigator.geolocation.getCurrentPosition(pos=>{
+    document.querySelector('#v61EventForm [name="lat"]').value = pos.coords.latitude.toFixed(6);
+    document.querySelector('#v61EventForm [name="lng"]').value = pos.coords.longitude.toFixed(6);
+    document.querySelector('#v61EventForm [name="geo_source"]').value = 'navigator.geolocation';
+    v61TransportSuggest();
+    if(typeof v534Toast === 'function') v534Toast('Ubicación detectada');
+  }, err=>alert('No se pudo detectar ubicación: '+err.message), {enableHighAccuracy:true,timeout:10000,maximumAge:60000});
+}
+function v61TransportSuggest(){
+  const address = document.querySelector('#v61EventForm [name="address"]')?.value || '';
+  const lat = document.querySelector('#v61EventForm [name="lat"]')?.value || '';
+  const lng = document.querySelector('#v61EventForm [name="lng"]')?.value || '';
+  const req = document.querySelector('#v61EventForm [name="transport_required"]');
+  const charge = document.querySelector('#v61EventForm [name="transport_charge"]');
+  const note = document.getElementById('v61TransportNote');
+  const t = address.toLowerCase();
+  const local = ['cartama','cártama','estacion de cartama','estación de cártama','malaga','málaga'].some(x=>t.includes(x));
+  if(!address && !lat && !lng){ if(note) note.innerHTML='Sin ubicación: revisar transporte manualmente.'; return; }
+  if(local){
+    if(req) req.value = 0;
+    if(charge && !Number(charge.value)) charge.value = 0;
+    if(note) note.innerHTML='Zona local detectada: sin cargo automático.';
+  }else{
+    if(req) req.value = 1;
+    if(charge && !Number(charge.value)) charge.value = 25;
+    if(note) note.innerHTML='Fuera de zona local: revisar cargo de transporte.';
+  }
+}
+function v61UserOptions(users, selected=''){
+  return users.map(u=>`<option value="${u.id}" ${String(selected)===String(u.id)?'selected':''}>${v61Esc((u.first_name||'')+' '+(u.last_name||''))}${u.nickname?' · '+v61Esc(u.nickname):''}</option>`).join('');
+}
+function v61RoleOptions(roles, selected=''){
+  return roles.map(r=>`<option value="${r.id}" data-day="${Number(r.hourly_rate||0)}" data-night="${Number(r.night_rate||0)}" data-name="${v61Esc(r.role||r.name||'')}" ${String(selected)===String(r.id)?'selected':''}>${v61Esc(r.role||r.name||'')}</option>`).join('');
+}
+function v61CalcAssignment(row){
+  const roleSel = row.querySelector('[name="role_id"]');
+  const shift = row.querySelector('[name="shift_type"]')?.value || 'D';
+  const opt = roleSel ? roleSel.options[roleSel.selectedIndex] : null;
+  const rate = opt ? (shift === 'N' ? Number(opt.dataset.night||0) : Number(opt.dataset.day||0)) : 0;
+  const rateInput = row.querySelector('[name="hourly_rate"]');
+  const roleName = row.querySelector('[name="service_role"]');
+  if(rateInput) rateInput.value = rate.toFixed(2);
+  if(roleName && opt) roleName.value = opt.dataset.name || opt.textContent;
+  row.classList.toggle('v61-teamlead', !!row.querySelector('[name="is_team_lead"]')?.checked);
+}
+function v61AddAssignment(users, roles, a={}){
+  const box = document.getElementById('v61Assignments');
+  if(!box) return;
+  const row = document.createElement('div');
+  row.className = 'v61-assignment';
+  row.innerHTML = `
+    <select class="field" name="user_id">${v61UserOptions(users, a.user_id)}</select>
+    <select class="field" name="role_id" onchange="v61CalcAssignment(this.closest('.v61-assignment'))">${v61RoleOptions(roles, a.role_id)}</select>
+    <select class="field" name="shift_type" onchange="v61CalcAssignment(this.closest('.v61-assignment'))"><option value="D" ${a.shift_type==='D'?'selected':''}>D</option><option value="N" ${a.shift_type==='N'?'selected':''}>N</option></select>
+    <input class="field" name="planned_start" type="time" value="${v61Esc(a.planned_start||'')}">
+    <input class="field" name="planned_end" type="time" value="${v61Esc(a.planned_end||'')}">
+    <input class="field" name="hourly_rate" readonly value="${v61Esc(a.hourly_rate||'')}">
+    <button type="button" class="danger" onclick="this.closest('.v61-assignment').remove()">Quitar</button>
+    <label style="grid-column:1/-1"><input type="checkbox" name="is_team_lead" ${Number(a.is_team_lead||0)===1?'checked':''} onchange="v61CalcAssignment(this.closest('.v61-assignment'))"> Jefe de equipo</label>
+    <input type="hidden" name="service_role" value="${v61Esc(a.service_role||'')}">
+  `;
+  box.appendChild(row);
+  v61CalcAssignment(row);
+}
+function v61CollectAssignments(){
+  return [...document.querySelectorAll('#v61Assignments .v61-assignment')].map(row=>({
+    user_id:Number(row.querySelector('[name="user_id"]').value || 0),
+    role_id:row.querySelector('[name="role_id"]').value || '',
+    service_role:row.querySelector('[name="service_role"]').value || '',
+    shift_type:row.querySelector('[name="shift_type"]').value || 'D',
+    planned_start:row.querySelector('[name="planned_start"]').value || '',
+    planned_end:row.querySelector('[name="planned_end"]').value || '',
+    hourly_rate:Number(row.querySelector('[name="hourly_rate"]').value || 0),
+    is_team_lead:row.querySelector('[name="is_team_lead"]').checked ? 1 : 0,
+    status:'asignado'
+  })).filter(x=>x.user_id);
+}
+async function openV61EventForm(id=0){
+  id = Number(id || 0);
+  let data;
+  try{ data = await v61Fetch('/api/v61/event-form-data' + (id ? '?id='+encodeURIComponent(id) : '')); }
+  catch(e){ alert('Error abriendo formulario de evento: '+e.message); return; }
+  const e = data.event || {};
+  const users = data.users || [];
+  const roles = data.roles || [];
+  const assignments = data.assignments || [];
+
+  const root = document.getElementById('modalRoot') || document.body;
+  root.innerHTML = `
+    <div class="modal-back">
+      <div class="modal v61-modal">
+        <div class="modal-head">
+          <div><h2>${id?'Editar evento':'Crear evento'} · Formulario V46</h2><p class="muted">Ubicación Google, operarios, jefe de equipo y producción</p></div>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+        <form id="v61EventForm">
+          <div class="v61-section"><h3>1. Datos del evento</h3><div class="v61-grid">
+            <input class="field span-6" name="name" value="${v61Esc(e.name||'')}" placeholder="Nombre del evento" required>
+            <input class="field span-3" name="event_code" value="${v61Esc(e.event_code||'')}" placeholder="Referencia">
+            <select class="field span-3" name="status">${['programado','confirmado','pendiente','realizado','cancelado'].map(s=>`<option value="${s}" ${String(e.status||'programado')===s?'selected':''}>${s}</option>`).join('')}</select>
+            <input class="field span-4" name="client" value="${v61Esc(e.client||'')}" placeholder="Cliente">
+            <input class="field span-4" name="legal_name" value="${v61Esc(e.legal_name||'')}" placeholder="Razón social">
+            <input class="field span-4" name="cif" value="${v61Esc(e.cif||'')}" placeholder="CIF/NIF">
+          </div></div>
+          <div class="v61-section"><h3>2. Contacto</h3><div class="v61-grid">
+            <input class="field span-4" name="contact_name" value="${v61Esc(e.contact_name||'')}" placeholder="Responsable">
+            <input class="field span-4" name="contact_phone" value="${v61Esc(e.contact_phone||'')}" placeholder="Teléfono">
+            <input class="field span-4" name="contact_email" value="${v61Esc(e.contact_email||'')}" placeholder="Email">
+          </div></div>
+          <div class="v61-section"><h3>3. Fecha, horarios y ubicación</h3><div class="v61-grid">
+            <input class="field span-3" name="event_date" type="date" value="${v61Esc(e.event_date||'')}" required>
+            <input class="field span-2" name="start_time" type="time" value="${v61Esc(e.start_time||'')}">
+            <input class="field span-2" name="end_time" type="time" value="${v61Esc(e.end_time||'')}">
+            <input class="field span-2" name="load_in_time" type="time" value="${v61Esc(e.load_in_time||'')}">
+            <input class="field span-3" name="load_out_time" type="time" value="${v61Esc(e.load_out_time||'')}">
+            <input class="field span-5" name="location" value="${v61Esc(e.location||'')}" placeholder="Recinto / ubicación">
+            <input class="field span-7" name="address" value="${v61Esc(e.address||'')}" placeholder="Dirección completa" oninput="v61TransportSuggest()">
+            <input class="field span-9" name="google_maps_link" value="${v61Esc(e.google_maps_link||'')}" placeholder="Pegar link de Google Maps">
+            <button type="button" class="v61-link span-3" onclick="v61ExtractGoogleMaps()">Leer link Google</button>
+            <input class="field span-6" name="access_notes" value="${v61Esc(e.access_notes||'')}" placeholder="Accesos / carga y descarga">
+            <input class="field span-6" name="parking_notes" value="${v61Esc(e.parking_notes||'')}" placeholder="Parking / vehículos">
+          </div></div>
+          <div class="v61-section"><h3>4. Geolocalización y transporte</h3><div class="v61-grid">
+            <input class="field span-3" name="lat" value="${v61Esc(e.lat||'')}" placeholder="Latitud">
+            <input class="field span-3" name="lng" value="${v61Esc(e.lng||'')}" placeholder="Longitud">
+            <input class="field span-3" name="geo_source" value="${v61Esc(e.geo_source||'')}" placeholder="Fuente">
+            <button type="button" class="v61-geo span-3" onclick="v61DetectGeo()">Detectar ubicación</button>
+            <select class="field span-3" name="transport_required"><option value="0" ${Number(e.transport_required||0)===0?'selected':''}>Sin cargo transporte</option><option value="1" ${Number(e.transport_required||0)===1?'selected':''}>Con cargo transporte</option></select>
+            <input class="field span-3" name="transport_charge" type="number" step="0.01" value="${v61Esc(e.transport_charge||0)}" placeholder="Cargo transporte €">
+            <div class="v61-warning span-3" id="v61GeoNote">Pega un link de Google Maps para leer coordenadas.</div>
+            <div class="v61-warning span-3" id="v61TransportNote">Revisión transporte pendiente.</div>
+          </div></div>
+          <div class="v61-section"><h3>5. Operarios y jefe de equipo</h3>
+            <div id="v61Assignments"></div>
+            <button type="button" class="v61-add" onclick="v61AddAssignment(window.__v61Users, window.__v61Roles)">+ Añadir operario</button>
+          </div>
+          <div class="v61-section"><h3>6. Producción</h3><div class="v61-grid">
+            <input class="field span-4" name="service_type" value="${v61Esc(e.service_type||'')}" placeholder="Tipo de servicio">
+            <input class="field span-4" name="required_workers" type="number" value="${v61Esc(e.required_workers||'')}" placeholder="Operarios necesarios">
+            <input class="field span-4" name="required_team_leads" type="number" value="${v61Esc(e.required_team_leads||'')}" placeholder="Jefes de equipo">
+            <input class="field span-6" name="material_notes" value="${v61Esc(e.material_notes||'')}" placeholder="Material / técnica">
+            <input class="field span-6" name="crew_notes" value="${v61Esc(e.crew_notes||'')}" placeholder="Notas para crew">
+            <textarea class="field span-12" name="production_notes" placeholder="Notas producción">${v61Esc(e.production_notes||'')}</textarea>
+          </div></div>
+          <div class="v61-section"><h3>7. Costes y notas</h3><div class="v61-grid">
+            <select class="field span-3" name="payment_status">${['pendiente','facturado','cobrado','impagado'].map(s=>`<option value="${s}" ${String(e.payment_status||'pendiente')===s?'selected':''}>${s}</option>`).join('')}</select>
+            <input class="field span-3" name="estimated_external_cost" type="number" step="0.01" value="${v61Esc(e.estimated_external_cost||0)}" placeholder="Coste externo">
+            <input class="field span-3" name="estimated_transport_cost" type="number" step="0.01" value="${v61Esc(e.estimated_transport_cost||0)}" placeholder="Transporte">
+            <input class="field span-3" name="estimated_other_cost" type="number" step="0.01" value="${v61Esc(e.estimated_other_cost||0)}" placeholder="Otros">
+            <textarea class="field span-12" name="notes" placeholder="Notas internas">${v61Esc(e.notes||'')}</textarea>
+          </div></div>
+          <div class="actions"><button class="v61-save" type="submit">Guardar evento</button><button type="button" class="secondary" onclick="closeWizard()">Cancelar</button></div>
+        </form>
+      </div>
+    </div>`;
+  window.__v61Users = users; window.__v61Roles = roles;
+  if(assignments.length) assignments.forEach(a=>v61AddAssignment(users, roles, a));
+  else v61AddAssignment(users, roles, {});
+  v61TransportSuggest();
+  document.getElementById('v61EventForm').onsubmit = async ev=>{
+    ev.preventDefault();
+    const event = Object.fromEntries(new FormData(ev.target));
+    try{
+      const saved = await v61Fetch('/api/v61/event-form-save' + (id ? '?id='+encodeURIComponent(id) : ''), {method:'POST', body:JSON.stringify({event, assignments:v61CollectAssignments()})});
+      if(typeof v534Toast === 'function') v534Toast(id?'Evento editado correctamente':'Evento creado correctamente');
+      try{ closeWizard(); }catch(e){ root.innerHTML=''; }
+      if(typeof showCalendarV582 === 'function') await showCalendarV582();
+      else if(typeof viewCalendar === 'function') await viewCalendar();
+    }catch(err){ alert('Error guardando evento: '+err.message); }
+  };
+}
+window.openV61EventForm = openV61EventForm;
+window.openCreateEventV559 = function(){ return openV61EventForm(0); };
+window.openCreateEventV566 = function(){ return openV61EventForm(0); };
+window.openCreateEventV563 = function(){ return openV61EventForm(0); };
+window.openEditEventV60 = openV61EventForm;
+window.editEventV582 = openV61EventForm;
+window.editEventV587 = openV61EventForm;
+window.editEventV593 = openV61EventForm;
+window.editCalendarEventV58 = openV61EventForm;
+window.editCalendarEventV576 = openV61EventForm;
+
+function patchV61EditCreateButtons(){
+  document.querySelectorAll('button').forEach(btn=>{
+    const txt=(btn.textContent||'').toLowerCase().trim();
+    if(txt === 'editar' || txt === 'editar evento'){
+      let id = null;
+      const old=btn.getAttribute('onclick')||'';
+      const m=old.match(/\((\d+)\)/);
+      if(m) id=Number(m[1]);
+      if(!id){
+        const row=btn.closest('[data-v582-event],[data-cal-event-id],[data-event-id],[data-edit-event-id-v60]');
+        if(row) id=Number(row.dataset.v582Event||row.dataset.calEventId||row.dataset.eventId||row.dataset.editEventIdV60||0);
+      }
+      if(id){ btn.removeAttribute('onclick'); btn.onclick=(ev)=>{ev.preventDefault();ev.stopPropagation();openV61EventForm(id);}; }
+    }
+    if(txt.includes('crear evento') || txt.includes('+ crear evento')){
+      btn.onclick=(ev)=>{ev.preventDefault();openV61EventForm(0);};
+    }
+  });
+}
+setInterval(patchV61EditCreateButtons, 800);
+const __showCalendarV582_v61 = typeof showCalendarV582 === 'function' ? showCalendarV582 : null;
+if(__showCalendarV582_v61){
+  showCalendarV582 = async function(){
+    await __showCalendarV582_v61();
+    setTimeout(patchV61EditCreateButtons,50);
+    setTimeout(patchV61EditCreateButtons,400);
+  };
+  window.viewCalendar = showCalendarV582;
+}
