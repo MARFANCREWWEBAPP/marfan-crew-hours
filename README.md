@@ -78,3 +78,12 @@ Al pulsar un evento:
 - elimina líneas de roles
 - elimina enlaces Google internos
 - refresca calendario
+
+
+# V57.7 Calendar Click Fix
+
+## Corrige
+- Eventos del calendario sin respuesta al click.
+- Añade delegación global de clicks.
+- Renderiza eventos con data-event-id.
+- Al pulsar evento abre subventana editar/borrar.

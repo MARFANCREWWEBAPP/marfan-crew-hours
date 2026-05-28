@@ -1291,3 +1291,15 @@ button.warn{background:#f59e0b;color:#111}
   .event-actions-grid-v576{grid-template-columns:1fr}
   .span-12,.span-9,.span-8,.span-6,.span-4,.span-3,.span-2{grid-column:span 1!important}
 }
+
+
+/* V57.7 Calendar Click Fix */
+.v55-event,
+.calendar-event-click-v577{
+  cursor:pointer!important;
+  pointer-events:auto!important;
+}
+.calendar-event-click-v577:hover{
+  transform:translateY(-1px);
+  filter:brightness(.95);
+}

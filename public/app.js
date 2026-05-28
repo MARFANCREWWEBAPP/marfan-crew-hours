@@ -6071,3 +6071,123 @@ async function deleteCalendarEventV576(id, name='Evento'){
 async function openEventDetail(id){
   return openCalendarEventActionsV576(id);
 }
+
+
+// ---------- V57.7 CALENDAR CLICK FIX ----------
+function v577SafeEventId(id){
+  return String(id || '').replace(/^g_/, '').replace(/[^0-9]/g,'');
+}
+
+// Convierte cualquier evento del calendario en clicable aunque el onclick anterior falle.
+function bindCalendarEventClicksV577(){
+  document.querySelectorAll('.v55-event').forEach(el=>{
+    if(el.dataset.v577Bound === '1') return;
+
+    let id = '';
+    const onclick = el.getAttribute('onclick') || '';
+    const m1 = onclick.match(/openEventDetail\((\d+)\)/);
+    const m2 = onclick.match(/openCalendarEventActionsV576\((\d+)\)/);
+    if(m1) id = m1[1];
+    if(m2) id = m2[1];
+
+    // Si no hay id en onclick, intenta leerlo desde atributos ya existentes.
+    if(!id && el.dataset.eventId) id = el.dataset.eventId;
+
+    if(id){
+      el.dataset.eventId = id;
+      el.classList.add('calendar-event-click-v577');
+      el.removeAttribute('onclick');
+      el.addEventListener('click', ev=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+        openCalendarEventActionsV576(Number(id));
+      });
+      el.dataset.v577Bound = '1';
+    }
+  });
+}
+
+// Override final de render mensual/semana/día para que el evento salga con data-event-id directo.
+function v577EventHtml(e){
+  const id = v577SafeEventId(e.id);
+  const cls = `v55-event calendar-event-click-v577 ${e.source==='google'?'google':'local'} ${e.status==='realizado'?'done':''} ${e.status==='cancelado'?'cancel':''}`;
+  if(!id){
+    return `<span class="${cls}" title="Evento Google no importado">${e.source==='google'?'🔵':'⚫'} ${esc(e.start_time||'')} ${esc(e.name||'Evento')}</span>`;
+  }
+  return `<span class="${cls}" data-event-id="${id}" onclick="openCalendarEventActionsV576(${id})">${e.source==='google'?'🔵':'⚫'} ${esc(e.start_time||'')} ${esc(e.name||'Evento')}</span>`;
+}
+
+function v55RenderMonthAuto(events){
+  const first = new Date(v55CalDate.getFullYear(), v55CalDate.getMonth(), 1);
+  const start = v55StartOfWeek(first);
+  const days = [];
+  for(let i=0;i<42;i++) days.push(v55AddDays(start,i));
+
+  return `<div class="v55-calendar-grid">
+    ${days.map(day=>{
+      const key = v55DateKey(day);
+      const evs = events.filter(e=>e.event_date===key);
+      const other = day.getMonth()!==v55CalDate.getMonth();
+      return `<div class="v55-day-card ${other?'other':''}">
+        <div class="v55-day-number">${day.getDate()}</div>
+        ${evs.map(v577EventHtml).join('')}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function v55RenderWeekAuto(events){
+  const start = v55StartOfWeek(v55CalDate);
+  const days = [0,1,2,3,4,5,6].map(i=>v55AddDays(start,i));
+
+  return `<div class="v55-week-grid">
+    ${days.map(day=>{
+      const key = v55DateKey(day);
+      const evs = events.filter(e=>e.event_date===key);
+      return `<div class="v55-day-card">
+        <div class="v55-day-number">${day.toLocaleDateString('es-ES',{weekday:'short',day:'numeric'})}</div>
+        ${evs.map(v577EventHtml).join('') || '<p class="muted">Sin eventos</p>'}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function v55RenderDayAuto(events){
+  const key = v55DateKey(v55CalDate);
+  const evs = events.filter(e=>e.event_date===key);
+
+  return `<div class="v55-day-view">
+    ${Array.from({length:24}).map((_,h)=>{
+      const hh = String(h).padStart(2,'0');
+      const hourEvents = evs.filter(e=>String(e.start_time||'').startsWith(hh+':'));
+      return `<div class="v55-hour">
+        <div class="v55-hour-time">${hh}:00</div>
+        <div class="v55-hour-events">${hourEvents.map(v577EventHtml).join('')}</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+// Delegación global: aunque el HTML sea re-renderizado, el click funcionará.
+if(!window.__v577CalendarDelegation){
+  window.__v577CalendarDelegation = true;
+  document.addEventListener('click', ev=>{
+    const el = ev.target.closest && ev.target.closest('.calendar-event-click-v577, .v55-event[data-event-id]');
+    if(!el) return;
+    const id = v577SafeEventId(el.dataset.eventId);
+    if(!id) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    openCalendarEventActionsV576(Number(id));
+  }, true);
+}
+
+// Reenganchar después de cada viewCalendar.
+const __viewCalendarV577 = typeof viewCalendar === 'function' ? viewCalendar : null;
+if(__viewCalendarV577){
+  viewCalendar = async function(){
+    await __viewCalendarV577();
+    setTimeout(bindCalendarEventClicksV577, 150);
+    setTimeout(bindCalendarEventClicksV577, 600);
+  };
+}
