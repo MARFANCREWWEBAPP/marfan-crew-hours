@@ -117,3 +117,13 @@ Al pulsar evento:
 - opción Borrar evento
 - confirmación antes de borrar
 - refresco calendario
+
+
+# V58.1 Calendar Visible Actions
+
+## Cambio
+Cada evento del calendario muestra botones visibles:
+- Editar
+- Borrar
+
+Además se añade una lista de acciones rápidas debajo del calendario.

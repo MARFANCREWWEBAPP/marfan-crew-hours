@@ -6680,3 +6680,162 @@ if(!window.__v58EventClickInstalled){
     openCalendarEventV58(id);
   }, true);
 }
+
+
+// ---------- V58.1 CALENDAR VISIBLE EDIT DELETE ACTIONS ----------
+function v581DateKey(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function v581StartOfWeek(d){
+  const x = new Date(d);
+  const day = (x.getDay()+6)%7;
+  x.setDate(x.getDate()-day);
+  return x;
+}
+function v581AddDays(d,n){
+  const x = new Date(d);
+  x.setDate(x.getDate()+n);
+  return x;
+}
+function v581EventCard(e){
+  const id = Number(e.id);
+  if(!id) return '';
+  const cls = `cal-card-v581 ${e.operational_status==='google_marfan'?'google':''}`;
+  return `
+    <div class="${cls}">
+      <div class="cal-title-v581">${esc(e.start_time||'')} ${esc(e.name||'Evento')}</div>
+      <div class="cal-actions-v581">
+        <button type="button" class="cal-edit-v581" onclick="event.stopPropagation(); editCalendarEventV58(${id})">Editar</button>
+        <button type="button" class="cal-delete-v581" onclick="event.stopPropagation(); deleteCalendarEventV58(${id}, '${esc((e.name||'Evento')).replace(/'/g, "\\'")}')">Borrar</button>
+      </div>
+    </div>`;
+}
+function v581RenderMonth(events){
+  const date = (typeof v55CalDate !== 'undefined' && v55CalDate) ? v55CalDate : new Date();
+  const first = new Date(date.getFullYear(), date.getMonth(), 1);
+  const start = v581StartOfWeek(first);
+  const days = [];
+  for(let i=0;i<42;i++) days.push(v581AddDays(start,i));
+  return `<div class="v55-calendar-grid">
+    ${days.map(day=>{
+      const key = v581DateKey(day);
+      const evs = events.filter(e=>e.event_date===key);
+      const other = day.getMonth()!==date.getMonth();
+      return `<div class="v55-day-card ${other?'other':''}">
+        <div class="v55-day-number">${day.getDate()}</div>
+        ${evs.map(v581EventCard).join('')}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+function v581RenderWeek(events){
+  const date = (typeof v55CalDate !== 'undefined' && v55CalDate) ? v55CalDate : new Date();
+  const start = v581StartOfWeek(date);
+  const days = [0,1,2,3,4,5,6].map(i=>v581AddDays(start,i));
+  return `<div class="v55-week-grid">
+    ${days.map(day=>{
+      const key = v581DateKey(day);
+      const evs = events.filter(e=>e.event_date===key);
+      return `<div class="v55-day-card">
+        <div class="v55-day-number">${day.toLocaleDateString('es-ES',{weekday:'short',day:'numeric'})}</div>
+        ${evs.map(v581EventCard).join('') || '<p class="muted">Sin eventos</p>'}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+function v581RenderDay(events){
+  const date = (typeof v55CalDate !== 'undefined' && v55CalDate) ? v55CalDate : new Date();
+  const key = v581DateKey(date);
+  const evs = events.filter(e=>e.event_date===key);
+  return `<div class="v55-day-view">
+    ${Array.from({length:24}).map((_,h)=>{
+      const hh = String(h).padStart(2,'0');
+      const hourEvents = evs.filter(e=>String(e.start_time||'').startsWith(hh+':'));
+      return `<div class="v55-hour">
+        <div class="v55-hour-time">${hh}:00</div>
+        <div class="v55-hour-events">${hourEvents.map(v581EventCard).join('')}</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+function v581Title(){
+  if(typeof v55CalendarTitle === 'function') return v55CalendarTitle();
+  const d = (typeof v55CalDate !== 'undefined' && v55CalDate) ? v55CalDate : new Date();
+  return d.toLocaleDateString('es-ES',{month:'long',year:'numeric'});
+}
+function v581EventsList(events){
+  const sorted = [...events].sort((a,b)=>String(a.event_date||'').localeCompare(String(b.event_date||'')) || String(a.start_time||'').localeCompare(String(b.start_time||'')));
+  return `
+    <div class="card">
+      <h3>Acciones rápidas de eventos</h3>
+      <p class="muted">Si el click del calendario falla, usa estos botones directos.</p>
+      <div class="event-list-v581">
+        ${sorted.map(e=>`
+          <div class="event-list-row-v581">
+            <div><b>${esc(e.event_date||'')}</b><br>${esc(e.start_time||'')} - ${esc(e.end_time||'')}</div>
+            <div><b>${esc(e.name||'Evento')}</b><br><span class="muted">${esc(e.client||'')} · ${esc(e.location||'')}</span></div>
+            <div>${e.operational_status==='google_marfan' ? '<span class="status-badge status-ok">Google</span>' : '<span class="status-badge">Local</span>'}</div>
+            <div class="cal-actions-v581">
+              <button class="cal-edit-v581" onclick="editCalendarEventV58(${Number(e.id)})">Editar</button>
+              <button class="cal-delete-v581" onclick="deleteCalendarEventV58(${Number(e.id)}, '${esc((e.name||'Evento')).replace(/'/g, "\\'")}')">Borrar</button>
+            </div>
+          </div>
+        `).join('') || '<p class="muted">No hay eventos.</p>'}
+      </div>
+    </div>`;
+}
+
+async function viewCalendar(){
+  const events = await api('/api/events').catch(()=>[]);
+  const googleStatus = await api('/api/google/status-v557').catch(()=>({connected:false}));
+  const view = (typeof v55CalView !== 'undefined' && v55CalView) ? v55CalView : 'month';
+
+  const body = view === 'week' ? v581RenderWeek(events) : view === 'day' ? v581RenderDay(events) : v581RenderMonth(events);
+
+  $('#content').innerHTML = `
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div>
+          <h3>Calendario eventos · MARFAN</h3>
+          <p class="v52-sub">V58.1: cada evento tiene botones visibles Editar/Borrar.</p>
+        </div>
+        <div class="v55-google-panel">
+          ${googleStatus.connected ? '<span class="status-badge status-ok">Google conectado</span>' : '<span class="status-badge status-warn">Google no conectado</span><button onclick="v559OpenGooglePopup()">Conectar Google</button>'}
+          <button class="force-sync-v574" onclick="forceGoogleSyncNoPatternV574()">FORZAR SINCRONIZACIÓN GOOGLE</button>
+          <button class="secondary" onclick="viewCalendar()">Actualizar vista</button>
+        </div>
+      </div>
+      <div class="google-sync-debug-v561 ok">Eventos cargados: ${events.length}. Acciones visibles V58.1.</div>
+    </div>
+
+    <div class="card">
+      <div class="v55-calendar-toolbar">
+        <div class="actions">
+          <button onclick="openCreateEventV559()">+ Crear evento</button>
+          <button class="secondary" onclick="v55MoveCalendar(-1)">← Anterior</button>
+          <button onclick="v55CalDate=new Date();viewCalendar()">Hoy</button>
+          <button class="secondary" onclick="v55MoveCalendar(1)">Siguiente →</button>
+        </div>
+        <h2 style="text-transform:capitalize">${v581Title()}</h2>
+        <div class="v55-view-tabs">
+          <button class="${view==='month'?'active':''}" onclick="v55SetView('month')">Mes</button>
+          <button class="${view==='week'?'active':''}" onclick="v55SetView('week')">Semana</button>
+          <button class="${view==='day'?'active':''}" onclick="v55SetView('day')">Día</button>
+        </div>
+      </div>
+      <br>
+      ${body}
+    </div>
+
+    ${v581EventsList(events)}
+  `;
+}
+
+if(typeof v55SetView === 'function' && !window.__v581SetViewPatched){
+  window.__v581SetViewPatched = true;
+  const old = v55SetView;
+  v55SetView = function(v){
+    try{ old(v); }catch(e){ if(typeof v55CalView !== 'undefined') v55CalView = v; }
+    setTimeout(viewCalendar, 50);
+  };
+}
