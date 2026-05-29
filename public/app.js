@@ -9867,3 +9867,108 @@ if(typeof openV612EventForm==='function' && !openV612EventForm.__v6217Wrapped){
 if(typeof viewCalendar==='function' && !viewCalendar.__v6217Wrapped){ const old=viewCalendar; viewCalendar=async function(){const r=await old.apply(this,arguments); setTimeout(v6217CalendarAutoSyncRestore,600); return r;}; viewCalendar.__v6217Wrapped=true; window.viewCalendar=viewCalendar; }
 if(typeof showCalendarV582==='function' && !showCalendarV582.__v6217Wrapped){ const old=showCalendarV582; showCalendarV582=async function(){const r=await old.apply(this,arguments); setTimeout(patchEventSaveV6217,300); return r;}; showCalendarV582.__v6217Wrapped=true; window.showCalendarV582=showCalendarV582; }
 setInterval(patchEventSaveV6217,1000);
+
+
+// ---------- V62.18 HEADER SYNC + CALENDAR DATA REAL FIX FRONTEND ----------
+function v6218TitleFromLabel(label){
+  const map = {
+    'Dashboard':'Dashboard',
+    'Calendario de Eventos':'Calendario de Eventos',
+    'Control Diario':'Control Diario',
+    'GPS Live':'GPS Live',
+    'Clientes':'Clientes',
+    'Operarios':'Operarios',
+    'Documentación':'Documentación',
+    'Tarifas':'Tarifas',
+    'Albaranes Evento':'Albaranes Evento',
+    'Finanzas Pro':'Finanzas Pro',
+    'Informes PDF':'Informes PDF',
+    'Vista Operario':'Vista Operario',
+    'Contraseñas':'Contraseñas',
+    'Ajustes ERP':'Ajustes ERP'
+  };
+  return map[label] || label || '';
+}
+function v6218SetPageTitle(label){
+  const title = v6218TitleFromLabel(label);
+  if(!title) return;
+  window.__v6218CurrentPageTitle = title;
+  const candidates = [...document.querySelectorAll('h1,h2,.page-title,.content-title,.main-title,.top-title,.header-title')];
+  const visible = candidates.find(el => el.offsetParent !== null && !el.closest('.modal,.modal-back,.sidebar,aside,nav'));
+  if(visible) visible.textContent = title;
+}
+document.addEventListener('click', ev=>{
+  const btn = ev.target.closest && ev.target.closest('.v624-menu-btn,.v623-menu-btn,.v622-menu-btn,.v621-menu-btn,.v620-menu-item,aside button,nav button,.sidebar button,aside a,nav a,.sidebar a');
+  if(!btn) return;
+  const t = (btn.textContent||'').trim();
+  if(t) setTimeout(()=>v6218SetPageTitle(t), 60);
+}, true);
+
+async function v6218Fetch(path, opts={}){
+  const headers={'Content-Type':'application/json','Accept':'application/json'};
+  try{ let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||''; if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;} }catch(e){}
+  const r=await fetch(new URL(path,window.location.origin).toString(),{method:opts.method||'GET',headers:{...headers,...(opts.headers||{})},body:opts.body,credentials:'include',cache:'no-store'});
+  const text=await r.text(); if(text.trim().startsWith('<')) throw new Error('La API ha devuelto HTML.');
+  let data={}; try{data=text?JSON.parse(text):{}}catch(e){data={ok:false,error:text}}
+  if(!r.ok||data.ok===false) throw new Error(data.error||text||'HTTP '+r.status); return data;
+}
+function v6218FillAssignments(assignments){
+  if(!assignments || !assignments.length || typeof v612AddAssignment !== 'function') return;
+  const box = document.getElementById('v612Assignments');
+  if(box) box.innerHTML = '';
+  const users = window.__v612Users || [];
+  const roles = window.__v612Roles || [];
+  assignments.forEach(a => v612AddAssignment(users, roles, a));
+}
+async function v6218OpenEventPreload(id){
+  if(!id) return null;
+  try{ return await v6218Fetch('/api/v6218/event-open-real/'+Number(id)); }catch(e){ return null; }
+}
+function patchEventSaveV6218(){
+  const form=document.getElementById('v612EventForm')||document.getElementById('v61EventForm')||document.getElementById('v60EditForm');
+  if(!form || form.__v6218Patched) return;
+  form.__v6218Patched=true;
+  const id=Number(window.__lastEditingEventIdV6218||window.__lastEditingEventIdV6217||window.__lastEditingEventIdV6215||window.__lastEditingEventIdV6213||0);
+  form.onsubmit=async ev=>{
+    ev.preventDefault();
+    const event=Object.fromEntries(new FormData(ev.target));
+    const assignments=typeof v612CollectAssignments==='function'?v612CollectAssignments():[];
+    const possibleId=Number(event.id||event.event_id||id||0);
+    try{
+      await v6218Fetch('/api/v6218/event-save-real'+(possibleId?'?id='+encodeURIComponent(possibleId):''),{method:'POST',body:JSON.stringify({event,assignments})});
+      if(typeof v534Toast==='function') v534Toast('Evento guardado con localización, operarios y roles');
+      try{closeWizard()}catch(e){const root=document.getElementById('modalRoot'); if(root) root.innerHTML='';}
+      if(typeof showCalendarV582==='function') await showCalendarV582(); else if(typeof viewCalendar==='function') await viewCalendar();
+    }catch(err){ alert('Error guardando evento: '+err.message); }
+  };
+}
+if(typeof openV612EventForm==='function' && !openV612EventForm.__v6218Wrapped){
+  const oldOpenV6218 = openV612EventForm;
+  openV612EventForm = async function(id=0){
+    window.__lastEditingEventIdV6218=Number(id||0);
+    const preload = Number(id) ? await v6218OpenEventPreload(id) : null;
+    const r = await oldOpenV6218.apply(this, arguments);
+    setTimeout(()=>{
+      if(preload && preload.assignments) v6218FillAssignments(preload.assignments);
+      patchEventSaveV6218();
+    }, 300);
+    setTimeout(patchEventSaveV6218, 700);
+    return r;
+  };
+  openV612EventForm.__v6218Wrapped=true;
+  window.openV612EventForm=openV612EventForm; window.openEditEventV60=openV612EventForm; window.editEventV582=openV612EventForm; window.editEventV587=openV612EventForm; window.editEventV593=openV612EventForm; window.editCalendarEventV58=openV612EventForm; window.editCalendarEventV576=openV612EventForm;
+}
+async function v6218CalendarRestore(){
+  try{ const r=await v6218Fetch('/api/v6218/calendar-restore-now',{method:'POST'}); if(typeof v534Toast==='function') v534Toast('Datos calendario restaurados: '+(r.restored||0)); }catch(e){ console.warn(e.message); }
+}
+if(typeof viewCalendar==='function' && !viewCalendar.__v6218Wrapped){
+  const oldVC=viewCalendar;
+  viewCalendar=async function(){ const r=await oldVC.apply(this,arguments); v6218SetPageTitle('Calendario de Eventos'); setTimeout(v6218CalendarRestore,400); return r; };
+  viewCalendar.__v6218Wrapped=true; window.viewCalendar=viewCalendar;
+}
+if(typeof showCalendarV582==='function' && !showCalendarV582.__v6218Wrapped){
+  const oldSC=showCalendarV582;
+  showCalendarV582=async function(){ const r=await oldSC.apply(this,arguments); setTimeout(patchEventSaveV6218,300); return r; };
+  showCalendarV582.__v6218Wrapped=true; window.showCalendarV582=showCalendarV582;
+}
+setInterval(patchEventSaveV6218,1000);

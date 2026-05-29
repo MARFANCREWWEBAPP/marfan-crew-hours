@@ -1,3 +1,3 @@
-# V62.17 Calendar Auto Sync + Full Event Data Persistence
+# V62.18 Calendar Data Real Fix + Header Sync
 
-Auto-sync al entrar en calendario y persistencia completa por clave estable para localización, operarios, roles y notas.
+Corrige título de página al cambiar menú y guarda/rellena snapshot real de eventos con localización, operarios y roles.

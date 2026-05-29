@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.17.0",
-  "description": "V62.17 Calendar Auto Sync Event Data Persistence",
+  "version": "62.18.0",
+  "description": "V62.18 Calendar Data Real Fix Header Sync",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
