@@ -1,11 +1,16 @@
-# V62.14 Operator Photo Docs Team Lead
 
-Añade:
-- Fotografía en edición de operario.
-- Documentos personales directamente desde edición.
-- Listado/ver/borrar documentos.
-- Casilla Jefe de equipo.
-- Archivos persistentes en /data/uploads/operators.
+# V62.15 Photo Icon + Event Persistence Hard Fix
 
-En creación:
-- Añade casilla jefe de equipo y aviso para subir foto/docs tras guardar.
+Corrige:
+- Al subir foto en edición de operario, ahora actualiza el avatar/icono automáticamente.
+- Al editar evento, los datos extra se guardan doble:
+  - tabla events
+  - tabla event_extra_data
+- Al abrir evento, restaura datos extra persistentes.
+- Evita pérdida de localización, operarios, notas y datos extendidos tras actualización o resincronización.
+
+No toca:
+- Clientes
+- Operarios importados
+- Google Sync existente
+- Login

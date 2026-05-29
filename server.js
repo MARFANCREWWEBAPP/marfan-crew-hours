@@ -606,7 +606,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version:'62.14.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version:'62.15.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -2557,6 +2557,153 @@ app.delete('/api/v6214/operator-documents/:docId', requireAdmin, (req,res)=>{
     db.prepare('DELETE FROM operator_documents WHERE id=?').run(docId);
     res.json({ok:true});
   }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+
+
+// ---------- V62.15 PHOTO ICON + EVENT PERSISTENCE HARD FIX ----------
+function v6215EnsureHardPersistence(){
+  try{
+    db.exec(`CREATE TABLE IF NOT EXISTS event_extra_data (
+      event_id INTEGER PRIMARY KEY,
+      payload_json TEXT DEFAULT '{}',
+      assignments_json TEXT DEFAULT '[]',
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );`);
+  }catch(e){}
+
+  try{
+    if(typeof v6214EnsureOperatorColumns === 'function') v6214EnsureOperatorColumns();
+  }catch(e){}
+
+  try{
+    const cols = db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
+    const add = (name,type)=>{
+      if(!cols.includes(name)){
+        try{ db.prepare(`ALTER TABLE events ADD COLUMN "${name}" ${type}`).run(); }catch(e){}
+      }
+    };
+    add('google_maps_link','TEXT DEFAULT ""');
+    add('address','TEXT DEFAULT ""');
+    add('lat','TEXT DEFAULT ""');
+    add('lng','TEXT DEFAULT ""');
+    add('geo_source','TEXT DEFAULT ""');
+    add('transport_required','INTEGER DEFAULT 0');
+    add('transport_charge','REAL DEFAULT 0');
+    add('access_notes','TEXT DEFAULT ""');
+    add('parking_notes','TEXT DEFAULT ""');
+    add('load_in_time','TEXT DEFAULT ""');
+    add('load_out_time','TEXT DEFAULT ""');
+    add('production_notes','TEXT DEFAULT ""');
+    add('crew_notes','TEXT DEFAULT ""');
+    add('material_notes','TEXT DEFAULT ""');
+  }catch(e){}
+}
+
+function v6215PersistEventExtra(eventId, event, assignments){
+  v6215EnsureHardPersistence();
+  const payload = JSON.stringify(event || {});
+  const ass = JSON.stringify(assignments || []);
+  db.prepare(`
+    INSERT INTO event_extra_data (event_id, payload_json, assignments_json, updated_at)
+    VALUES (?,?,?,CURRENT_TIMESTAMP)
+    ON CONFLICT(event_id) DO UPDATE SET
+      payload_json=excluded.payload_json,
+      assignments_json=excluded.assignments_json,
+      updated_at=CURRENT_TIMESTAMP
+  `).run(eventId, payload, ass);
+}
+
+function v6215RestoreEventExtra(eventId){
+  v6215EnsureHardPersistence();
+  const extra = db.prepare('SELECT * FROM event_extra_data WHERE event_id=?').get(eventId);
+  if(!extra) return null;
+
+  let payload = {};
+  let assignments = [];
+  try{ payload = JSON.parse(extra.payload_json || '{}'); }catch(e){}
+  try{ assignments = JSON.parse(extra.assignments_json || '[]'); }catch(e){}
+
+  const cols = db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
+  const keys = Object.keys(payload || {}).filter(k=>cols.includes(k));
+  if(keys.length){
+    try{
+      db.prepare(`UPDATE events SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>payload[k]), eventId);
+    }catch(e){}
+  }
+
+  if(assignments && assignments.length && typeof v612SaveAssignments === 'function'){
+    try{ v612SaveAssignments(eventId, assignments); }catch(e){}
+  }
+
+  return {payload, assignments};
+}
+
+app.get('/api/v6215/operators/:id/photo-status', requireAdmin, (req,res)=>{
+  try{
+    const id = Number(req.params.id);
+    const u = db.prepare('SELECT id, first_name,last_name,nickname,photo_url,photo_path FROM users WHERE id=?').get(id);
+    if(!u) return res.status(404).json({ok:false,error:'Operario no encontrado'});
+    res.json({ok:true, operator:u});
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+app.get('/api/v6215/event-extra/:id', requireAdmin, (req,res)=>{
+  try{
+    const id = Number(req.params.id);
+    const restored = v6215RestoreEventExtra(id);
+    const event = db.prepare('SELECT * FROM events WHERE id=?').get(id);
+    res.json({ok:true,event,extra:restored});
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+app.post('/api/v6215/event-form-save-hard', async (req,res)=>{
+  try{
+    if(typeof v6213AdminSoft === 'function' && !v6213AdminSoft(req)) return res.status(403).json({ok:false,error:'Solo administrador'});
+
+    v6215EnsureHardPersistence();
+
+    const id = Number(req.query.id || 0);
+    const body = req.body || {};
+    const eventPayload = (typeof v6213CleanEventPayload === 'function')
+      ? v6213CleanEventPayload(body.event || body)
+      : (body.event || body);
+    const assignments = body.assignments || [];
+
+    const cols = db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
+    const keys = Object.keys(eventPayload).filter(k=>cols.includes(k));
+
+    let eventId = id;
+    if(eventId){
+      const exists = db.prepare('SELECT id FROM events WHERE id=?').get(eventId);
+      if(!exists) return res.status(404).json({ok:false,error:'Evento no encontrado'});
+      if(keys.length){
+        db.prepare(`UPDATE events SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>eventPayload[k]), eventId);
+      }
+    }else{
+      const info = db.prepare(`INSERT INTO events (${keys.map(k=>`"${k}"`).join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>eventPayload[k]));
+      eventId = info.lastInsertRowid;
+    }
+
+    if(typeof v612SaveAssignments === 'function'){
+      try{ v612SaveAssignments(eventId, assignments); }catch(e){ console.error('[V62.15] assignments save', e.message); }
+    }
+
+    // Guardado doble persistente para que no lo pierda una actualización/sync.
+    v6215PersistEventExtra(eventId, eventPayload, assignments);
+
+    let google = {ok:false, skipped:true, reason:'Google push no disponible'};
+    if(typeof v614PushEventToGoogle === 'function'){
+      try{ google = await v614PushEventToGoogle(eventId); }catch(e){ google = {ok:false,error:e.message}; }
+    }
+
+    res.json({ok:true,event_id:eventId,updated:!!id,google});
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
 });
 
 app.use(express.static(path.join(__dirname, 'public')));

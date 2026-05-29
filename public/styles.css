@@ -2100,3 +2100,17 @@ nav a.active:not(.v626-active),
 .v6214-doc-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
 .v6214-doc-item{display:flex;justify-content:space-between;gap:12px;align-items:center;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px}
 .v6214-teamlead{background:#fffbeb;border:1px solid #fbbf24;color:#92400e;border-radius:14px;padding:12px;font-weight:900}
+
+
+/* ---------- V62.15 PHOTO ICON + EVENT PERSISTENCE HARD FIX ---------- */
+.v6215-operator-avatar{
+  width:38px!important;
+  height:38px!important;
+  border-radius:999px!important;
+  object-fit:cover!important;
+  border:2px solid rgba(255,255,255,.8)!important;
+  background:#e5e7eb!important;
+  display:inline-block!important;
+  vertical-align:middle!important;
+  margin-right:8px!important;
+}

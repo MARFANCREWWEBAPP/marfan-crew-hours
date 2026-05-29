@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.14.0",
-  "description": "V62.14 Operator Photo Docs Team Lead",
+  "version": "62.15.0",
+  "description": "V62.15 Photo Icon + Event Persistence Hard Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

@@ -9662,3 +9662,145 @@ function patchCreateOperatorPhotoDocsV6214(){
   if(actions) form.insertBefore(block, actions); else form.appendChild(block);
 }
 setInterval(patchCreateOperatorPhotoDocsV6214, 1500);
+
+
+// ---------- V62.15 PHOTO ICON + EVENT PERSISTENCE HARD FIX FRONTEND ----------
+function v6215OperatorRowMatches(row, id){
+  if(!row) return false;
+  const html = row.innerHTML || '';
+  const text = row.textContent || '';
+  if(String(html).includes('data-user-id="'+id+'"') || String(html).includes("data-user-id='"+id+"'")) return true;
+  if(String(html).includes('/operators/'+id) || String(html).includes('/users/'+id)) return true;
+  return false;
+}
+
+async function v6215RefreshOperatorPhotoIcon(id, photoUrl){
+  if(!id || !photoUrl) return;
+
+  // Actualiza preview dentro del modal.
+  const preview = document.getElementById('operatorPhotoPreviewV6214');
+  if(preview) preview.src = photoUrl + '?v=' + Date.now();
+
+  // Actualiza filas/listados visibles.
+  const rows = [...document.querySelectorAll('tr,.card,.operator-card,.user-card,[data-user-id],[data-operator-id]')];
+  rows.forEach(row=>{
+    const dataId = row.dataset && (row.dataset.userId || row.dataset.operatorId);
+    const match = String(dataId||'') === String(id) || v6215OperatorRowMatches(row, id);
+    if(!match) return;
+
+    let img = row.querySelector('img.v6215-operator-avatar,img.operator-avatar,img.user-avatar');
+    if(!img){
+      img = document.createElement('img');
+      img.className = 'v6215-operator-avatar';
+      const firstCell = row.querySelector('td,div') || row;
+      firstCell.prepend(img);
+    }
+    img.src = photoUrl + '?v=' + Date.now();
+  });
+}
+
+// Sobrescribir subida de foto para actualizar icono automáticamente.
+const __v6214UploadOperatorPhoto_old_v6215 = typeof v6214UploadOperatorPhoto === 'function' ? v6214UploadOperatorPhoto : null;
+if(__v6214UploadOperatorPhoto_old_v6215){
+  v6214UploadOperatorPhoto = async function(id){
+    const result = await __v6214UploadOperatorPhoto_old_v6215(id);
+    if(result && result.photo_url){
+      await v6215RefreshOperatorPhotoIcon(id, result.photo_url);
+    }
+    return result;
+  };
+  window.v6214UploadOperatorPhoto = v6214UploadOperatorPhoto;
+}
+
+async function v6215Fetch(path, opts={}){
+  const headers = {'Content-Type':'application/json','Accept':'application/json'};
+  try{
+    const keys = ['token','authToken','marfan_token','adminToken','jwt'];
+    let t = '';
+    if(typeof token !== 'undefined' && token) t = token;
+    if(window.token) t = window.token;
+    for(const k of keys){
+      if(!t && localStorage.getItem(k)) t = localStorage.getItem(k);
+      if(!t && sessionStorage.getItem(k)) t = sessionStorage.getItem(k);
+    }
+    if(t){
+      headers.Authorization = 'Bearer ' + t;
+      headers['X-Admin-Token'] = t;
+      headers['X-Auth-Token'] = t;
+    }
+  }catch(e){}
+  const r = await fetch(new URL(path, window.location.origin).toString(), {
+    method:opts.method || 'GET',
+    headers:{...headers, ...(opts.headers||{})},
+    body:opts.body,
+    credentials:'include',
+    cache:'no-store'
+  });
+  const text = await r.text();
+  if(text.trim().startsWith('<')) throw new Error('La API ha devuelto HTML.');
+  let data = {};
+  try{ data = text ? JSON.parse(text) : {}; }catch(e){ data={ok:false,error:text}; }
+  if(!r.ok || data.ok === false) throw new Error(data.error || text || 'HTTP '+r.status);
+  return data;
+}
+
+// Guardado hard de evento: guarda en events + event_extra_data + Google.
+function patchEventSaveV6215(){
+  const form = document.getElementById('v612EventForm') || document.getElementById('v61EventForm') || document.getElementById('v60EditForm');
+  if(!form || form.__v6215Patched) return;
+  form.__v6215Patched = true;
+
+  let id = Number(window.__lastEditingEventIdV6213 || window.__lastEditingEventIdV6215 || 0);
+
+  form.onsubmit = async ev=>{
+    ev.preventDefault();
+    const event = Object.fromEntries(new FormData(ev.target));
+    const assignments = typeof v612CollectAssignments === 'function' ? v612CollectAssignments() : [];
+
+    const possibleId = Number(event.id || event.event_id || id || window.__lastEditingEventIdV6213 || window.__lastEditingEventIdV6215 || 0);
+    const qs = possibleId ? '?id=' + encodeURIComponent(possibleId) : '';
+
+    try{
+      const saved = await v6215Fetch('/api/v6215/event-form-save-hard' + qs, {
+        method:'POST',
+        body:JSON.stringify({event, assignments})
+      });
+
+      if(typeof v534Toast === 'function'){
+        v534Toast(saved.google && saved.google.ok ? 'Evento guardado, persistido y sincronizado' : 'Evento guardado y persistido');
+      }
+
+      try{ closeWizard(); }catch(e){ const root=document.getElementById('modalRoot'); if(root) root.innerHTML=''; }
+      if(typeof showCalendarV582 === 'function') await showCalendarV582();
+      else if(typeof viewCalendar === 'function') await viewCalendar();
+    }catch(err){
+      alert('Error guardando evento: ' + err.message);
+    }
+  };
+}
+
+// Captura ID de evento y restaura extra al abrir.
+if(typeof openV612EventForm === 'function' && !openV612EventForm.__v6215Wrapped){
+  const oldOpenV612V6215 = openV612EventForm;
+  openV612EventForm = async function(id=0){
+    window.__lastEditingEventIdV6215 = Number(id || 0);
+    if(Number(id)){
+      try{ await v6215Fetch('/api/v6215/event-extra/'+Number(id)); }catch(e){}
+    }
+    const r = await oldOpenV612V6215.apply(this, arguments);
+    setTimeout(patchEventSaveV6215, 100);
+    setTimeout(patchEventSaveV6215, 500);
+    return r;
+  };
+  openV612EventForm.__v6215Wrapped = true;
+
+  window.openV612EventForm = openV612EventForm;
+  window.openEditEventV60 = openV612EventForm;
+  window.editEventV582 = openV612EventForm;
+  window.editEventV587 = openV612EventForm;
+  window.editEventV593 = openV612EventForm;
+  window.editCalendarEventV58 = openV612EventForm;
+  window.editCalendarEventV576 = openV612EventForm;
+}
+
+setInterval(patchEventSaveV6215, 1000);
