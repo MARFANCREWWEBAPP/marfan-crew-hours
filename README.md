@@ -1,31 +1,33 @@
 
-# V62.9 Real Clients Import
+# V62.10 Operator Edit Button
 
-Base: V62.8.
+Base: V62.9.
 
-Hace:
-- Borra clientes demo.
-- Importa 109 clientes reales desde CLIENTES_MARCREW_2026.xlsx.
-- Guarda:
-  - Cliente
-  - Razón social
-  - Persona contacto
-  - Dirección
-  - Provincia
-  - CIF
-  - Mail
+Añade:
+- Botón Editar en acciones de cada operario.
+- Modal nueva ventana "Editar operario".
+- Edición de:
+  - Nombre
+  - Apellidos
+  - Apodo/mote
+  - DNI/NIE
   - Teléfono
-  - Observaciones
-- Upsert por CIF, email o nombre.
-- No duplica si vuelves a desplegar.
+  - Email
+  - Dirección
+  - Banco
+  - IBAN
+  - Nº Seguridad Social
+  - Rol de operario
+  - EPIs / PRL
+  - Tallas
+  - Contacto emergencia
+  - Notas internas
+- Guardado real en users.
+- Usa DB persistente.
 
-Endpoints:
-- POST /api/v629/import-real-clients
-- GET /api/v629/real-clients-preview
-
-Mantiene:
-- Operarios reales V62.8
-- Persistencia V62.7
+No toca:
 - Calendario
 - Google Sync
-- Formularios V46
+- Eventos
+- Clientes importados
+- Operarios importados

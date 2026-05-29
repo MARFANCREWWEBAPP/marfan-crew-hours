@@ -606,7 +606,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version:'62.9.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version:'62.10.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -2016,6 +2016,110 @@ app.get('/api/v629/real-clients-preview', requireAdmin, (req,res)=>{
       ORDER BY name COLLATE NOCASE
     `).all();
     res.json({ok:true,total:rows.length,rows});
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+
+// ---------- V62.10 OPERATOR EDIT BUTTON API ----------
+function v6210EnsureOperatorEditColumns(){
+  function addUserCol(name, type){
+    try{
+      const cols = db.prepare('PRAGMA table_info(users)').all().map(c=>c.name);
+      if(!cols.includes(name)) db.prepare(`ALTER TABLE users ADD COLUMN "${name}" ${type}`).run();
+    }catch(e){}
+  }
+  addUserCol('nickname', 'TEXT DEFAULT ""');
+  addUserCol('dni', 'TEXT DEFAULT ""');
+  addUserCol('iban', 'TEXT DEFAULT ""');
+  addUserCol('bank_iban', 'TEXT DEFAULT ""');
+  addUserCol('bank_name', 'TEXT DEFAULT ""');
+  addUserCol('social_security_number', 'TEXT DEFAULT ""');
+  addUserCol('full_address', 'TEXT DEFAULT ""');
+  addUserCol('address', 'TEXT DEFAULT ""');
+  addUserCol('operator_role_name', 'TEXT DEFAULT ""');
+  addUserCol('operator_role_id', 'INTEGER DEFAULT NULL');
+  addUserCol('shirt_size', 'TEXT DEFAULT ""');
+  addUserCol('pants_size', 'TEXT DEFAULT ""');
+  addUserCol('shoe_size', 'TEXT DEFAULT ""');
+  addUserCol('epis_delivered', 'INTEGER DEFAULT 0');
+  addUserCol('has_prl', 'INTEGER DEFAULT 0');
+  addUserCol('emergency_contact_name', 'TEXT DEFAULT ""');
+  addUserCol('emergency_contact_phone', 'TEXT DEFAULT ""');
+  addUserCol('internal_notes', 'TEXT DEFAULT ""');
+  addUserCol('notes', 'TEXT DEFAULT ""');
+  addUserCol('active', 'INTEGER DEFAULT 1');
+}
+
+app.get('/api/v6210/operators/:id/edit', requireAdmin, (req,res)=>{
+  try{
+    v6210EnsureOperatorEditColumns();
+    const id = Number(req.params.id);
+    if(!id) return res.status(400).json({ok:false,error:'ID de operario inválido'});
+
+    const operator = db.prepare('SELECT * FROM users WHERE id=?').get(id);
+    if(!operator) return res.status(404).json({ok:false,error:'Operario no encontrado'});
+
+    let roles = [];
+    try{
+      roles = db.prepare(`SELECT * FROM rates WHERE COALESCE(active,1)!=0 ORDER BY role COLLATE NOCASE`).all();
+    }catch(e){
+      try{ roles = db.prepare(`SELECT * FROM operator_roles ORDER BY role COLLATE NOCASE`).all(); }catch(_e){}
+    }
+
+    res.setHeader('Content-Type','application/json; charset=utf-8');
+    res.json({ok:true, operator, roles});
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+app.post('/api/v6210/operators/:id/edit', requireAdmin, (req,res)=>{
+  try{
+    v6210EnsureOperatorEditColumns();
+    const id = Number(req.params.id);
+    if(!id) return res.status(400).json({ok:false,error:'ID de operario inválido'});
+
+    const exists = db.prepare('SELECT * FROM users WHERE id=?').get(id);
+    if(!exists) return res.status(404).json({ok:false,error:'Operario no encontrado'});
+
+    const b = req.body || {};
+    const cols = db.prepare('PRAGMA table_info(users)').all().map(c=>c.name);
+
+    const payload = {
+      first_name: b.first_name || '',
+      last_name: b.last_name || '',
+      nickname: b.nickname || '',
+      dni: b.dni || '',
+      phone: b.phone || '',
+      email: b.email || '',
+      full_address: b.full_address || b.address || '',
+      address: b.full_address || b.address || '',
+      bank_name: b.bank_name || '',
+      iban: b.iban || '',
+      bank_iban: b.iban || b.bank_iban || '',
+      social_security_number: b.social_security_number || '',
+      operator_role_name: b.operator_role_name || '',
+      operator_role_id: b.operator_role_id ? Number(b.operator_role_id) : null,
+      shirt_size: b.shirt_size || '',
+      pants_size: b.pants_size || '',
+      shoe_size: b.shoe_size || '',
+      epis_delivered: Number(b.epis_delivered || 0),
+      has_prl: Number(b.has_prl || 0),
+      emergency_contact_name: b.emergency_contact_name || '',
+      emergency_contact_phone: b.emergency_contact_phone || '',
+      internal_notes: b.internal_notes || '',
+      notes: b.internal_notes || b.notes || '',
+      active: Number(b.active ?? 1)
+    };
+
+    const keys = Object.keys(payload).filter(k=>cols.includes(k));
+    if(keys.length){
+      db.prepare(`UPDATE users SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>payload[k]), id);
+    }
+
+    res.json({ok:true, id, updated:keys.length});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }

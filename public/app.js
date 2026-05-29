@@ -8835,3 +8835,266 @@ async function importRealClientsV629(){
     alert('Error importando clientes reales: ' + e.message);
   }
 }
+
+
+// ---------- V62.10 OPERATOR EDIT BUTTON FRONTEND ----------
+function v6210Esc(v){
+  if(typeof escV582 === 'function') return escV582(v);
+  if(typeof esc === 'function') return esc(v);
+  return String(v ?? '').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+}
+
+async function v6210Fetch(path, opts={}){
+  const headers = {'Content-Type':'application/json','Accept':'application/json'};
+  try{
+    if(typeof token !== 'undefined' && token) headers.Authorization = 'Bearer '+token;
+    if(window.token) headers.Authorization = 'Bearer '+window.token;
+  }catch(e){}
+  const r = await fetch(new URL(path, window.location.origin).toString(), {
+    method:opts.method || 'GET',
+    headers:{...headers, ...(opts.headers||{})},
+    body:opts.body,
+    credentials:'same-origin',
+    cache:'no-store'
+  });
+  const text = await r.text();
+  if(text.trim().startsWith('<')) throw new Error('La API ha devuelto HTML. No está entrando en la ruta de edición de operario.');
+  let data = {};
+  try{ data = text ? JSON.parse(text) : {}; }catch(e){ data={ok:false,error:text}; }
+  if(!r.ok || data.ok === false) throw new Error(data.error || text || 'HTTP '+r.status);
+  return data;
+}
+
+function v6210RoleOptions(roles, selectedId, selectedName){
+  const opts = ['<option value="">Sin rol fijo</option>'];
+  roles.forEach(r=>{
+    const id = r.id;
+    const name = r.role || r.name || r.title || '';
+    const selected = String(selectedId||'') === String(id) || (!selectedId && selectedName && String(selectedName).toLowerCase() === String(name).toLowerCase());
+    opts.push(`<option value="${v6210Esc(id)}" data-name="${v6210Esc(name)}" ${selected?'selected':''}>${v6210Esc(name)}</option>`);
+  });
+  return opts.join('');
+}
+
+async function openOperatorEditV6210(id){
+  id = Number(id || 0);
+  if(!id){
+    alert('No se ha podido identificar el operario.');
+    return;
+  }
+
+  let data;
+  try{
+    data = await v6210Fetch('/api/v6210/operators/'+id+'/edit');
+  }catch(e){
+    alert('Error abriendo edición de operario: '+e.message);
+    return;
+  }
+
+  const o = data.operator || {};
+  const roles = data.roles || [];
+  const fullAddress = o.full_address || o.address || '';
+  const iban = o.iban || o.bank_iban || '';
+
+  const root = document.getElementById('modalRoot') || document.body;
+  root.innerHTML = `
+    <div class="modal-back">
+      <div class="modal v6210-operator-modal">
+        <div class="modal-head">
+          <div>
+            <h2>Editar operario</h2>
+            <p class="muted">${v6210Esc((o.first_name||'')+' '+(o.last_name||''))}${o.nickname ? ' · '+v6210Esc(o.nickname) : ''}</p>
+          </div>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+
+        <form id="operatorEditFormV6210">
+          <div class="v6210-section">
+            <h3>Datos principales</h3>
+            <div class="v6210-grid">
+              <input class="field span-4" name="first_name" value="${v6210Esc(o.first_name||'')}" placeholder="Nombre" required>
+              <input class="field span-4" name="last_name" value="${v6210Esc(o.last_name||'')}" placeholder="Apellidos" required>
+              <input class="field span-4" name="nickname" value="${v6210Esc(o.nickname||'')}" placeholder="Apodo / mote">
+              <input class="field span-3" name="dni" value="${v6210Esc(o.dni||'')}" placeholder="DNI / NIE">
+              <input class="field span-3" name="phone" value="${v6210Esc(o.phone||'')}" placeholder="Teléfono">
+              <input class="field span-4" name="email" value="${v6210Esc(o.email||'')}" placeholder="Email">
+              <select class="field span-2" name="active">
+                <option value="1" ${Number(o.active ?? 1)===1?'selected':''}>Activo</option>
+                <option value="0" ${Number(o.active ?? 1)===0?'selected':''}>Inactivo</option>
+              </select>
+              <input class="field span-12" name="full_address" value="${v6210Esc(fullAddress)}" placeholder="Dirección completa">
+            </div>
+          </div>
+
+          <div class="v6210-section">
+            <h3>Datos laborales y bancarios</h3>
+            <div class="v6210-grid">
+              <input class="field span-4" name="social_security_number" value="${v6210Esc(o.social_security_number||'')}" placeholder="Nº Seguridad Social">
+              <input class="field span-4" name="bank_name" value="${v6210Esc(o.bank_name||'')}" placeholder="Nombre del banco">
+              <input class="field span-4" name="iban" value="${v6210Esc(iban)}" placeholder="IBAN">
+              <select class="field span-6" name="operator_role_id" onchange="this.form.operator_role_name.value=this.options[this.selectedIndex].dataset.name||''">
+                ${v6210RoleOptions(roles, o.operator_role_id, o.operator_role_name)}
+              </select>
+              <input class="field span-6" name="operator_role_name" value="${v6210Esc(o.operator_role_name||'')}" placeholder="Rol de operario">
+            </div>
+          </div>
+
+          <div class="v6210-section">
+            <h3>EPIs, PRL y tallas</h3>
+            <div class="v6210-grid">
+              <input class="field span-3" name="shirt_size" value="${v6210Esc(o.shirt_size||'')}" placeholder="Talla camiseta">
+              <input class="field span-3" name="pants_size" value="${v6210Esc(o.pants_size||'')}" placeholder="Talla pantalón">
+              <input class="field span-3" name="shoe_size" value="${v6210Esc(o.shoe_size||'')}" placeholder="Talla zapatos">
+              <div class="field span-3" style="display:flex;gap:14px;align-items:center">
+                <label><input type="checkbox" name="epis_delivered" value="1" ${Number(o.epis_delivered||0)===1?'checked':''}> EPIs entregados</label>
+                <label><input type="checkbox" name="has_prl" value="1" ${Number(o.has_prl||0)===1?'checked':''}> PRL</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="v6210-section">
+            <h3>Contacto emergencia</h3>
+            <div class="v6210-grid">
+              <input class="field span-6" name="emergency_contact_name" value="${v6210Esc(o.emergency_contact_name||'')}" placeholder="Contacto emergencia">
+              <input class="field span-6" name="emergency_contact_phone" value="${v6210Esc(o.emergency_contact_phone||'')}" placeholder="Teléfono emergencia">
+            </div>
+          </div>
+
+          <div class="v6210-section">
+            <h3>Notas internas</h3>
+            <textarea class="field" name="internal_notes" placeholder="Notas internas">${v6210Esc(o.internal_notes || o.notes || '')}</textarea>
+          </div>
+
+          <div class="actions">
+            <button class="v6210-save" type="submit">Guardar cambios</button>
+            <button type="button" class="secondary" onclick="closeWizard()">Cancelar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('operatorEditFormV6210').onsubmit = async ev=>{
+    ev.preventDefault();
+    const fd = new FormData(ev.target);
+    const payload = Object.fromEntries(fd);
+    payload.epis_delivered = ev.target.epis_delivered.checked ? 1 : 0;
+    payload.has_prl = ev.target.has_prl.checked ? 1 : 0;
+
+    try{
+      await v6210Fetch('/api/v6210/operators/'+id+'/edit', {
+        method:'POST',
+        body:JSON.stringify(payload)
+      });
+      if(typeof v534Toast === 'function') v534Toast('Operario actualizado correctamente');
+      try{ closeWizard(); }catch(e){ root.innerHTML=''; }
+      if(typeof viewUsers === 'function') viewUsers();
+      else if(typeof viewOperators === 'function') viewOperators();
+    }catch(e){
+      alert('Error guardando operario: '+e.message);
+    }
+  };
+}
+
+function v6210ExtractOperatorIdFromElement(el){
+  if(!el) return 0;
+  const attrs = [
+    el.dataset && (el.dataset.userId || el.dataset.operatorId || el.dataset.id),
+    el.getAttribute && el.getAttribute('data-user-id'),
+    el.getAttribute && el.getAttribute('data-operator-id'),
+    el.getAttribute && el.getAttribute('data-id'),
+    el.getAttribute && el.getAttribute('onclick')
+  ].filter(Boolean).join(' ');
+
+  let m = attrs.match(/(?:user|operator|id)?[^\d]*(\d+)/i);
+  if(m) return Number(m[1]);
+
+  const row = el.closest && el.closest('[data-user-id],[data-operator-id],[data-id],tr,.card,.operator-card,.user-card');
+  if(row){
+    const rowAttrs = [
+      row.dataset && (row.dataset.userId || row.dataset.operatorId || row.dataset.id),
+      row.getAttribute && row.getAttribute('data-user-id'),
+      row.getAttribute && row.getAttribute('data-operator-id'),
+      row.getAttribute && row.getAttribute('data-id'),
+      row.innerHTML
+    ].filter(Boolean).join(' ');
+    m = rowAttrs.match(/(?:user|operator|operario|id)[^\d]{0,20}(\d+)/i) || rowAttrs.match(/\/users\/(\d+)/i) || rowAttrs.match(/\/operators\/(\d+)/i);
+    if(m) return Number(m[1]);
+  }
+  return 0;
+}
+
+function v6210PatchOperatorButtons(){
+  const possibleContainers = [...document.querySelectorAll('tr,.card,.operator-card,.user-card,tbody > tr')];
+
+  possibleContainers.forEach(row=>{
+    const txt = (row.textContent || '').toLowerCase();
+    if(!txt || !(txt.includes('operario') || txt.includes('dni') || txt.includes('iban') || txt.includes('documentos') || txt.includes('acciones'))) return;
+    if(row.querySelector('.v6210-edit-operator-btn')) return;
+
+    let id = v6210ExtractOperatorIdFromElement(row);
+    if(!id){
+      const btnWithId = [...row.querySelectorAll('button,a')].find(b=>v6210ExtractOperatorIdFromElement(b));
+      id = v6210ExtractOperatorIdFromElement(btnWithId);
+    }
+    if(!id) return;
+
+    const actionsCell = [...row.querySelectorAll('td,div')].reverse().find(c=>{
+      const t = (c.textContent||'').toLowerCase();
+      return t.includes('document') || t.includes('acciones') || c.querySelector('button,a');
+    }) || row;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'v6210-edit-operator-btn';
+    btn.textContent = 'Editar';
+    btn.onclick = ev=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      openOperatorEditV6210(id);
+    };
+    actionsCell.appendChild(btn);
+  });
+
+  // También añade editar junto a botones existentes de documentos/carpeta si encuentra ID.
+  document.querySelectorAll('button,a').forEach(b=>{
+    const t = (b.textContent||'').toLowerCase();
+    if(!(t.includes('document') || t.includes('carpeta'))) return;
+    const parent = b.parentElement;
+    if(!parent || parent.querySelector('.v6210-edit-operator-btn')) return;
+    const id = v6210ExtractOperatorIdFromElement(b);
+    if(!id) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'v6210-edit-operator-btn';
+    btn.textContent = 'Editar';
+    btn.onclick = ev=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      openOperatorEditV6210(id);
+    };
+    parent.insertBefore(btn, b);
+  });
+}
+
+setInterval(v6210PatchOperatorButtons, 1200);
+
+const __viewUsers_v6210 = typeof viewUsers === 'function' ? viewUsers : null;
+if(__viewUsers_v6210){
+  viewUsers = async function(){
+    const r = await __viewUsers_v6210.apply(this, arguments);
+    setTimeout(v6210PatchOperatorButtons, 200);
+    setTimeout(v6210PatchOperatorButtons, 800);
+    return r;
+  };
+}
+
+const __viewOperators_v6210 = typeof viewOperators === 'function' ? viewOperators : null;
+if(__viewOperators_v6210){
+  viewOperators = async function(){
+    const r = await __viewOperators_v6210.apply(this, arguments);
+    setTimeout(v6210PatchOperatorButtons, 200);
+    setTimeout(v6210PatchOperatorButtons, 800);
+    return r;
+  };
+}
