@@ -606,7 +606,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version:'62.7.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version:'62.8.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -631,6 +631,31 @@ app.post('/api/v627-backup-now', requireAdmin, (req,res)=>{
 
     res.json({ok:true, backup:out, kept:Math.min(files.length,10)});
   }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+
+// ---------- V62.8 REAL OPERATORS IMPORT API ----------
+app.post('/api/v628/import-real-operators', requireAdmin, (req,res)=>{
+  try {
+    const result = v628ApplyRealOperatorsImport();
+    res.json(result);
+  } catch(e) {
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+app.get('/api/v628/real-operators-preview', requireAdmin, (req,res)=>{
+  try {
+    const rows = db.prepare(`
+      SELECT id, first_name,last_name,nickname,phone,email,dni,social_security_number,iban,active
+      FROM users
+      WHERE role!='admin'
+      ORDER BY last_name, first_name
+    `).all();
+    res.json({ok:true,total:rows.length,rows});
+  } catch(e) {
     res.status(500).json({ok:false,error:e.message});
   }
 });
@@ -872,7 +897,7 @@ function initDb() {
   seedSettings();
   seedClients();
   seedAdmin();
-  createDemoDataSafe();
+  // createDemoDataSafe(); // V62.8 desactivado: se usan operarios reales importados desde Excel
 }
 
 
@@ -1666,6 +1691,265 @@ function round2(n) {
 
 initDb();
 ensureFixedAdminAccess();
+
+// ---------- V62.8 REAL OPERATORS IMPORT ----------
+const V628_REAL_OPERATORS = [
+  {
+    "last_name": "COLLADO BONILLA",
+    "first_name": "KEVIN",
+    "phone": "614 364 464",
+    "email": "",
+    "dni": "79395978R",
+    "social_security_number": "29/11501990-42",
+    "iban": "ES82 1563 2626 3932 6447 0462"
+  },
+  {
+    "last_name": "RIMÓN HIDALGO",
+    "first_name": "PEDRO JOSÉ",
+    "phone": "640 7100 57",
+    "email": "Pedrojoserimonhidalgo@gmail.com",
+    "dni": "77233071Z",
+    "social_security_number": "29/10415049-83",
+    "iban": "ES03 2100 7936 0902 0039 0857"
+  },
+  {
+    "last_name": "RUIZ FERNANDEZ",
+    "first_name": "FRANCISCO JESUS",
+    "phone": "636 390 822",
+    "email": "jesusruizchloeruiz@gmail.com",
+    "dni": "74873025K",
+    "social_security_number": "29/10760198-09",
+    "iban": "ES85 1583 0001 1490 3731 8993"
+  },
+  {
+    "last_name": "BECERRA GONZÁLEZ",
+    "first_name": "JUAN MANUEL",
+    "phone": "658 723 133",
+    "email": "",
+    "dni": "74882109C",
+    "social_security_number": "29/10134393-48",
+    "iban": "ES57 2103 3055 3700 1008 2570"
+  },
+  {
+    "last_name": "GONZALEZ FARFAN",
+    "first_name": "JOSE DANIEL",
+    "phone": "604 353 460",
+    "email": "info@marfancrew.com",
+    "dni": "76638345E",
+    "social_security_number": "",
+    "iban": "ES55 1583 0001 1090 7208 3559"
+  },
+  {
+    "last_name": "GOCKING LORENTE",
+    "first_name": "MARCOS",
+    "phone": "635 52 66 72",
+    "email": "Marcosgocking2006@gmail.com",
+    "dni": "41616948N",
+    "social_security_number": "07/10911015-52",
+    "iban": "ES63 0081 0293 1200 0187 1097"
+  },
+  {
+    "last_name": "RUEDA ORTIGOSA",
+    "first_name": "LUIS MANUEL",
+    "phone": "722 10 55 39",
+    "email": "",
+    "dni": "79393409P",
+    "social_security_number": "29/11358037-37",
+    "iban": "ES56 0182 1294 1002 0392 5470"
+  },
+  {
+    "last_name": "CUESTA MARTINEZ",
+    "first_name": "MANUEL",
+    "phone": "624 72 77 18",
+    "email": "",
+    "dni": "77980369L",
+    "social_security_number": "",
+    "iban": "ES12 2100 7851 9602 0025 6725"
+  },
+  {
+    "last_name": "MARQUEZ QUINOGA",
+    "first_name": "MIGUEL",
+    "phone": "640 14 08 48",
+    "email": "",
+    "dni": "25730904E",
+    "social_security_number": "",
+    "iban": "ES39 0081 2712 0700 0755 6468"
+  },
+  {
+    "last_name": "DEMBA",
+    "first_name": "KABA",
+    "phone": "722 30 27 77",
+    "email": "Demba12kaba@gmail.com",
+    "dni": "Z2428593M",
+    "social_security_number": "",
+    "iban": "ES73 2100 3312 9822 0020 5670"
+  },
+  {
+    "last_name": "FERNANDEZ DEL AGUILA",
+    "first_name": "ANGEL",
+    "phone": "617 76 79 84",
+    "email": "angelfdaz2005@gmail.com",
+    "dni": "77659351N",
+    "social_security_number": "",
+    "iban": "ES82 0049 1740 7420 1010 3781"
+  },
+  {
+    "last_name": "FLORIDO BERNAL",
+    "first_name": "SALVADOR",
+    "phone": "630 31 45 10",
+    "email": "",
+    "dni": "76751652P",
+    "social_security_number": "",
+    "iban": "ES43 0182 9465 6202 0832 2799"
+  },
+  {
+    "last_name": "CARDONA HIDROBO",
+    "first_name": "JOHN HADER",
+    "phone": "612 57 99 79",
+    "email": "Cardonahidrobo17@gmail.com",
+    "dni": "Z0383033L",
+    "social_security_number": "",
+    "iban": "ES28 0182 5326 0402 0883 8605"
+  },
+  {
+    "last_name": "MALDONADO SPITELI",
+    "first_name": "ANTONIO JOSE",
+    "phone": "602 54 36 93",
+    "email": "Maldonado.antonio2509@gmail.com",
+    "dni": "77795769V",
+    "social_security_number": "",
+    "iban": "ES12 2100 7936 0402 0032 2943"
+  }
+];
+
+function v628EnsureOperatorImportColumns() {
+  try {
+    addColumn('users', 'dni TEXT DEFAULT ""');
+    addColumn('users', 'iban TEXT DEFAULT ""');
+    addColumn('users', 'bank_iban TEXT DEFAULT ""');
+    addColumn('users', 'bank_name TEXT DEFAULT ""');
+    addColumn('users', 'social_security_number TEXT DEFAULT ""');
+    addColumn('users', 'full_address TEXT DEFAULT ""');
+    addColumn('users', 'operator_role_name TEXT DEFAULT ""');
+    addColumn('users', 'operator_role_id INTEGER DEFAULT NULL');
+    addColumn('users', 'notes TEXT DEFAULT ""');
+  } catch(e) {}
+}
+
+function v628DefaultEmail(worker) {
+  const e = String(worker.email || '').trim().toLowerCase();
+  if(e && e.includes('@')) return e;
+  const dni = String(worker.dni || '').trim().toLowerCase().replace(/[^a-z0-9]/g,'');
+  if(dni) return dni + '@marfancrew.local';
+  const name = String((worker.first_name || '') + '.' + (worker.last_name || '')).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'.').replace(/^\.|\.$/g,'');
+  return (name || ('operario.' + Date.now())) + '@marfancrew.local';
+}
+
+function v628DeleteDemoOperators() {
+  try {
+    const demoUsers = db.prepare(`
+      SELECT id FROM users
+      WHERE role!='admin'
+      AND (
+        lower(email) LIKE 'demo.%@marfancrew.local'
+        OR lower(email) LIKE '%.demo@marfancrew.com'
+        OR lower(email) LIKE '%@demo.com'
+        OR lower(email) LIKE '%demo@cliente.com'
+        OR lower(nickname) IN ('osky','omi','sol','jota','pablete','ivi','lau','cj','migue','ani','luis','marta')
+        OR lower(first_name) IN ('oscar','óscar','omar','sol','jorge','pablo','ivan','iván','laura')
+      )
+    `).all();
+
+    const ids = demoUsers.map(x=>x.id);
+    if(ids.length) {
+      const qs = ids.map(()=>'?').join(',');
+      try { db.prepare(`DELETE FROM assignments WHERE user_id IN (${qs})`).run(...ids); } catch(e) {}
+      try { db.prepare(`DELETE FROM time_logs WHERE user_id IN (${qs})`).run(...ids); } catch(e) {}
+      db.prepare(`DELETE FROM users WHERE id IN (${qs})`).run(...ids);
+    }
+    return ids.length;
+  } catch(e) {
+    console.error('v628DeleteDemoOperators error', e.message);
+    return 0;
+  }
+}
+
+function v628UpsertRealOperators() {
+  v628EnsureOperatorImportColumns();
+
+  const bcryptLib = typeof bcrypt !== 'undefined' ? bcrypt : null;
+  const passwordHash = bcryptLib ? bcryptLib.hashSync('Marfan1234*', 10) : 'Marfan1234*';
+
+  const cols = db.prepare("PRAGMA table_info(users)").all().map(c=>c.name);
+
+  let imported = 0;
+  let updated = 0;
+
+  for(const worker of V628_REAL_OPERATORS) {
+    const email = v628DefaultEmail(worker);
+    const dni = String(worker.dni || '').trim();
+    let existing = null;
+
+    if(dni && cols.includes('dni')) {
+      existing = db.prepare('SELECT * FROM users WHERE dni=?').get(dni);
+    }
+    if(!existing) {
+      existing = db.prepare('SELECT * FROM users WHERE lower(email)=lower(?)').get(email);
+    }
+
+    const data = {};
+    if(cols.includes('email')) data.email = email;
+    if(cols.includes('password_hash')) data.password_hash = passwordHash;
+    if(cols.includes('password')) data.password = 'Marfan1234*';
+    if(cols.includes('role')) data.role = 'operario';
+    if(cols.includes('first_name')) data.first_name = worker.first_name || '';
+    if(cols.includes('last_name')) data.last_name = worker.last_name || '';
+    if(cols.includes('nickname')) data.nickname = '';
+    if(cols.includes('phone')) data.phone = worker.phone || '';
+    if(cols.includes('active')) data.active = 1;
+    if(cols.includes('availability')) data.availability = 'disponible';
+    if(cols.includes('services')) data.services = 'Crew / Operario';
+    if(cols.includes('dni')) data.dni = dni;
+    if(cols.includes('social_security_number')) data.social_security_number = worker.social_security_number || '';
+    if(cols.includes('iban')) data.iban = worker.iban || '';
+    if(cols.includes('bank_iban')) data.bank_iban = worker.iban || '';
+    if(cols.includes('bank_name')) data.bank_name = '';
+    if(cols.includes('notes')) data.notes = 'Importado desde Excel plantilla V62.8';
+
+    if(existing) {
+      const keys = Object.keys(data).filter(k => k !== 'email' && k !== 'password_hash' && k !== 'password');
+      if(keys.length) {
+        db.prepare(`UPDATE users SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>data[k]), existing.id);
+      }
+      updated++;
+    } else {
+      const keys = Object.keys(data);
+      const qs = keys.map(()=>'?').join(',');
+      db.prepare(`INSERT INTO users (${keys.map(k=>`"${k}"`).join(',')}) VALUES (${qs})`).run(...keys.map(k=>data[k]));
+      imported++;
+    }
+  }
+
+  return {imported, updated, total: V628_REAL_OPERATORS.length};
+}
+
+function v628ApplyRealOperatorsImport() {
+  try {
+    const deleted_demo = v628DeleteDemoOperators();
+    const result = v628UpsertRealOperators();
+    console.log('[V62.8] Real operators import OK', {deleted_demo, ...result});
+    return {ok:true, deleted_demo, ...result};
+  } catch(e) {
+    console.error('[V62.8] Real operators import error', e);
+    return {ok:false, error:e.message};
+  }
+}
+
+// Ejecutar automáticamente al arrancar, una vez cargada la DB.
+setTimeout(()=>{ try { v628ApplyRealOperatorsImport(); } catch(e) { console.error(e); } }, 500);
+
+
+
 initAuditModules();
 
 

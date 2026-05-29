@@ -8806,3 +8806,18 @@ async function backupNowV627(){
     alert('Error creando backup: ' + e.message);
   }
 }
+
+
+// ---------- V62.8 REAL OPERATORS IMPORT FRONTEND ----------
+async function importRealOperatorsV628(){
+  try{
+    const r = await fetch('/api/v628/import-real-operators', {method:'POST', credentials:'same-origin', cache:'no-store', headers:{'Accept':'application/json'}});
+    const j = await r.json();
+    if(!j.ok) throw new Error(j.error || 'Error importando operarios');
+    alert(`Operarios reales importados.\n\nDemos borrados: ${j.deleted_demo}\nNuevos: ${j.imported}\nActualizados: ${j.updated}\nTotal plantilla: ${j.total}`);
+    if(typeof viewUsers === 'function') viewUsers();
+    else if(typeof viewOperators === 'function') viewOperators();
+  }catch(e){
+    alert('Error importando operarios reales: ' + e.message);
+  }
+}

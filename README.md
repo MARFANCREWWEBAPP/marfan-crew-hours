@@ -1,19 +1,25 @@
 
-# V62.7 Persistent Data Fix
+# V62.8 Real Operators Import
 
-Corrige:
-- Al actualizar versión, los datos editados de eventos podían desaparecer.
+Base: V62.7 Persistent Data Fix.
 
-Solución:
-- Base de datos en ruta persistente:
-  DATA_DIR / PERSISTENT_DATA_DIR / RAILWAY_VOLUME_MOUNT_PATH / /data
-- Fuerza DB_PATH y SQLITE_PATH a /data/marfan-crew-hours.sqlite si no hay variable.
-- Copia automáticamente una DB local existente al volumen si este aún está vacío.
-- Añade diagnóstico:
-  GET /api/v627-data-status
-- Añade backup manual:
-  POST /api/v627-backup-now
-- Mantiene máximo 10 backups.
+Hace:
+- Borra operarios demo conocidos.
+- Desactiva la creación automática de demos en initDb.
+- Importa 14 operarios reales desde Excel:
+  - Nombre
+  - Apellidos
+  - Teléfono
+  - Email
+  - DNI
+  - Nº Seguridad Social
+  - IBAN
+- Crea email interno si el Excel no trae correo: DNI@marfancrew.local
+- Upsert por DNI/email para no duplicar.
+- Endpoint manual:
+  - POST /api/v628/import-real-operators
+- Preview:
+  - GET /api/v628/real-operators-preview
 
-IMPORTANTE:
-En Railway debes tener volumen persistente montado en /data.
+Contraseña inicial para nuevos operarios:
+- Marfan1234*
