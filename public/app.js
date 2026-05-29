@@ -8821,3 +8821,17 @@ async function importRealOperatorsV628(){
     alert('Error importando operarios reales: ' + e.message);
   }
 }
+
+
+// ---------- V62.9 REAL CLIENTS IMPORT FRONTEND ----------
+async function importRealClientsV629(){
+  try{
+    const r = await fetch('/api/v629/import-real-clients', {method:'POST', credentials:'same-origin', cache:'no-store', headers:{'Accept':'application/json'}});
+    const j = await r.json();
+    if(!j.ok) throw new Error(j.error || 'Error importando clientes');
+    alert(`Clientes reales importados.\n\nDemos borrados: ${j.deleted_demo}\nNuevos: ${j.imported}\nActualizados: ${j.updated}\nTotal Excel: ${j.total}`);
+    if(typeof viewClients === 'function') viewClients();
+  }catch(e){
+    alert('Error importando clientes reales: ' + e.message);
+  }
+}

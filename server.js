@@ -606,7 +606,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version:'62.8.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version:'62.9.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -636,6 +636,1342 @@ app.post('/api/v627-backup-now', requireAdmin, (req,res)=>{
 });
 
 
+
+// ---------- V62.9 REAL CLIENTS IMPORT ----------
+const V629_REAL_CLIENTS = [
+  {
+    "name": "M3",
+    "legal_name": "SERVICIOS INTEGRALES M3 S.L",
+    "contact_name": "",
+    "address": "CTA. VALLE ABDALAJIS 3, 29510, ARROYO CORRALES",
+    "province": "MÁLAGA",
+    "cif": "B92205335",
+    "email": "admin@m3led.es",
+    "phone": "619 688 411",
+    "notes": ""
+  },
+  {
+    "name": "LIT",
+    "legal_name": "LIT EVENTS S.L",
+    "contact_name": "",
+    "address": "POLIGONO INDUSTRIAL LA CAMPANA 45, 29660 NUEVA ANDALUCIA, MARBELLA",
+    "province": "MÁLAGA",
+    "cif": "B01938018",
+    "email": "valentina@litevents.es",
+    "phone": "693 917 449",
+    "notes": ""
+  },
+  {
+    "name": "KEEP CALM",
+    "legal_name": "KEEP CALM PRODUCTIONS S.L",
+    "contact_name": "",
+    "address": "CALLE ITALIA Nº6 , 29570, CARTAMA",
+    "province": "MÁLAGA",
+    "cif": "B93616639",
+    "email": "produccion@proyecto76.com",
+    "phone": "673 33 76 08",
+    "notes": ""
+  },
+  {
+    "name": "MARQUEE",
+    "legal_name": "MARQUEE PRODUCCIONES Y AUDIOVISUALES SL.",
+    "contact_name": "",
+    "address": "CALLE MALAGA, 7 - 2 F, CARTAMA",
+    "province": "MÁLAGA",
+    "cif": "B56199045",
+    "email": "administracion@marquee.es",
+    "phone": "645 25 22 50",
+    "notes": ""
+  },
+  {
+    "name": "SONOCON",
+    "legal_name": "ACUSTICA PROFESIONAL SONOCON SL",
+    "contact_name": "",
+    "address": "CALLE LIMITACION (POL LA HUERTECILLA), 11 - NAV,29004",
+    "province": "MÁLAGA",
+    "cif": "B29692712",
+    "email": "contabilidad@sonocon.es",
+    "phone": "952 34 12 94",
+    "notes": ""
+  },
+  {
+    "name": "FITZ",
+    "legal_name": "MARBELLA SOUNDS S.L",
+    "contact_name": "",
+    "address": "AVENIDA SAN LUIS, 95 , 28033",
+    "province": "MADRID",
+    "cif": "B70638390",
+    "email": "tecnicafitzmarbella@gruposounds.com",
+    "phone": "697 57 08 01",
+    "notes": ""
+  },
+  {
+    "name": "BOOMBASTIC ASTURIAS 2026",
+    "legal_name": "Asturias Producción y Eventos, A.I.E.",
+    "contact_name": "",
+    "address": "Calle Petunia 21, Planta 2, Puerta 2, 28933 Móstoles",
+    "province": "MADRID",
+    "cif": "V27596683",
+    "email": "cristina.gonzalez@boombasticcompany.com / jon@boombasticfestival.com",
+    "phone": "984 20 50 38",
+    "notes": ""
+  },
+  {
+    "name": "Espectaculos Mundo",
+    "legal_name": "MUNDO MANAGEMENT SA",
+    "contact_name": "Juan Antonio",
+    "address": "CALLE ALEJANDRO CASONA (P. I. GUADALHORCE), 42",
+    "province": "MALAGA",
+    "cif": "A29269487",
+    "email": "info@grupomundo.es",
+    "phone": "600964114",
+    "notes": ""
+  },
+  {
+    "name": "So real malaga",
+    "legal_name": "",
+    "contact_name": "Victoria",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "soreal@malagawedding.com",
+    "phone": "623518407",
+    "notes": ""
+  },
+  {
+    "name": "Valentina's",
+    "legal_name": "",
+    "contact_name": "Irene",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "hola@valentina-s.com",
+    "phone": "627508414",
+    "notes": ""
+  },
+  {
+    "name": "A de amor",
+    "legal_name": "",
+    "contact_name": "Isabel Bravo",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "info@adeamor.es",
+    "phone": "664347017",
+    "notes": ""
+  },
+  {
+    "name": "i-blue studio",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "info@bodasmalagai-blue.es",
+    "phone": "952392590",
+    "notes": ""
+  },
+  {
+    "name": "Mediterranean wedding",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "hello@mediterraneanweddings.es",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "Ceci Bodas",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "holacecibodas@gmail.com",
+    "phone": "682182523",
+    "notes": "Pidio tarifas"
+  },
+  {
+    "name": "Arte Bodas",
+    "legal_name": "",
+    "contact_name": "Patricia navarro",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "patricia@arteboda.es",
+    "phone": "651337976",
+    "notes": ""
+  },
+  {
+    "name": "El dia de la novia",
+    "legal_name": "",
+    "contact_name": "Iene y Jhonatan",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "info@eldiadelanovia.com",
+    "phone": "634508919/684143129",
+    "notes": ""
+  },
+  {
+    "name": "Palacio el limonar",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "comercial@quiliqua.es",
+    "phone": "635426490",
+    "notes": ""
+  },
+  {
+    "name": "Grupo Rodfer",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "info@gruporodfer.com",
+    "phone": "Dept.Produ:696 117 117/ Ofi: 952343295",
+    "notes": ""
+  },
+  {
+    "name": "Neventos",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "",
+    "cif": "",
+    "email": "info@neventos.eu",
+    "phone": "696 07 55 20",
+    "notes": ""
+  },
+  {
+    "name": "Grupo Merlin",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "",
+    "cif": "",
+    "email": "info@grupomerlin.com",
+    "phone": "619990069",
+    "notes": ""
+  },
+  {
+    "name": "Cashmere",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "",
+    "cif": "",
+    "email": "comercial@cashmeredecoracion.com",
+    "phone": "918612161",
+    "notes": ""
+  },
+  {
+    "name": "Budi music",
+    "legal_name": "",
+    "contact_name": "Estefania",
+    "address": "",
+    "province": "",
+    "cif": "",
+    "email": "budimusic@budimusic.com",
+    "phone": "690929437",
+    "notes": ""
+  },
+  {
+    "name": "Crash Music",
+    "legal_name": "",
+    "contact_name": "Antonio (Chino)",
+    "address": "",
+    "province": "ALMERIA",
+    "cif": "",
+    "email": "info@crashmusic.es / chino@crashmusic.es",
+    "phone": "691250113",
+    "notes": "Antonio (jefe. produ)"
+  },
+  {
+    "name": "Palacio deporte Martin Carpena",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "malagadeporteyeventos@malaga.eu",
+    "phone": "952176392",
+    "notes": ""
+  },
+  {
+    "name": "Teatro cervantes",
+    "legal_name": "",
+    "contact_name": "Jose Maria Pineda",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "jmpineda@malagaprocultura.com",
+    "phone": "",
+    "notes": "Jefe Personal"
+  },
+  {
+    "name": "Last Tour",
+    "legal_name": "",
+    "contact_name": "Irene",
+    "address": "",
+    "province": "",
+    "cif": "",
+    "email": "irene@lasttour.org",
+    "phone": "",
+    "notes": "pide ajustar precios"
+  },
+  {
+    "name": "Totalisimo",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "",
+    "cif": "",
+    "email": "",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "diagonal producciones",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "diagonal@diagonalproducciones.com",
+    "phone": "669298398",
+    "notes": ""
+  },
+  {
+    "name": "iberia producciones",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "wild punk producciones",
+    "legal_name": "",
+    "contact_name": "Fernando Novi / Susana ramirez",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "novi@wildpunk.com / administracion@wildpunk.com",
+    "phone": "629 50 93 06",
+    "notes": "Novi (Director)"
+  },
+  {
+    "name": "proexa producciones",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "info@proexa.es",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "Rck sl",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "",
+    "phone": "958221533",
+    "notes": ""
+  },
+  {
+    "name": "feco producciones",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "JAEN",
+    "cif": "",
+    "email": "produccion@fecoproducciones.com",
+    "phone": "953 69 05 82",
+    "notes": ""
+  },
+  {
+    "name": "pink house producciones",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "JAEN",
+    "cif": "",
+    "email": "info@pinkhousemanagement.com",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "producciones puentes",
+    "legal_name": "",
+    "contact_name": "Maria Dolores",
+    "address": "",
+    "province": "JAEN",
+    "cif": "",
+    "email": "",
+    "phone": "902401850",
+    "notes": ""
+  },
+  {
+    "name": "tiscar producciones",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "JAEN",
+    "cif": "",
+    "email": "",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "espectaculos armando",
+    "legal_name": "",
+    "contact_name": "Carmen Navarro",
+    "address": "",
+    "province": "CORDOBA",
+    "cif": "",
+    "email": "espectaculosarmando@gmail.com",
+    "phone": "649711805",
+    "notes": ""
+  },
+  {
+    "name": "spyro music",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "SEVILLA",
+    "cif": "",
+    "email": "info@spyromusic.com",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "senador musica",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "SEVILLA",
+    "cif": "",
+    "email": "senador@senadormusica.com",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "B&D Eventos",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "contacto@bydeventos.com",
+    "phone": "(+34) 635 601 885/653158286",
+    "notes": ""
+  },
+  {
+    "name": "Kandale Films",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "hola@kandalefilms.es",
+    "phone": "607440969",
+    "notes": ""
+  },
+  {
+    "name": "Esmeeting",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "CORDOBA",
+    "cif": "",
+    "email": "info@esmeeting.es",
+    "phone": "957961036",
+    "notes": ""
+  },
+  {
+    "name": "Centro Cultural MVA",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "cultura@malaga.es",
+    "phone": "952133950",
+    "notes": ""
+  },
+  {
+    "name": "Solazo Fest",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "ALMERIA",
+    "cif": "",
+    "email": "info@solazofest.com/info@kuverproducciones.com",
+    "phone": "635262626",
+    "notes": "Organiza: Ayt.Almeria y Kuver Prod."
+  },
+  {
+    "name": "Cooltural",
+    "legal_name": "",
+    "contact_name": "Antonio (Chino)",
+    "address": "",
+    "province": "ALMERIA",
+    "cif": "",
+    "email": "info@coolturalfest.com/chino@crashmusic.es",
+    "phone": "691250113",
+    "notes": "Organiza: Crash Music"
+  },
+  {
+    "name": "Salinas sound Festival",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "ALMERIA",
+    "cif": "",
+    "email": "info@salinasoundfestival.com",
+    "phone": "610054493",
+    "notes": ""
+  },
+  {
+    "name": "Urban Ley",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "ALMERIA",
+    "cif": "",
+    "email": "hola@aguacatescontomate.com",
+    "phone": "",
+    "notes": "Aguacates con tomate y Crash Music: Aguacates con tomate y Crash MusicOrgani..."
+  },
+  {
+    "name": "Pulpop",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "ALMERIA",
+    "cif": "",
+    "email": "info@pulpop.es",
+    "phone": "",
+    "notes": "Organiza:Ayt. Roquetas de Mar"
+  },
+  {
+    "name": "Huercal Live",
+    "legal_name": "",
+    "contact_name": "Antonio (Chino)",
+    "address": "",
+    "province": "ALMERIA",
+    "cif": "",
+    "email": "chino@crashmusic.es",
+    "phone": "691250113",
+    "notes": "Organiza:Crash Music"
+  },
+  {
+    "name": "Festival Alamar",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "ALMERIA",
+    "cif": "",
+    "email": "oficinadeturismo@aytoalmeria.es",
+    "phone": "950210538",
+    "notes": "Organiza:Ayt. Almeria"
+  },
+  {
+    "name": "Rock Albox",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "ALMERIA",
+    "cif": "",
+    "email": "registro@albox.es",
+    "phone": "950120908",
+    "notes": "Organiza:Ayt.Albox (Cultura)"
+  },
+  {
+    "name": "Sun&Snow Festival",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "info@sierranevadagranada.com",
+    "phone": "679822656",
+    "notes": "Organiza: Estación de Esqui de Sierra Nevada"
+  },
+  {
+    "name": "Sunset Electronico",
+    "legal_name": "",
+    "contact_name": "FALLA",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "info@sallyridemusic.com",
+    "phone": "",
+    "notes": "Organiza:Sally Ride Music"
+  },
+  {
+    "name": "Granada Sound",
+    "legal_name": "",
+    "contact_name": "*Maite (Recursos Humanos)",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "info@themusicrepublic.es",
+    "phone": "*622033829/ 960699805",
+    "notes": "Organiza: The Music Republic"
+  },
+  {
+    "name": "Polar Fest",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "info@curvapolar.com",
+    "phone": "958521333",
+    "notes": "Organiza:Curva Polar"
+  },
+  {
+    "name": "Abril para vivir",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "cancionautor@gmail.com",
+    "phone": "",
+    "notes": "Organiza:Centro Lucini de la cancion de autor"
+  },
+  {
+    "name": "En Orbita",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "info@sallyridemusic.com",
+    "phone": "",
+    "notes": "Organiza:Sally Ride Music"
+  },
+  {
+    "name": "Primavera Electronica",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "info@sonorum.es",
+    "phone": "",
+    "notes": "Organiza:Sonorum"
+  },
+  {
+    "name": "Festival de la Guitarra",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "europeanguitarfoundation@gmail.com",
+    "phone": "",
+    "notes": "Organiza:European Guitar Fundation"
+  },
+  {
+    "name": "Kiskilla Urban Fest",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "booking@nonstopmusic.es",
+    "phone": "",
+    "notes": "Organiza:Non stop music"
+  },
+  {
+    "name": "Lanjarock",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "info@lanjarock.com",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "Centro Cultural La Malagueta",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "infolamalagueta@malaga.es",
+    "phone": "952069670",
+    "notes": ""
+  },
+  {
+    "name": "Picón Rock",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "piconrock.oficial@gmail.com",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "Bull Music Festival",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "info@bullmusicfestival.com",
+    "phone": "",
+    "notes": "Organiza:Hermanos Toro"
+  },
+  {
+    "name": "Escena Urban Fest",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "info@sallyridemusic.com",
+    "phone": "",
+    "notes": "Organiza:Sally Ride Music"
+  },
+  {
+    "name": "Canela Party",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "info@canelaparty.com",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "Loona Summer Festival",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "info@loonasummerfestival.com",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "Ilusovi",
+    "legal_name": "",
+    "contact_name": "Raquel",
+    "address": "",
+    "province": "SEVILLA",
+    "cif": "",
+    "email": "prodicción@ilusovi.com / ilusovi@ilusovi.com",
+    "phone": "635975285",
+    "notes": "Raquel (Jefa Produ)"
+  },
+  {
+    "name": "Kuver Producciones",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "ALMERIA",
+    "cif": "",
+    "email": "info@kuverproducciones.com",
+    "phone": "635 26 26 26",
+    "notes": ""
+  },
+  {
+    "name": "Diez Bajo Cero",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "diezbajocerocomunicacion@gmail.com",
+    "phone": "687452982",
+    "notes": ""
+  },
+  {
+    "name": "Heqate Producciones",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "info@heqate.com",
+    "phone": "660781328",
+    "notes": ""
+  },
+  {
+    "name": "FYCMA Palacio de Ferias y Conciertos",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "info@fycma.com",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "La Cochera Cabaret",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "info@lacocheracabaret.com",
+    "phone": "952246668",
+    "notes": ""
+  },
+  {
+    "name": "Sala Trinchera",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "info@salatrinchera.com",
+    "phone": "619494993",
+    "notes": ""
+  },
+  {
+    "name": "Teatro del Soho",
+    "legal_name": "",
+    "contact_name": "Noelia Ortega/ Eva Font",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "info@teatrodelsoho.com",
+    "phone": "619 97 50 27/692196264",
+    "notes": "Noelia (Direc.Produ) Eva (Controller Produ)"
+  },
+  {
+    "name": "Teatro Canovas",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "teatro.canovas@juntadeandalucia.es",
+    "phone": "951308902",
+    "notes": ""
+  },
+  {
+    "name": "Palacio de congresos y exposiciones",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "palacio@pcgr.org",
+    "phone": "958246700",
+    "notes": ""
+  },
+  {
+    "name": "Icónica Fest",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "SEVILLA",
+    "cif": "",
+    "email": "hola@iconicafest.com",
+    "phone": "",
+    "notes": "Otganiza:Greencow Music"
+  },
+  {
+    "name": "estadio",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "SEVILLA",
+    "cif": "",
+    "email": "estadio@estadiolacartuja.es",
+    "phone": "954489400",
+    "notes": ""
+  },
+  {
+    "name": "info",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "SEVILLA",
+    "cif": "",
+    "email": "info@caravansurfestival.com",
+    "phone": "",
+    "notes": "Organiza:Greencow Music"
+  },
+  {
+    "name": "Green Cow Music",
+    "legal_name": "",
+    "contact_name": "Javier",
+    "address": "",
+    "province": "SEVILLA",
+    "cif": "",
+    "email": "javiesteban@greencowmusic.com",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "Spyro Music",
+    "legal_name": "",
+    "contact_name": "Alberto cañizares (Producción)",
+    "address": "",
+    "province": "SEVILLA",
+    "cif": "",
+    "email": "info@spyromusic.com/alberto@spyromusic.com",
+    "phone": "690953912",
+    "notes": ""
+  },
+  {
+    "name": "Parque Magallanes",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "SEVILLA",
+    "cif": "",
+    "email": "visitasevilla@sevillacityoffice.es",
+    "phone": "955471232",
+    "notes": ""
+  },
+  {
+    "name": "Auditorio Fibes",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "SEVILLA",
+    "cif": "",
+    "email": "info@sevillacityoffice.es",
+    "phone": "954 47 87 00",
+    "notes": ""
+  },
+  {
+    "name": "Interestelar",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "SEVILLA",
+    "cif": "",
+    "email": "https://www.themusicrepublic.es/contacto/",
+    "phone": "",
+    "notes": "Organiza:The Music Republic"
+  },
+  {
+    "name": "Plaza de Toros La Real Maestranza de",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "SEVILLA",
+    "cif": "",
+    "email": "secretaria@realmaestranza.com/info@realmaestranza.",
+    "phone": "954 210 315 · 954 221 490",
+    "notes": ""
+  },
+  {
+    "name": "Sala Fanatic",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "SEVILLA",
+    "cif": "",
+    "email": "info@salafanatic.com",
+    "phone": "",
+    "notes": "Sala de conciertos"
+  },
+  {
+    "name": "Filigrana Fest",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "CORDOBA",
+    "cif": "",
+    "email": "comunicacion@provenue.es",
+    "phone": "",
+    "notes": "Organiza:Pro venue"
+  },
+  {
+    "name": "Teatro de la Axerquia",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "CORDOBA",
+    "cif": "",
+    "email": "protocolo.imae@ayuncordoba.es",
+    "phone": "957760945",
+    "notes": ""
+  },
+  {
+    "name": "Santa Maria Polo cLUB",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "CADIZ",
+    "cif": "",
+    "email": "info@santamariapoloclub.com",
+    "phone": "956610012",
+    "notes": ""
+  },
+  {
+    "name": "Dreambeach",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "ALMERIA",
+    "cif": "",
+    "email": "",
+    "phone": "958515100",
+    "notes": "Organiza: Hermanos Toro"
+  },
+  {
+    "name": "Murmura Festival",
+    "legal_name": "",
+    "contact_name": "Antonio (Chino)",
+    "address": "",
+    "province": "ALMERIA",
+    "cif": "",
+    "email": "chino@crashmusic.es",
+    "phone": "691250113",
+    "notes": "Organiza:Crash Music"
+  },
+  {
+    "name": "Juergas Rock",
+    "legal_name": "",
+    "contact_name": "Antonio (Chino)",
+    "address": "",
+    "province": "ALMERIA",
+    "cif": "",
+    "email": "chino@crashmusic.es",
+    "phone": "691250113",
+    "notes": "Organiza:Crash Music"
+  },
+  {
+    "name": "Candil Rock",
+    "legal_name": "",
+    "contact_name": "Antonio (Chino)",
+    "address": "",
+    "province": "ALMERIA",
+    "cif": "",
+    "email": "chino@crashmusic.es",
+    "phone": "691250113",
+    "notes": "Organiza:Crash Music"
+  },
+  {
+    "name": "Plastic Festival",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "ALMERIA",
+    "cif": "",
+    "email": "",
+    "phone": "950 54 10 14",
+    "notes": "Organiza:Ayt.El Ejido"
+  },
+  {
+    "name": "Viva Boom Fest",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "ALMERIA",
+    "cif": "",
+    "email": "hola@aguacatescontomate.com",
+    "phone": "",
+    "notes": "Organiza:Aguacates con tomate"
+  },
+  {
+    "name": "Granada Latina",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "",
+    "phone": "958515100",
+    "notes": "Organiza:Grupo Hnos.Toro (Maria Dolores Toro)"
+  },
+  {
+    "name": "Zaidin Rock",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "",
+    "phone": "958515100",
+    "notes": "Organiza:Hermanos Toro"
+  },
+  {
+    "name": "Cala Mijas",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "Festival Soles de Malaga",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "Festival de musica electronica de mal",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "Boquerón Primavera Fest",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "Weekend Beach",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "",
+    "phone": "958515100",
+    "notes": "Organiza Hnos.Toro"
+  },
+  {
+    "name": "Cervezas Alhambra",
+    "legal_name": "",
+    "contact_name": "Rosa Maria",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "Hermanos Toro",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "",
+    "phone": "958 51 51 00",
+    "notes": ""
+  },
+  {
+    "name": "Cortijo del conde",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "GRANADA",
+    "cif": "",
+    "email": "",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "Centro Hipico Mairena del Aljarafe",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "SEVILLA",
+    "cif": "",
+    "email": "",
+    "phone": "954 34 83 38/955 76 89 60",
+    "notes": "Contactar por tlf"
+  },
+  {
+    "name": "Brisa Music Festival",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "organizacion@brisafestival.com",
+    "phone": "",
+    "notes": ""
+  },
+  {
+    "name": "Turismo y Planificación Costa del Sol S.",
+    "legal_name": "",
+    "contact_name": "",
+    "address": "",
+    "province": "MALAGA",
+    "cif": "",
+    "email": "licitaciones@costadelsolmalaga.org",
+    "phone": "",
+    "notes": ""
+  }
+];
+
+function v629EnsureClientsTableAndColumns() {
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS clients (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      legal_name TEXT DEFAULT '',
+      contact_name TEXT DEFAULT '',
+      address TEXT DEFAULT '',
+      province TEXT DEFAULT '',
+      cif TEXT DEFAULT '',
+      email TEXT DEFAULT '',
+      phone TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      active INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );`);
+  } catch(e) {}
+
+  function addClientCol(name, type) {
+    try {
+      const cols = db.prepare('PRAGMA table_info(clients)').all().map(c=>c.name);
+      if(!cols.includes(name)) db.prepare(`ALTER TABLE clients ADD COLUMN "${name}" ${type}`).run();
+    } catch(e) {}
+  }
+
+  addClientCol('legal_name', 'TEXT DEFAULT ""');
+  addClientCol('contact_name', 'TEXT DEFAULT ""');
+  addClientCol('address', 'TEXT DEFAULT ""');
+  addClientCol('province', 'TEXT DEFAULT ""');
+  addClientCol('cif', 'TEXT DEFAULT ""');
+  addClientCol('email', 'TEXT DEFAULT ""');
+  addClientCol('phone', 'TEXT DEFAULT ""');
+  addClientCol('notes', 'TEXT DEFAULT ""');
+  addClientCol('active', 'INTEGER DEFAULT 1');
+}
+
+function v629DeleteDemoClients() {
+  try {
+    v629EnsureClientsTableAndColumns();
+    const cols = db.prepare('PRAGMA table_info(clients)').all().map(c=>c.name);
+    const conditions = [];
+    if(cols.includes('name')) conditions.push(`lower(name) LIKE '%demo%'`);
+    if(cols.includes('email')) conditions.push(`lower(email) LIKE '%demo%' OR lower(email) LIKE '%example.com%'`);
+    if(cols.includes('notes')) conditions.push(`lower(notes) LIKE '%demo%'`);
+    if(cols.includes('cif')) conditions.push(`lower(cif) LIKE 'demo%'`);
+    const where = conditions.length ? conditions.join(' OR ') : '0';
+    const rows = db.prepare(`SELECT id FROM clients WHERE ${where}`).all();
+    const ids = rows.map(x=>x.id);
+    if(ids.length) {
+      const qs = ids.map(()=>'?').join(',');
+      try { db.prepare(`DELETE FROM events WHERE client_id IN (${qs})`).run(...ids); } catch(e) {}
+      db.prepare(`DELETE FROM clients WHERE id IN (${qs})`).run(...ids);
+    }
+    return ids.length;
+  } catch(e) {
+    console.error('[V62.9] Delete demo clients error', e.message);
+    return 0;
+  }
+}
+
+function v629ClientExisting(client) {
+  const cols = db.prepare('PRAGMA table_info(clients)').all().map(c=>c.name);
+  const cif = String(client.cif || '').trim();
+  const email = String(client.email || '').trim();
+  const name = String(client.name || '').trim();
+  if(cif && cols.includes('cif')) {
+    const row = db.prepare('SELECT * FROM clients WHERE lower(cif)=lower(?)').get(cif);
+    if(row) return row;
+  }
+  if(email && cols.includes('email')) {
+    const firstEmail = email.split('/')[0].trim();
+    const row = db.prepare('SELECT * FROM clients WHERE lower(email)=lower(?) OR lower(email) LIKE lower(?)').get(email, '%' + firstEmail + '%');
+    if(row) return row;
+  }
+  if(name && cols.includes('name')) {
+    const row = db.prepare('SELECT * FROM clients WHERE lower(name)=lower(?)').get(name);
+    if(row) return row;
+  }
+  return null;
+}
+
+function v629UpsertRealClients() {
+  v629EnsureClientsTableAndColumns();
+  const cols = db.prepare('PRAGMA table_info(clients)').all().map(c=>c.name);
+  let imported = 0;
+  let updated = 0;
+
+  for(const client of V629_REAL_CLIENTS) {
+    const existing = v629ClientExisting(client);
+    const data = {};
+
+    if(cols.includes('name')) data.name = client.name || '';
+    if(cols.includes('legal_name')) data.legal_name = client.legal_name || '';
+    if(cols.includes('contact_name')) data.contact_name = client.contact_name || '';
+    if(cols.includes('address')) data.address = client.address || '';
+    if(cols.includes('province')) data.province = client.province || '';
+    if(cols.includes('cif')) data.cif = client.cif || '';
+    if(cols.includes('email')) data.email = client.email || '';
+    if(cols.includes('phone')) data.phone = client.phone || '';
+    if(cols.includes('notes')) data.notes = client.notes || '';
+    if(cols.includes('active')) data.active = 1;
+
+    if(existing) {
+      const keys = Object.keys(data).filter(k=>k !== 'name' || !existing.name);
+      if(keys.length) {
+        db.prepare(`UPDATE clients SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>data[k]), existing.id);
+      }
+      updated++;
+    } else {
+      const keys = Object.keys(data);
+      const qs = keys.map(()=>'?').join(',');
+      db.prepare(`INSERT INTO clients (${keys.map(k=>`"${k}"`).join(',')}) VALUES (${qs})`).run(...keys.map(k=>data[k]));
+      imported++;
+    }
+  }
+  return {imported, updated, total: V629_REAL_CLIENTS.length};
+}
+
+function v629ApplyRealClientsImport() {
+  try {
+    const deleted_demo = v629DeleteDemoClients();
+    const result = v629UpsertRealClients();
+    console.log('[V62.9] Real clients import OK', {deleted_demo, ...result});
+    return {ok:true, deleted_demo, ...result};
+  } catch(e) {
+    console.error('[V62.9] Real clients import error', e);
+    return {ok:false,error:e.message};
+  }
+}
+
+setTimeout(()=>{ try { v629ApplyRealClientsImport(); } catch(e) { console.error(e); } }, 900);
+
 // ---------- V62.8 REAL OPERATORS IMPORT API ----------
 app.post('/api/v628/import-real-operators', requireAdmin, (req,res)=>{
   try {
@@ -656,6 +1992,31 @@ app.get('/api/v628/real-operators-preview', requireAdmin, (req,res)=>{
     `).all();
     res.json({ok:true,total:rows.length,rows});
   } catch(e) {
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+
+// ---------- V62.9 REAL CLIENTS IMPORT API ----------
+app.post('/api/v629/import-real-clients', requireAdmin, (req,res)=>{
+  try{
+    const result = v629ApplyRealClientsImport();
+    res.json(result);
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+app.get('/api/v629/real-clients-preview', requireAdmin, (req,res)=>{
+  try{
+    v629EnsureClientsTableAndColumns();
+    const rows = db.prepare(`
+      SELECT id,name,legal_name,contact_name,address,province,cif,email,phone,notes,active
+      FROM clients
+      ORDER BY name COLLATE NOCASE
+    `).all();
+    res.json({ok:true,total:rows.length,rows});
+  }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
 });
@@ -895,7 +2256,7 @@ function initDb() {
 
   seedRates();
   seedSettings();
-  seedClients();
+  // seedClients(); // V62.9 desactivado: clientes reales importados desde Excel
   seedAdmin();
   // createDemoDataSafe(); // V62.8 desactivado: se usan operarios reales importados desde Excel
 }

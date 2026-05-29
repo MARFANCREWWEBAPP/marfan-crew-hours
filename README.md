@@ -1,25 +1,31 @@
 
-# V62.8 Real Operators Import
+# V62.9 Real Clients Import
 
-Base: V62.7 Persistent Data Fix.
+Base: V62.8.
 
 Hace:
-- Borra operarios demo conocidos.
-- Desactiva la creación automática de demos en initDb.
-- Importa 14 operarios reales desde Excel:
-  - Nombre
-  - Apellidos
+- Borra clientes demo.
+- Importa 109 clientes reales desde CLIENTES_MARCREW_2026.xlsx.
+- Guarda:
+  - Cliente
+  - Razón social
+  - Persona contacto
+  - Dirección
+  - Provincia
+  - CIF
+  - Mail
   - Teléfono
-  - Email
-  - DNI
-  - Nº Seguridad Social
-  - IBAN
-- Crea email interno si el Excel no trae correo: DNI@marfancrew.local
-- Upsert por DNI/email para no duplicar.
-- Endpoint manual:
-  - POST /api/v628/import-real-operators
-- Preview:
-  - GET /api/v628/real-operators-preview
+  - Observaciones
+- Upsert por CIF, email o nombre.
+- No duplica si vuelves a desplegar.
 
-Contraseña inicial para nuevos operarios:
-- Marfan1234*
+Endpoints:
+- POST /api/v629/import-real-clients
+- GET /api/v629/real-clients-preview
+
+Mantiene:
+- Operarios reales V62.8
+- Persistencia V62.7
+- Calendario
+- Google Sync
+- Formularios V46
