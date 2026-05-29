@@ -9536,3 +9536,129 @@ if(typeof openV612EventForm === 'function' && !openV612EventForm.__v6213Wrapped)
 }
 
 setInterval(patchEventSaveV6213, 1000);
+
+
+// ---------- V62.14 OPERATOR PHOTO DOCS TEAM LEAD FRONTEND ----------
+async function v6214UploadOperatorPhoto(id){
+  const input = document.getElementById('operatorPhotoInputV6214');
+  if(!input || !input.files || !input.files[0]) return;
+  const fd = new FormData();
+  fd.append('photo', input.files[0]);
+  const r = await fetch('/api/v6214/operators/'+Number(id)+'/photo', {method:'POST', body:fd, credentials:'include'});
+  const j = await r.json();
+  if(!j.ok) throw new Error(j.error || 'Error subiendo foto');
+  const img = document.getElementById('operatorPhotoPreviewV6214');
+  if(img) img.src = j.photo_url + '?v=' + Date.now();
+  return j;
+}
+async function v6214UploadOperatorDocs(id){
+  const input = document.getElementById('operatorDocsInputV6214');
+  if(!input || !input.files || !input.files.length) return;
+  const fd = new FormData();
+  [...input.files].forEach(f=>fd.append('documents', f));
+  fd.append('doc_type', document.getElementById('operatorDocTypeV6214')?.value || '');
+  const r = await fetch('/api/v6214/operators/'+Number(id)+'/documents', {method:'POST', body:fd, credentials:'include'});
+  const j = await r.json();
+  if(!j.ok) throw new Error(j.error || 'Error subiendo documentos');
+  await v6214LoadOperatorDocs(id);
+  return j;
+}
+async function v6214LoadOperatorDocs(id){
+  const box = document.getElementById('operatorDocsListV6214');
+  if(!box) return;
+  try{
+    const r = await fetch('/api/v6214/operators/'+Number(id)+'/documents', {credentials:'include', cache:'no-store'});
+    const j = await r.json();
+    if(!j.ok) throw new Error(j.error || 'Error');
+    const docs = j.documents || [];
+    box.innerHTML = docs.length ? docs.map(d=>`
+      <div class="v6214-doc-item">
+        <div><b>${v6210Esc(d.original_name || d.filename || 'Documento')}</b><br><small>${v6210Esc(d.doc_type || '')} · ${v6210Esc(d.uploaded_at || '')}</small></div>
+        <div style="display:flex;gap:8px">
+          <a class="secondary" href="${v6210Esc(d.url)}" target="_blank">Ver</a>
+          <button type="button" class="danger" onclick="v6214DeleteOperatorDoc(${Number(d.id)}, ${Number(id)})">Borrar</button>
+        </div>
+      </div>`).join('') : '<p class="muted">Sin documentos subidos.</p>';
+  }catch(e){ box.innerHTML = '<p class="muted">No se pudieron cargar documentos.</p>'; }
+}
+async function v6214DeleteOperatorDoc(docId, operatorId){
+  if(!confirm('¿Borrar este documento?')) return;
+  const r = await fetch('/api/v6214/operator-documents/'+Number(docId), {method:'DELETE', credentials:'include'});
+  const j = await r.json();
+  if(!j.ok) return alert(j.error || 'Error borrando documento');
+  await v6214LoadOperatorDocs(operatorId);
+}
+
+const __openOperatorEditV6210_v6214 = typeof openOperatorEditV6210 === 'function' ? openOperatorEditV6210 : null;
+if(__openOperatorEditV6210_v6214 && !openOperatorEditV6210.__v6214Wrapped){
+  openOperatorEditV6210 = async function(id){
+    await __openOperatorEditV6210_v6214.apply(this, arguments);
+    setTimeout(async ()=>{
+      const form = document.getElementById('operatorEditFormV6210');
+      if(!form || form.__v6214Enhanced) return;
+      form.__v6214Enhanced = true;
+      let op = {};
+      try{ op = (await v6210Fetch('/api/v6210/operators/'+Number(id)+'/edit')).operator || {}; }catch(e){}
+      const firstSection = form.querySelector('.v6210-section');
+      if(firstSection){
+        const block = document.createElement('div');
+        block.className = 'v6210-section';
+        block.innerHTML = `<h3>Fotografía del operario</h3>
+          <div class="v6214-photo-box">
+            <img id="operatorPhotoPreviewV6214" class="v6214-photo-preview" src="${op.photo_url ? v6210Esc(op.photo_url) : ''}" alt="Foto operario">
+            <div><input class="field" id="operatorPhotoInputV6214" type="file" accept="image/*"><p class="muted">Sube una fotografía del operario.</p></div>
+          </div>`;
+        form.insertBefore(block, firstSection);
+      }
+      const laboral = [...form.querySelectorAll('.v6210-section')].find(s=>(s.textContent||'').toLowerCase().includes('datos laborales'));
+      if(laboral && !laboral.querySelector('[name="is_team_lead"]')){
+        const div = document.createElement('div');
+        div.className = 'v6214-teamlead';
+        div.innerHTML = `<label><input type="checkbox" name="is_team_lead" value="1" ${Number(op.is_team_lead || op.team_lead || 0)===1?'checked':''}> Puede ser / es Jefe de equipo</label>`;
+        laboral.appendChild(div);
+      }
+      const docs = document.createElement('div');
+      docs.className = 'v6210-section';
+      docs.innerHTML = `<h3>Documentos del operario</h3>
+        <div class="v6210-grid">
+          <select class="field span-3" id="operatorDocTypeV6214"><option value="DNI/NIE">DNI/NIE</option><option value="Seguridad Social">Seguridad Social</option><option value="PRL">PRL</option><option value="EPIs">EPIs</option><option value="Contrato">Contrato</option><option value="Otros">Otros</option></select>
+          <input class="field span-7" id="operatorDocsInputV6214" type="file" multiple>
+          <button class="secondary span-2" type="button" onclick="v6214UploadOperatorDocs(${Number(id)}).catch(e=>alert(e.message))">Subir documentos</button>
+        </div><div id="operatorDocsListV6214" class="v6214-doc-list"><p class="muted">Cargando documentos...</p></div>`;
+      form.insertBefore(docs, form.querySelector('.actions'));
+      await v6214LoadOperatorDocs(id);
+      form.onsubmit = async ev=>{
+        ev.preventDefault();
+        const fd = new FormData(form);
+        const payload = Object.fromEntries(fd);
+        payload.epis_delivered = form.epis_delivered && form.epis_delivered.checked ? 1 : 0;
+        payload.has_prl = form.has_prl && form.has_prl.checked ? 1 : 0;
+        payload.is_team_lead = form.is_team_lead && form.is_team_lead.checked ? 1 : 0;
+        payload.team_lead = payload.is_team_lead;
+        try{
+          await v6210Fetch('/api/v6210/operators/'+Number(id)+'/edit', {method:'POST', body:JSON.stringify(payload)});
+          await v6214UploadOperatorPhoto(id);
+          await v6214UploadOperatorDocs(id);
+          if(typeof v534Toast === 'function') v534Toast('Operario actualizado correctamente');
+          try{ closeWizard(); }catch(e){ const root=document.getElementById('modalRoot'); if(root) root.innerHTML=''; }
+          if(typeof viewUsers === 'function') viewUsers(); else if(typeof viewOperators === 'function') viewOperators();
+        }catch(e){ alert('Error guardando operario: '+e.message); }
+      };
+    }, 250);
+  };
+  openOperatorEditV6210.__v6214Wrapped = true;
+  window.openOperatorEditV6210 = openOperatorEditV6210;
+}
+function patchCreateOperatorPhotoDocsV6214(){
+  const form = document.querySelector('form');
+  if(!form || form.__v6214CreatePatched) return;
+  const txt = (document.body.textContent||'').toLowerCase();
+  if(!(txt.includes('crear operario') || txt.includes('nuevo operario'))) return;
+  form.__v6214CreatePatched = true;
+  const block = document.createElement('div');
+  block.className = 'v6210-section';
+  block.innerHTML = `<h3>Fotografía y documentos</h3><p class="muted">Primero guarda el operario. Después podrás subir fotografía y documentos desde Editar.</p><div class="v6214-teamlead"><label><input type="checkbox" name="is_team_lead" value="1"> Puede ser / es Jefe de equipo</label></div>`;
+  const actions = form.querySelector('.actions');
+  if(actions) form.insertBefore(block, actions); else form.appendChild(block);
+}
+setInterval(patchCreateOperatorPhotoDocsV6214, 1500);

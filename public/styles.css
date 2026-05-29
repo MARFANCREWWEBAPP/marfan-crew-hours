@@ -2093,3 +2093,10 @@ nav a.active:not(.v626-active),
   .v6211-grid{grid-template-columns:1fr}
   .span-12,.span-9,.span-8,.span-7,.span-6,.span-5,.span-4,.span-3,.span-2{grid-column:span 1!important}
 }
+
+/* ---------- V62.14 OPERATOR PHOTO DOCS TEAM LEAD ---------- */
+.v6214-photo-box{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.v6214-photo-preview{width:96px;height:96px;border-radius:18px;object-fit:cover;background:#e5e7eb;border:1px solid #d1d5db}
+.v6214-doc-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.v6214-doc-item{display:flex;justify-content:space-between;gap:12px;align-items:center;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px}
+.v6214-teamlead{background:#fffbeb;border:1px solid #fbbf24;color:#92400e;border-radius:14px;padding:12px;font-weight:900}

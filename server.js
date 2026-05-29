@@ -606,7 +606,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version:'62.13.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version:'62.14.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -2111,7 +2111,9 @@ app.post('/api/v6210/operators/:id/edit', requireAdmin, (req,res)=>{
       emergency_contact_phone: b.emergency_contact_phone || '',
       internal_notes: b.internal_notes || '',
       notes: b.internal_notes || b.notes || '',
-      active: Number(b.active ?? 1)
+      active: Number(b.active ?? 1),
+      is_team_lead: Number(b.is_team_lead || 0),
+      team_lead: Number(b.is_team_lead || b.team_lead || 0)
     };
 
     const keys = Object.keys(payload).filter(k=>cols.includes(k));
@@ -2199,7 +2201,9 @@ app.post('/api/v6211/clients/:id/edit', requireAdmin, (req,res)=>{
       email: b.email || '',
       phone: b.phone || '',
       notes: b.notes || '',
-      active: Number(b.active ?? 1)
+      active: Number(b.active ?? 1),
+      is_team_lead: Number(b.is_team_lead || 0),
+      team_lead: Number(b.is_team_lead || b.team_lead || 0)
     };
 
     const keys = Object.keys(payload).filter(k=>cols.includes(k));
@@ -2434,6 +2438,125 @@ app.get('/api/v6213-admin-check', (req,res)=>{
     sessionKeys:req.session ? Object.keys(req.session) : [],
     hasUser:!!req.user
   });
+});
+
+
+// ---------- V62.14 OPERATOR PHOTO DOCS TEAM LEAD ----------
+const multer_v6214 = require('multer');
+const fs6214 = typeof fs_v627 !== 'undefined' ? fs_v627 : require('fs');
+const path6214 = typeof path_v627 !== 'undefined' ? path_v627 : require('path');
+
+function v6214DataRoot(){
+  return global.DATA_DIR_V627 || process.env.DATA_DIR || process.env.PERSISTENT_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || '/data';
+}
+function v6214UploadsRoot(){
+  const root = path6214.join(v6214DataRoot(), 'uploads', 'operators');
+  try { fs6214.mkdirSync(root, {recursive:true}); } catch(e) {}
+  return root;
+}
+function v6214EnsureOperatorColumns(){
+  if(typeof v6210EnsureOperatorEditColumns === 'function') try{ v6210EnsureOperatorEditColumns(); }catch(e){}
+  if(typeof v6212EnsureOperatorEditColumns === 'function') try{ v6212EnsureOperatorEditColumns(); }catch(e){}
+  function addUserCol(name, type){
+    try{
+      const cols = db.prepare('PRAGMA table_info(users)').all().map(c=>c.name);
+      if(!cols.includes(name)) db.prepare(`ALTER TABLE users ADD COLUMN "${name}" ${type}`).run();
+    }catch(e){}
+  }
+  addUserCol('photo_path', 'TEXT DEFAULT ""');
+  addUserCol('photo_url', 'TEXT DEFAULT ""');
+  addUserCol('is_team_lead', 'INTEGER DEFAULT 0');
+  addUserCol('team_lead', 'INTEGER DEFAULT 0');
+}
+function v6214EnsureDocsTable(){
+  db.exec(`CREATE TABLE IF NOT EXISTS operator_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    doc_type TEXT DEFAULT '',
+    filename TEXT DEFAULT '',
+    original_name TEXT DEFAULT '',
+    path TEXT DEFAULT '',
+    url TEXT DEFAULT '',
+    mime_type TEXT DEFAULT '',
+    size INTEGER DEFAULT 0,
+    uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );`);
+}
+v6214EnsureOperatorColumns();
+v6214EnsureDocsTable();
+
+const storage_v6214 = multer_v6214.diskStorage({
+  destination: function(req,file,cb){
+    try{
+      const userId = String(req.params.id || req.body.user_id || 'tmp').replace(/[^0-9a-zA-Z_-]/g,'');
+      const dir = path6214.join(v6214UploadsRoot(), userId);
+      fs6214.mkdirSync(dir, {recursive:true});
+      cb(null, dir);
+    }catch(e){ cb(e); }
+  },
+  filename: function(req,file,cb){
+    const ext = path6214.extname(file.originalname || '').toLowerCase();
+    const safeBase = String(file.originalname || 'file').replace(ext,'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9_-]+/g,'_').slice(0,60);
+    cb(null, Date.now() + '-' + safeBase + ext);
+  }
+});
+const upload_v6214 = multer_v6214({storage: storage_v6214, limits: {fileSize: 15 * 1024 * 1024}});
+
+app.use('/uploads/operators', express.static(v6214UploadsRoot()));
+
+app.post('/api/v6214/operators/:id/photo', requireAdmin, upload_v6214.single('photo'), (req,res)=>{
+  try{
+    v6214EnsureOperatorColumns();
+    const id = Number(req.params.id);
+    if(!id) return res.status(400).json({ok:false,error:'ID inválido'});
+    const user = db.prepare('SELECT id FROM users WHERE id=?').get(id);
+    if(!user) return res.status(404).json({ok:false,error:'Operario no encontrado'});
+    if(!req.file) return res.status(400).json({ok:false,error:'No se recibió fotografía'});
+    const relUrl = '/uploads/operators/' + id + '/' + req.file.filename;
+    db.prepare('UPDATE users SET photo_path=?, photo_url=? WHERE id=?').run(req.file.path, relUrl, id);
+    res.json({ok:true, photo_url:relUrl, filename:req.file.filename});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+
+app.post('/api/v6214/operators/:id/documents', requireAdmin, upload_v6214.array('documents', 12), (req,res)=>{
+  try{
+    v6214EnsureDocsTable();
+    const id = Number(req.params.id);
+    if(!id) return res.status(400).json({ok:false,error:'ID inválido'});
+    const user = db.prepare('SELECT id FROM users WHERE id=?').get(id);
+    if(!user) return res.status(404).json({ok:false,error:'Operario no encontrado'});
+    const files = req.files || [];
+    const docType = req.body.doc_type || '';
+    const stmt = db.prepare('INSERT INTO operator_documents (user_id, doc_type, filename, original_name, path, url, mime_type, size) VALUES (?,?,?,?,?,?,?,?)');
+    const created = [];
+    for(const f of files){
+      const url = '/uploads/operators/' + id + '/' + f.filename;
+      stmt.run(id, docType, f.filename, f.originalname || f.filename, f.path, url, f.mimetype || '', f.size || 0);
+      created.push({filename:f.filename, original_name:f.originalname, url, size:f.size});
+    }
+    res.json({ok:true, count:created.length, documents:created});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+
+app.get('/api/v6214/operators/:id/documents', requireAdmin, (req,res)=>{
+  try{
+    v6214EnsureDocsTable();
+    const id = Number(req.params.id);
+    const docs = db.prepare('SELECT * FROM operator_documents WHERE user_id=? ORDER BY uploaded_at DESC, id DESC').all(id);
+    res.json({ok:true, documents:docs});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+
+app.delete('/api/v6214/operator-documents/:docId', requireAdmin, (req,res)=>{
+  try{
+    v6214EnsureDocsTable();
+    const docId = Number(req.params.docId);
+    const doc = db.prepare('SELECT * FROM operator_documents WHERE id=?').get(docId);
+    if(!doc) return res.status(404).json({ok:false,error:'Documento no encontrado'});
+    try{ if(doc.path && fs6214.existsSync(doc.path)) fs6214.unlinkSync(doc.path); }catch(e){}
+    db.prepare('DELETE FROM operator_documents WHERE id=?').run(docId);
+    res.json({ok:true});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
 });
 
 app.use(express.static(path.join(__dirname, 'public')));

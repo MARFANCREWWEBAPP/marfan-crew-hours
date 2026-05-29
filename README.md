@@ -1,17 +1,11 @@
+# V62.14 Operator Photo Docs Team Lead
 
-# V62.13 Event Save Admin Auth Fix
+Añade:
+- Fotografía en edición de operario.
+- Documentos personales directamente desde edición.
+- Listado/ver/borrar documentos.
+- Casilla Jefe de equipo.
+- Archivos persistentes en /data/uploads/operators.
 
-Corrige:
-- Al editar evento y guardar salía "Solo administrador" aunque el usuario estuviera logueado como administrador.
-
-Solución:
-- Nueva ruta de guardado: POST /api/v6213/event-form-save
-- Valida sesión admin de forma más compatible.
-- Frontend envía credentials include + token/localStorage si existe.
-- Mantiene Google Calendar push si está disponible.
-
-No toca:
-- Clientes
-- Operarios
-- Calendario visual
-- Persistencia
+En creación:
+- Añade casilla jefe de equipo y aviso para subir foto/docs tras guardar.
