@@ -1,33 +1,20 @@
 
-# V62.10 Operator Edit Button
+# V62.11 Client Edit Button Fix
 
-Base: V62.9.
+Corrige:
+- En Clientes, algunos botones Editar abrían formulario de evento y daban:
+  "Error abriendo formulario de evento: Evento no encontrado"
 
 Añade:
-- Botón Editar en acciones de cada operario.
-- Modal nueva ventana "Editar operario".
-- Edición de:
-  - Nombre
-  - Apellidos
-  - Apodo/mote
-  - DNI/NIE
-  - Teléfono
-  - Email
-  - Dirección
-  - Banco
-  - IBAN
-  - Nº Seguridad Social
-  - Rol de operario
-  - EPIs / PRL
-  - Tallas
-  - Contacto emergencia
-  - Notas internas
-- Guardado real en users.
-- Usa DB persistente.
+- Formulario propio "Editar cliente".
+- Endpoint separado de eventos:
+  - GET /api/v6211/clients/:id/edit
+  - POST /api/v6211/clients/:id/edit
+- Fuerza botones Editar de clientes a abrir cliente, no evento.
 
 No toca:
+- Eventos
 - Calendario
 - Google Sync
-- Eventos
-- Clientes importados
-- Operarios importados
+- Operarios
+- Persistencia

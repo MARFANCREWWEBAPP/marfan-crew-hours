@@ -9098,3 +9098,209 @@ if(__viewOperators_v6210){
     return r;
   };
 }
+
+
+// ---------- V62.11 CLIENT EDIT BUTTON FIX FRONTEND ----------
+function v6211Esc(v){
+  if(typeof escV582 === 'function') return escV582(v);
+  if(typeof esc === 'function') return esc(v);
+  return String(v ?? '').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+}
+
+async function v6211Fetch(path, opts={}){
+  const headers = {'Content-Type':'application/json','Accept':'application/json'};
+  try{
+    if(typeof token !== 'undefined' && token) headers.Authorization = 'Bearer '+token;
+    if(window.token) headers.Authorization = 'Bearer '+window.token;
+  }catch(e){}
+  const r = await fetch(new URL(path, window.location.origin).toString(), {
+    method:opts.method || 'GET',
+    headers:{...headers, ...(opts.headers||{})},
+    body:opts.body,
+    credentials:'same-origin',
+    cache:'no-store'
+  });
+  const text = await r.text();
+  if(text.trim().startsWith('<')) throw new Error('La API ha devuelto HTML. No está entrando en la ruta de edición de cliente.');
+  let data = {};
+  try{ data = text ? JSON.parse(text) : {}; }catch(e){ data={ok:false,error:text}; }
+  if(!r.ok || data.ok === false) throw new Error(data.error || text || 'HTTP '+r.status);
+  return data;
+}
+
+async function openClientEditV6211(id){
+  id = Number(id || 0);
+  if(!id){
+    alert('No se ha podido identificar el cliente.');
+    return;
+  }
+
+  let data;
+  try{
+    data = await v6211Fetch('/api/v6211/clients/'+id+'/edit');
+  }catch(e){
+    alert('Error abriendo edición de cliente: '+e.message);
+    return;
+  }
+
+  const c = data.client || {};
+  const root = document.getElementById('modalRoot') || document.body;
+
+  root.innerHTML = `
+    <div class="modal-back">
+      <div class="modal v6211-client-modal">
+        <div class="modal-head">
+          <div>
+            <h2>Editar cliente</h2>
+            <p class="muted">${v6211Esc(c.name || 'Cliente')}</p>
+          </div>
+          <button class="secondary" onclick="closeWizard()">Cerrar</button>
+        </div>
+
+        <form id="clientEditFormV6211">
+          <div class="v6211-section">
+            <h3>Datos del cliente</h3>
+            <div class="v6211-grid">
+              <input class="field span-4" name="name" value="${v6211Esc(c.name||'')}" placeholder="Cliente" required>
+              <input class="field span-4" name="legal_name" value="${v6211Esc(c.legal_name||'')}" placeholder="Razón social">
+              <input class="field span-4" name="cif" value="${v6211Esc(c.cif||'')}" placeholder="CIF/NIF">
+              <input class="field span-4" name="contact_name" value="${v6211Esc(c.contact_name||'')}" placeholder="Persona contacto">
+              <input class="field span-4" name="email" value="${v6211Esc(c.email||'')}" placeholder="Email">
+              <input class="field span-4" name="phone" value="${v6211Esc(c.phone||'')}" placeholder="Teléfono">
+              <input class="field span-8" name="address" value="${v6211Esc(c.address||'')}" placeholder="Dirección">
+              <input class="field span-2" name="province" value="${v6211Esc(c.province||'')}" placeholder="Provincia">
+              <select class="field span-2" name="active">
+                <option value="1" ${Number(c.active ?? 1)===1?'selected':''}>Activo</option>
+                <option value="0" ${Number(c.active ?? 1)===0?'selected':''}>Inactivo</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="v6211-section">
+            <h3>Observaciones</h3>
+            <textarea class="field" name="notes" placeholder="Observaciones">${v6211Esc(c.notes||'')}</textarea>
+          </div>
+
+          <div class="actions">
+            <button class="v6211-save" type="submit">Guardar cambios</button>
+            <button type="button" class="secondary" onclick="closeWizard()">Cancelar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('clientEditFormV6211').onsubmit = async ev=>{
+    ev.preventDefault();
+    const payload = Object.fromEntries(new FormData(ev.target));
+
+    try{
+      await v6211Fetch('/api/v6211/clients/'+id+'/edit', {
+        method:'POST',
+        body:JSON.stringify(payload)
+      });
+      if(typeof v534Toast === 'function') v534Toast('Cliente actualizado correctamente');
+      try{ closeWizard(); }catch(e){ root.innerHTML=''; }
+      if(typeof viewClients === 'function') viewClients();
+    }catch(e){
+      alert('Error guardando cliente: '+e.message);
+    }
+  };
+}
+
+function v6211ExtractClientId(el){
+  if(!el) return 0;
+
+  const attrs = [
+    el.dataset && (el.dataset.clientId || el.dataset.id),
+    el.getAttribute && el.getAttribute('data-client-id'),
+    el.getAttribute && el.getAttribute('data-id'),
+    el.getAttribute && el.getAttribute('onclick'),
+    el.getAttribute && el.getAttribute('href')
+  ].filter(Boolean).join(' ');
+
+  let m = attrs.match(/(?:client|cliente|id)?[^\d]*(\d+)/i);
+  if(m) return Number(m[1]);
+
+  const row = el.closest && el.closest('[data-client-id],[data-id],tr,.card,.client-card,.cliente-card');
+  if(row){
+    const rowAttrs = [
+      row.dataset && (row.dataset.clientId || row.dataset.id),
+      row.getAttribute && row.getAttribute('data-client-id'),
+      row.getAttribute && row.getAttribute('data-id'),
+      row.innerHTML
+    ].filter(Boolean).join(' ');
+    m = rowAttrs.match(/(?:client|cliente|id)[^\d]{0,20}(\d+)/i) || rowAttrs.match(/\/clients\/(\d+)/i);
+    if(m) return Number(m[1]);
+  }
+
+  return 0;
+}
+
+function v6211PatchClientEditButtons(){
+  // Solo actuar cuando estamos en pantalla de Clientes.
+  const bodyTxt = (document.body.textContent || '').toLowerCase();
+  if(!bodyTxt.includes('cliente')) return;
+
+  // Botones editar existentes dentro de clientes: forzar a cliente, no a evento.
+  document.querySelectorAll('button,a').forEach(btn=>{
+    const txt = (btn.textContent || '').toLowerCase().trim();
+    if(txt !== 'editar' && txt !== 'editar cliente') return;
+
+    const context = btn.closest('tr,.card,.client-card,.cliente-card,[data-client-id],[data-id]');
+    if(!context) return;
+    const ctxTxt = (context.textContent || '').toLowerCase();
+
+    // Evita tocar botones de evento si por algún motivo se mezclan.
+    const looksClient = ctxTxt.includes('cif') || ctxTxt.includes('razón') || ctxTxt.includes('razon') || ctxTxt.includes('cliente') || ctxTxt.includes('@') || context.closest('#clients,#clientes,.clients,.clientes');
+    if(!looksClient) return;
+
+    const id = v6211ExtractClientId(btn) || v6211ExtractClientId(context);
+    if(!id) return;
+
+    btn.removeAttribute('onclick');
+    btn.href = 'javascript:void(0)';
+    btn.classList.add('v6211-edit-client-btn');
+    btn.textContent = 'Editar';
+    btn.onclick = ev=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      openClientEditV6211(id);
+    };
+  });
+
+  // Si hay acciones pero falta botón editar, añadirlo.
+  document.querySelectorAll('tr,.card,.client-card,.cliente-card,[data-client-id]').forEach(row=>{
+    const txt = (row.textContent || '').toLowerCase();
+    if(!txt || row.querySelector('.v6211-edit-client-btn')) return;
+    const looksClient = txt.includes('cif') || txt.includes('razón') || txt.includes('razon') || txt.includes('cliente') || txt.includes('@');
+    if(!looksClient) return;
+
+    const id = v6211ExtractClientId(row);
+    if(!id) return;
+
+    const actions = [...row.querySelectorAll('td,div')].reverse().find(c=>c.querySelector('button,a') || (c.textContent||'').toLowerCase().includes('acciones')) || row;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'v6211-edit-client-btn';
+    btn.textContent = 'Editar';
+    btn.onclick = ev=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      openClientEditV6211(id);
+    };
+    actions.prepend(btn);
+  });
+}
+
+setInterval(v6211PatchClientEditButtons, 1200);
+
+const __viewClients_v6211 = typeof viewClients === 'function' ? viewClients : null;
+if(__viewClients_v6211){
+  viewClients = async function(){
+    const r = await __viewClients_v6211.apply(this, arguments);
+    setTimeout(v6211PatchClientEditButtons, 200);
+    setTimeout(v6211PatchClientEditButtons, 800);
+    return r;
+  };
+}

@@ -606,7 +606,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version:'62.10.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version:'62.11.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -2117,6 +2117,94 @@ app.post('/api/v6210/operators/:id/edit', requireAdmin, (req,res)=>{
     const keys = Object.keys(payload).filter(k=>cols.includes(k));
     if(keys.length){
       db.prepare(`UPDATE users SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>payload[k]), id);
+    }
+
+    res.json({ok:true, id, updated:keys.length});
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+
+// ---------- V62.11 CLIENT EDIT BUTTON FIX API ----------
+function v6211EnsureClientEditColumns(){
+  try{
+    db.exec(`CREATE TABLE IF NOT EXISTS clients (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      legal_name TEXT DEFAULT '',
+      contact_name TEXT DEFAULT '',
+      address TEXT DEFAULT '',
+      province TEXT DEFAULT '',
+      cif TEXT DEFAULT '',
+      email TEXT DEFAULT '',
+      phone TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      active INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );`);
+  }catch(e){}
+
+  function addClientCol(name, type){
+    try{
+      const cols = db.prepare('PRAGMA table_info(clients)').all().map(c=>c.name);
+      if(!cols.includes(name)) db.prepare(`ALTER TABLE clients ADD COLUMN "${name}" ${type}`).run();
+    }catch(e){}
+  }
+
+  addClientCol('legal_name', 'TEXT DEFAULT ""');
+  addClientCol('contact_name', 'TEXT DEFAULT ""');
+  addClientCol('address', 'TEXT DEFAULT ""');
+  addClientCol('province', 'TEXT DEFAULT ""');
+  addClientCol('cif', 'TEXT DEFAULT ""');
+  addClientCol('email', 'TEXT DEFAULT ""');
+  addClientCol('phone', 'TEXT DEFAULT ""');
+  addClientCol('notes', 'TEXT DEFAULT ""');
+  addClientCol('active', 'INTEGER DEFAULT 1');
+}
+
+app.get('/api/v6211/clients/:id/edit', requireAdmin, (req,res)=>{
+  try{
+    v6211EnsureClientEditColumns();
+    const id = Number(req.params.id);
+    if(!id) return res.status(400).json({ok:false,error:'ID de cliente inválido'});
+    const client = db.prepare('SELECT * FROM clients WHERE id=?').get(id);
+    if(!client) return res.status(404).json({ok:false,error:'Cliente no encontrado'});
+    res.setHeader('Content-Type','application/json; charset=utf-8');
+    res.json({ok:true, client});
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+app.post('/api/v6211/clients/:id/edit', requireAdmin, (req,res)=>{
+  try{
+    v6211EnsureClientEditColumns();
+    const id = Number(req.params.id);
+    if(!id) return res.status(400).json({ok:false,error:'ID de cliente inválido'});
+
+    const exists = db.prepare('SELECT id FROM clients WHERE id=?').get(id);
+    if(!exists) return res.status(404).json({ok:false,error:'Cliente no encontrado'});
+
+    const b = req.body || {};
+    const cols = db.prepare('PRAGMA table_info(clients)').all().map(c=>c.name);
+
+    const payload = {
+      name: b.name || '',
+      legal_name: b.legal_name || '',
+      contact_name: b.contact_name || '',
+      address: b.address || '',
+      province: b.province || '',
+      cif: b.cif || '',
+      email: b.email || '',
+      phone: b.phone || '',
+      notes: b.notes || '',
+      active: Number(b.active ?? 1)
+    };
+
+    const keys = Object.keys(payload).filter(k=>cols.includes(k));
+    if(keys.length){
+      db.prepare(`UPDATE clients SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>payload[k]), id);
     }
 
     res.json({ok:true, id, updated:keys.length});
