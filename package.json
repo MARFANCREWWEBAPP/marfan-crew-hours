@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.12.0",
-  "description": "V62.12 Operator Edit ID Fix",
+  "version": "62.13.0",
+  "description": "V62.13 Event Save Admin Auth Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

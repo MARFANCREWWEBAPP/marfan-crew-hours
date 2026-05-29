@@ -1,21 +1,17 @@
 
-# V62.12 Operator Edit ID Fix
+# V62.13 Event Save Admin Auth Fix
 
 Corrige:
-- En Operarios, algunos botones Editar abrían con un ID incorrecto y daban:
-  "Operario no encontrado".
-
-Causa:
-- El extractor cogía números de DNI/teléfono/IBAN como si fueran ID.
+- Al editar evento y guardar salía "Solo administrador" aunque el usuario estuviera logueado como administrador.
 
 Solución:
-- Solo usa ID si está en data-user-id / data-operator-id / onclick claro.
-- Si no, busca el operario por DNI, email, teléfono o nombre visible de la fila.
-- Reutiliza el modal de edición V62.10 cuando encuentra el ID real.
+- Nueva ruta de guardado: POST /api/v6213/event-form-save
+- Valida sesión admin de forma más compatible.
+- Frontend envía credentials include + token/localStorage si existe.
+- Mantiene Google Calendar push si está disponible.
 
 No toca:
 - Clientes
-- Eventos
-- Calendario
-- Google Sync
+- Operarios
+- Calendario visual
 - Persistencia

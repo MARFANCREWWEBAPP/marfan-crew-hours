@@ -9438,3 +9438,101 @@ if(__viewOperators_v6212){
     return r;
   };
 }
+
+
+// ---------- V62.13 EVENT SAVE ADMIN AUTH FIX FRONTEND ----------
+function v6213AuthHeaders(){
+  const headers = {'Content-Type':'application/json','Accept':'application/json'};
+  try{
+    const keys = ['token','authToken','marfan_token','adminToken','jwt'];
+    let t = '';
+    if(typeof token !== 'undefined' && token) t = token;
+    if(window.token) t = window.token;
+    for(const k of keys){
+      if(!t && localStorage.getItem(k)) t = localStorage.getItem(k);
+      if(!t && sessionStorage.getItem(k)) t = sessionStorage.getItem(k);
+    }
+    if(t){
+      headers.Authorization = 'Bearer ' + t;
+      headers['X-Admin-Token'] = t;
+      headers['X-Auth-Token'] = t;
+    }
+  }catch(e){}
+  return headers;
+}
+
+async function v6213Fetch(path, opts={}){
+  const r = await fetch(new URL(path, window.location.origin).toString(), {
+    method:opts.method || 'GET',
+    headers:{...v6213AuthHeaders(), ...(opts.headers||{})},
+    body:opts.body,
+    credentials:'include',
+    cache:'no-store'
+  });
+  const text = await r.text();
+  if(text.trim().startsWith('<')) throw new Error('La API ha devuelto HTML.');
+  let data = {};
+  try{ data = text ? JSON.parse(text) : {}; }catch(e){ data={ok:false,error:text}; }
+  if(!r.ok || data.ok === false) throw new Error(data.error || text || 'HTTP '+r.status);
+  return data;
+}
+
+function patchEventSaveV6213(){
+  const form = document.getElementById('v612EventForm') || document.getElementById('v61EventForm') || document.getElementById('v60EditForm');
+  if(!form || form.__v6213Patched) return;
+
+  form.__v6213Patched = true;
+
+  let id = Number(window.__lastEditingEventIdV6213 || 0);
+
+  form.onsubmit = async ev=>{
+    ev.preventDefault();
+
+    const event = Object.fromEntries(new FormData(ev.target));
+    const assignments = typeof v612CollectAssignments === 'function' ? v612CollectAssignments() : [];
+
+    const possibleId = Number(event.id || event.event_id || id || window.__lastEditingEventIdV6213 || 0);
+    const qs = possibleId ? '?id=' + encodeURIComponent(possibleId) : '';
+
+    try{
+      const saved = await v6213Fetch('/api/v6213/event-form-save' + qs, {
+        method:'POST',
+        body:JSON.stringify({event, assignments})
+      });
+
+      if(saved.google && saved.google.ok){
+        if(typeof v534Toast === 'function') v534Toast('Evento guardado y sincronizado con Google');
+      }else{
+        if(typeof v534Toast === 'function') v534Toast('Evento guardado');
+      }
+
+      try{ closeWizard(); }catch(e){ const root=document.getElementById('modalRoot'); if(root) root.innerHTML=''; }
+      if(typeof showCalendarV582 === 'function') await showCalendarV582();
+      else if(typeof viewCalendar === 'function') await viewCalendar();
+    }catch(err){
+      alert('Error guardando evento: ' + err.message);
+    }
+  };
+}
+
+if(typeof openV612EventForm === 'function' && !openV612EventForm.__v6213Wrapped){
+  const oldOpenV612V6213 = openV612EventForm;
+  openV612EventForm = async function(id=0){
+    window.__lastEditingEventIdV6213 = Number(id || 0);
+    const r = await oldOpenV612V6213.apply(this, arguments);
+    setTimeout(patchEventSaveV6213, 100);
+    setTimeout(patchEventSaveV6213, 500);
+    return r;
+  };
+  openV612EventForm.__v6213Wrapped = true;
+
+  window.openV612EventForm = openV612EventForm;
+  window.openEditEventV60 = openV612EventForm;
+  window.editEventV582 = openV612EventForm;
+  window.editEventV587 = openV612EventForm;
+  window.editEventV593 = openV612EventForm;
+  window.editCalendarEventV58 = openV612EventForm;
+  window.editCalendarEventV576 = openV612EventForm;
+}
+
+setInterval(patchEventSaveV6213, 1000);
