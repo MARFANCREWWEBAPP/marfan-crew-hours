@@ -8526,3 +8526,261 @@ async function pushEventToGoogleV614(id){
     setTimeout(detectActive, 350);
   }, true);
 })();
+
+
+// ---------- V62.5 SIDEBAR SINGLE ACTIVE FIX ----------
+// Solo corrige estado visual: un único menú activo/blanco cada vez.
+// No toca navegación, calendario, login, sync ni formularios.
+
+(function(){
+  function cleanActiveV625(){
+    const selectors = [
+      '.v624-menu-btn',
+      '.v623-menu-btn',
+      '.v622-menu-btn',
+      '.v621-menu-btn',
+      '.v620-menu-item',
+      '.sidebar button',
+      '.sidebar a',
+      'aside button',
+      'aside a',
+      'nav button',
+      'nav a'
+    ].join(',');
+
+    document.querySelectorAll(selectors).forEach(el=>{
+      el.classList.remove(
+        'v624-active',
+        'v623-active',
+        'v622-active',
+        'v621-active',
+        'v620-active',
+        'active',
+        'selected',
+        'current',
+        'menu-active-calendar-v584',
+        'menu-calendar-active-v586',
+        'dashboard-active-v586',
+        'v591-menu-active',
+        'v591-menu-inactive',
+        'v59-menu-active'
+      );
+      el.removeAttribute('aria-current');
+
+      // Limpia estilos inline que puedan dejar blanco otro botón.
+      try{
+        if(!el.dataset.v625KeepStyle){
+          el.style.background = '';
+          el.style.color = '';
+          el.style.boxShadow = '';
+        }
+      }catch(e){}
+    });
+  }
+
+  function setOneActiveV625(btn){
+    cleanActiveV625();
+    if(!btn) return;
+
+    btn.classList.add('v625-active');
+
+    // Mantener compatibilidad con el menú actual V62.4.
+    if(btn.classList.contains('v624-menu-btn')) btn.classList.add('v624-active');
+
+    btn.setAttribute('aria-current','page');
+  }
+
+  if(!window.__v625SingleActiveClick){
+    window.__v625SingleActiveClick = true;
+    document.addEventListener('click', ev=>{
+      const btn = ev.target.closest && ev.target.closest('.v624-menu-btn,.v623-menu-btn,.v622-menu-btn,.v621-menu-btn,.v620-menu-item,.sidebar button,.sidebar a,aside button,aside a,nav button,nav a');
+      if(!btn) return;
+
+      const text = (btn.textContent || '').toLowerCase();
+      const isMenu = [
+        'dashboard','calendario','albaranes','control diario','gps','clientes','operarios',
+        'documentación','documentacion','tarifas','finanzas','informes','vista operario',
+        'contraseñas','contrasenas','ajustes'
+      ].some(k=>text.includes(k));
+
+      if(!isMenu) return;
+
+      setOneActiveV625(btn);
+
+      // Refuerzo después de que la vista pinte y otros scripts intenten marcar otro menú.
+      setTimeout(()=>setOneActiveV625(btn), 80);
+      setTimeout(()=>setOneActiveV625(btn), 300);
+    }, true);
+  }
+
+  // Corrige cualquier doble activo que quede ya pintado.
+  setTimeout(()=>{
+    const active = document.querySelector('.v624-menu-btn.v624-active,.v623-menu-btn.v623-active,.v622-menu-btn.v622-active,.v625-active');
+    if(active) setOneActiveV625(active);
+  }, 800);
+})();
+
+
+// ---------- V62.6 SIDEBAR GLOBAL SINGLE ACTIVE ----------
+// Corrige TODOS los menús: nunca puede quedar más de un botón blanco/activo.
+// No toca navegación, calendario, login, sync ni formularios.
+
+(function(){
+  const MENU_WORDS_V626 = [
+    'dashboard',
+    'calendario',
+    'albaranes',
+    'albaran',
+    'control diario',
+    'gps',
+    'clientes',
+    'cliente',
+    'operarios',
+    'operario',
+    'documentación',
+    'documentacion',
+    'document',
+    'tarifas',
+    'tarifa',
+    'finanzas',
+    'finanza',
+    'informes',
+    'informe',
+    'vista operario',
+    'contraseñas',
+    'contrasenas',
+    'password',
+    'ajustes',
+    'ajuste',
+    'erp'
+  ];
+
+  function norm626(v){
+    return String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+  }
+
+  function sidebar626(){
+    return document.querySelector('.v624-menu-root')
+      || document.querySelector('.v623-menu-root')
+      || document.querySelector('.v622-menu-root')
+      || document.querySelector('.sidebar')
+      || document.querySelector('[class*="sidebar"]')
+      || document.querySelector('aside')
+      || document.querySelector('nav');
+  }
+
+  function isMenuButton626(el){
+    if(!el) return false;
+    const t = norm626(el.textContent);
+    if(!t) return false;
+    return MENU_WORDS_V626.some(w => t.includes(norm626(w)));
+  }
+
+  function allSidebarItems626(){
+    const side = sidebar626();
+    if(!side) return [];
+    return [...side.querySelectorAll('button,a,[role="button"],.v624-menu-btn,.v623-menu-btn,.v622-menu-btn,.v621-menu-btn,.v620-menu-item')]
+      .filter(isMenuButton626);
+  }
+
+  function hardClear626(){
+    allSidebarItems626().forEach(el=>{
+      el.classList.remove(
+        'v626-active',
+        'v625-active',
+        'v624-active',
+        'v623-active',
+        'v622-active',
+        'v621-active',
+        'v620-active',
+        'active',
+        'selected',
+        'current',
+        'is-active',
+        'router-link-active',
+        'menu-active-calendar-v584',
+        'menu-calendar-active-v586',
+        'dashboard-active-v586',
+        'v591-menu-active',
+        'v59-menu-active'
+      );
+      el.removeAttribute('aria-current');
+      try{
+        el.style.background = '';
+        el.style.color = '';
+        el.style.boxShadow = '';
+        el.style.filter = '';
+      }catch(e){}
+    });
+  }
+
+  function setOnly626(el){
+    if(!el) return;
+    hardClear626();
+    el.classList.add('v626-active');
+
+    // compatibilidad con el sidebar actual
+    if(el.classList.contains('v624-menu-btn')) el.classList.add('v624-active');
+    if(el.classList.contains('v623-menu-btn')) el.classList.add('v623-active');
+    if(el.classList.contains('v622-menu-btn')) el.classList.add('v622-active');
+
+    el.setAttribute('aria-current','page');
+    window.__v626Current = norm626(el.textContent);
+  }
+
+  function findByText626(label){
+    const n = norm626(label);
+    return allSidebarItems626().find(el => norm626(el.textContent) === n)
+      || allSidebarItems626().find(el => norm626(el.textContent).includes(n));
+  }
+
+  function fixFromContent626(){
+    const txt = norm626((document.getElementById('content') || document.querySelector('#main') || document.body).textContent);
+    let label = null;
+
+    if(txt.includes('calendario')) label = 'Calendario de Eventos';
+    else if(txt.includes('albaran')) label = 'Albaranes Evento';
+    else if(txt.includes('control diario')) label = 'Control Diario';
+    else if(txt.includes('gps')) label = 'GPS Live';
+    else if(txt.includes('cliente')) label = 'Clientes';
+    else if(txt.includes('operario')) label = 'Operarios';
+    else if(txt.includes('document')) label = 'Documentación';
+    else if(txt.includes('tarifa')) label = 'Tarifas';
+    else if(txt.includes('finanza')) label = 'Finanzas Pro';
+    else if(txt.includes('informe')) label = 'Informes PDF';
+    else if(txt.includes('vista operario')) label = 'Vista Operario';
+    else if(txt.includes('contrasena') || txt.includes('password')) label = 'Contraseñas';
+    else if(txt.includes('ajuste') || txt.includes('erp') || txt.includes('config')) label = 'Ajustes ERP';
+    else if(txt.includes('dashboard')) label = 'Dashboard';
+
+    const el = label ? findByText626(label) : null;
+    if(el) setOnly626(el);
+  }
+
+  if(!window.__v626ClickInstalled){
+    window.__v626ClickInstalled = true;
+
+    document.addEventListener('pointerdown', ev=>{
+      const el = ev.target.closest && ev.target.closest('button,a,[role="button"],.v624-menu-btn,.v623-menu-btn,.v622-menu-btn,.v621-menu-btn,.v620-menu-item');
+      if(!isMenuButton626(el)) return;
+      setOnly626(el);
+    }, true);
+
+    document.addEventListener('click', ev=>{
+      const el = ev.target.closest && ev.target.closest('button,a,[role="button"],.v624-menu-btn,.v623-menu-btn,.v622-menu-btn,.v621-menu-btn,.v620-menu-item');
+      if(!isMenuButton626(el)) return;
+
+      setOnly626(el);
+
+      // después de que otros scripts intenten marcar otro, lo limpiamos otra vez
+      setTimeout(()=>setOnly626(el), 20);
+      setTimeout(()=>setOnly626(el), 120);
+      setTimeout(()=>setOnly626(el), 350);
+    }, true);
+  }
+
+  // Limpia estados heredados al cargar
+  setTimeout(fixFromContent626, 800);
+  setTimeout(fixFromContent626, 1800);
+
+})();

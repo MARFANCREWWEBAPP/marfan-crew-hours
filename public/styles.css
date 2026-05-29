@@ -1965,3 +1965,51 @@ body.calendar-view-active-v586 a.menu-calendar-active-v586{
   font-weight:950!important;
   box-shadow:none!important;
 }
+
+
+/* ---------- V62.5 SIDEBAR SINGLE ACTIVE FIX ---------- */
+.v625-active,
+.v624-menu-btn.v625-active,
+.v623-menu-btn.v625-active,
+.v622-menu-btn.v625-active{
+  background:#fff!important;
+  color:#111!important;
+  font-weight:950!important;
+  box-shadow:none!important;
+}
+
+
+/* ---------- V62.6 SIDEBAR GLOBAL SINGLE ACTIVE ---------- */
+
+/* Estado único ganador */
+.v626-active,
+.v624-menu-btn.v626-active,
+.v623-menu-btn.v626-active,
+.v622-menu-btn.v626-active,
+.v621-menu-btn.v626-active,
+.v620-menu-item.v626-active{
+  background:#fff!important;
+  color:#111!important;
+  font-weight:950!important;
+  box-shadow:none!important;
+}
+
+/* Cualquier activo viejo que NO sea el activo global queda apagado */
+.v624-menu-btn.v624-active:not(.v626-active),
+.v623-menu-btn.v623-active:not(.v626-active),
+.v622-menu-btn.v622-active:not(.v626-active),
+.v621-menu-btn.v621-active:not(.v626-active),
+.v620-menu-item.v620-active:not(.v626-active),
+.sidebar button.active:not(.v626-active),
+.sidebar a.active:not(.v626-active),
+aside button.active:not(.v626-active),
+aside a.active:not(.v626-active),
+nav button.active:not(.v626-active),
+nav a.active:not(.v626-active),
+.selected:not(.v626-active),
+.current:not(.v626-active){
+  background:transparent!important;
+  color:rgba(255,255,255,.74)!important;
+  box-shadow:none!important;
+  filter:none!important;
+}

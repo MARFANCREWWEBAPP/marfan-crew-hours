@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.4.0",
-  "description": "V62.4 Sidebar Instant Navigation",
+  "version": "62.6.0",
+  "description": "V62.6 Sidebar Global Single Active",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

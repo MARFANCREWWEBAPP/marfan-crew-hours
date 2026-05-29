@@ -1,16 +1,15 @@
 
-# V62.4 Sidebar Instant Navigation
+# V62.6 Sidebar Global Single Active
 
 Corrige:
-- Sensación lenta/incómoda al cambiar de menú.
-- Evita hacer click sobre el menú original.
-- Navega directo a funciones internas.
-- El activo se marca instantáneamente.
-- Sin transiciones pesadas.
+- El doble activo/blanco pasa con todos los botones.
+- Ahora cualquier click en cualquier menú limpia TODOS los activos antes de activar solo uno.
+- Refuerza pointerdown + click + timeouts cortos para ganar a otros scripts.
 
-Mantiene:
+No toca:
 - Calendario
 - Google Sync
 - Login
 - Formularios V46
 - Eventos
+- Navegación V62.4
