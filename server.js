@@ -606,7 +606,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version:'62.15.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version:'62.16.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -2701,6 +2701,201 @@ app.post('/api/v6215/event-form-save-hard', async (req,res)=>{
     }
 
     res.json({ok:true,event_id:eventId,updated:!!id,google});
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+
+// ---------- V62.16 AUTOMATIC RESTORE ON STARTUP ----------
+function v6216DataDir(){
+  return global.DATA_DIR_V627 || process.env.DATA_DIR || process.env.PERSISTENT_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || '/data';
+}
+function v6216DbPath(){
+  return process.env.DB_PATH || global.DB_PATH_V627 || (path_v627 || require('path')).join(v6216DataDir(), 'marfan-crew-hours.sqlite');
+}
+function v6216BackupDir(){
+  const pathLib = path_v627 || require('path');
+  const fsLib = fs_v627 || require('fs');
+  const dir = pathLib.join(v6216DataDir(), 'backups');
+  try{ fsLib.mkdirSync(dir, {recursive:true}); }catch(e){}
+  return dir;
+}
+function v6216UploadsDir(){
+  const pathLib = path_v627 || require('path');
+  const fsLib = fs_v627 || require('fs');
+  const dir = pathLib.join(v6216DataDir(), 'uploads');
+  try{ fsLib.mkdirSync(dir, {recursive:true}); }catch(e){}
+  return dir;
+}
+function v6216ListBackups(){
+  const pathLib = path_v627 || require('path');
+  const fsLib = fs_v627 || require('fs');
+  const dir = v6216BackupDir();
+  try{
+    return fsLib.readdirSync(dir)
+      .filter(f => f.endsWith('.sqlite') || f.endsWith('.db'))
+      .map(f => {
+        const p = pathLib.join(dir, f);
+        const st = fsLib.statSync(p);
+        return {file:f, path:p, mtime:st.mtimeMs, size:st.size};
+      })
+      .sort((a,b)=>b.mtime-a.mtime);
+  }catch(e){ return []; }
+}
+function v6216KeepOnlyTenBackups(){
+  const fsLib = fs_v627 || require('fs');
+  const backups = v6216ListBackups();
+  backups.slice(10).forEach(b => { try{ fsLib.unlinkSync(b.path); }catch(e){} });
+}
+function v6216CreateStartupBackup(){
+  const pathLib = path_v627 || require('path');
+  const fsLib = fs_v627 || require('fs');
+  try{
+    const dbPath = v6216DbPath();
+    if(!dbPath || !fsLib.existsSync(dbPath)) return null;
+    const stamp = new Date().toISOString().replace(/[:.]/g,'-');
+    const out = pathLib.join(v6216BackupDir(), `startup-v62-16-${stamp}.sqlite`);
+    fsLib.copyFileSync(dbPath, out);
+    v6216KeepOnlyTenBackups();
+    return out;
+  }catch(e){
+    console.error('[V62.16] startup backup error', e.message);
+    return null;
+  }
+}
+function v6216RestoreLatestBackupIfDbMissing(){
+  const fsLib = fs_v627 || require('fs');
+  try{
+    const dbPath = v6216DbPath();
+    const exists = dbPath && fsLib.existsSync(dbPath) && fsLib.statSync(dbPath).size > 0;
+    if(exists) return {restored:false, reason:'db_exists'};
+
+    const latest = v6216ListBackups()[0];
+    if(!latest) return {restored:false, reason:'no_backup'};
+
+    fsLib.copyFileSync(latest.path, dbPath);
+    console.log('[V62.16] Restored DB automatically from backup:', latest.path);
+    return {restored:true, from:latest.path, to:dbPath};
+  }catch(e){
+    console.error('[V62.16] restore latest backup error', e.message);
+    return {restored:false, error:e.message};
+  }
+}
+function v6216EnsureAllPersistentTables(){
+  try{ if(typeof v6215EnsureHardPersistence === 'function') v6215EnsureHardPersistence(); }catch(e){}
+  try{ if(typeof v6214EnsureDocsTable === 'function') v6214EnsureDocsTable(); }catch(e){}
+  try{ if(typeof v6214EnsureOperatorColumns === 'function') v6214EnsureOperatorColumns(); }catch(e){}
+  try{ if(typeof v6211EnsureClientEditColumns === 'function') v6211EnsureClientEditColumns(); }catch(e){}
+  try{ if(typeof v6210EnsureOperatorEditColumns === 'function') v6210EnsureOperatorEditColumns(); }catch(e){}
+}
+function v6216RestoreEventExtrasOnBoot(){
+  try{
+    v6216EnsureAllPersistentTables();
+    const rows = db.prepare('SELECT event_id FROM event_extra_data ORDER BY updated_at DESC').all();
+    let restored = 0;
+    for(const r of rows){
+      try{
+        if(typeof v6215RestoreEventExtra === 'function'){
+          v6215RestoreEventExtra(r.event_id);
+          restored++;
+        }
+      }catch(e){}
+    }
+    console.log('[V62.16] Event extras restored automatically:', restored);
+    return restored;
+  }catch(e){
+    console.error('[V62.16] event extra restore error', e.message);
+    return 0;
+  }
+}
+function v6216RestoreOperatorPhotosFromUploads(){
+  const pathLib = path_v627 || require('path');
+  const fsLib = fs_v627 || require('fs');
+  try{
+    v6216EnsureAllPersistentTables();
+    const opDir = pathLib.join(v6216UploadsDir(), 'operators');
+    if(!fsLib.existsSync(opDir)) return 0;
+    const userDirs = fsLib.readdirSync(opDir).filter(d => /^\d+$/.test(d));
+    let restored = 0;
+
+    for(const userId of userDirs){
+      const dir = pathLib.join(opDir, userId);
+      const files = fsLib.readdirSync(dir)
+        .filter(f => /\.(jpg|jpeg|png|webp|gif)$/i.test(f))
+        .map(f => {
+          const p = pathLib.join(dir, f);
+          return {f,p,mtime:fsLib.statSync(p).mtimeMs};
+        })
+        .sort((a,b)=>b.mtime-a.mtime);
+
+      if(!files.length) continue;
+      const latest = files[0];
+      const url = '/uploads/operators/' + userId + '/' + latest.f;
+
+      try{
+        const user = db.prepare('SELECT id, photo_url FROM users WHERE id=?').get(Number(userId));
+        if(user && !user.photo_url){
+          db.prepare('UPDATE users SET photo_path=?, photo_url=? WHERE id=?').run(latest.p, url, Number(userId));
+          restored++;
+        }
+      }catch(e){}
+    }
+    console.log('[V62.16] Operator photos restored automatically:', restored);
+    return restored;
+  }catch(e){
+    console.error('[V62.16] operator photo restore error', e.message);
+    return 0;
+  }
+}
+function v6216AutoRestoreEverything(){
+  const result = {
+    db: null,
+    startup_backup: null,
+    event_extras: 0,
+    photos: 0,
+    backups_kept: 0
+  };
+  try{
+    result.db = v6216RestoreLatestBackupIfDbMissing();
+    v6216EnsureAllPersistentTables();
+    result.event_extras = v6216RestoreEventExtrasOnBoot();
+    result.photos = v6216RestoreOperatorPhotosFromUploads();
+    result.startup_backup = v6216CreateStartupBackup();
+    v6216KeepOnlyTenBackups();
+    result.backups_kept = v6216ListBackups().length;
+    console.log('[V62.16] Automatic restore completed:', result);
+  }catch(e){
+    console.error('[V62.16] automatic restore error', e.message);
+    result.error = e.message;
+  }
+  global.V6216_RESTORE_STATUS = result;
+  return result;
+}
+
+// Ejecutar automáticamente al arrancar, sin pulsar nada.
+setTimeout(()=>{ try{ v6216AutoRestoreEverything(); }catch(e){ console.error(e); } }, 1200);
+
+app.get('/api/v6216-auto-restore-status', requireAdmin, (req,res)=>{
+  try{
+    res.json({
+      ok:true,
+      version:'62.16.0',
+      status:global.V6216_RESTORE_STATUS || null,
+      db_path:v6216DbPath(),
+      data_dir:v6216DataDir(),
+      uploads_dir:v6216UploadsDir(),
+      backups:v6216ListBackups().slice(0,10)
+    });
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+app.post('/api/v6216-auto-restore-now', requireAdmin, (req,res)=>{
+  try{
+    const status = v6216AutoRestoreEverything();
+    res.json({ok:true,status});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }

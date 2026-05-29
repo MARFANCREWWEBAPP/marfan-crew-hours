@@ -9804,3 +9804,22 @@ if(typeof openV612EventForm === 'function' && !openV612EventForm.__v6215Wrapped)
 }
 
 setInterval(patchEventSaveV6215, 1000);
+
+
+// ---------- V62.16 AUTOMATIC RESTORE FRONTEND ----------
+async function checkAutoRestoreV6216(){
+  try{
+    const r = await fetch('/api/v6216-auto-restore-status', {credentials:'include', cache:'no-store', headers:{'Accept':'application/json'}});
+    const j = await r.json();
+    alert(
+      'Auto-restore V62.16\n\n' +
+      'DB: ' + j.db_path + '\n' +
+      'Data: ' + j.data_dir + '\n' +
+      'Uploads: ' + j.uploads_dir + '\n' +
+      'Backups: ' + (j.backups ? j.backups.length : 0) + '\n\n' +
+      'Estado: ' + JSON.stringify(j.status || {}, null, 2)
+    );
+  }catch(e){
+    alert('No se pudo comprobar auto-restore: ' + e.message);
+  }
+}
