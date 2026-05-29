@@ -8784,3 +8784,25 @@ async function pushEventToGoogleV614(id){
   setTimeout(fixFromContent626, 1800);
 
 })();
+
+
+// ---------- V62.7 PERSISTENT DATA FRONTEND ----------
+async function checkPersistentDataV627(){
+  try{
+    const r = await fetch('/api/v627-data-status', {credentials:'same-origin', cache:'no-store', headers:{'Accept':'application/json'}});
+    const j = await r.json();
+    alert('Estado datos persistentes:\n\nDB: ' + j.db_path + '\nExiste: ' + j.exists + '\nTamaño: ' + j.size + ' bytes');
+  }catch(e){
+    alert('No se pudo comprobar persistencia: ' + e.message);
+  }
+}
+async function backupNowV627(){
+  try{
+    const r = await fetch('/api/v627-backup-now', {method:'POST', credentials:'same-origin', cache:'no-store', headers:{'Accept':'application/json'}});
+    const j = await r.json();
+    if(!j.ok) throw new Error(j.error || 'Error backup');
+    alert('Backup creado correctamente:\n' + j.backup);
+  }catch(e){
+    alert('Error creando backup: ' + e.message);
+  }
+}

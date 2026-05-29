@@ -2,6 +2,66 @@
 const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
+
+// ---------- V62.7 PERSISTENT DATA FIX ----------
+const fs_v627 = require('fs');
+const path_v627 = require('path');
+
+const DATA_DIR_V627 = process.env.DATA_DIR
+  || process.env.PERSISTENT_DATA_DIR
+  || process.env.RAILWAY_VOLUME_MOUNT_PATH
+  || '/data';
+
+try { fs_v627.mkdirSync(DATA_DIR_V627, {recursive:true}); } catch(e) {}
+
+const DB_PATH_V627 = process.env.DB_PATH
+  || process.env.SQLITE_PATH
+  || path_v627.join(DATA_DIR_V627, 'marfan-crew-hours.sqlite');
+
+function v627CopyIfExists(from, to){
+  try{
+    if(from && to && fs_v627.existsSync(from) && !fs_v627.existsSync(to)){
+      fs_v627.copyFileSync(from, to);
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
+
+function v627EnsurePersistentDb(){
+  try{
+    const localCandidates = [
+      path_v627.join(__dirname, 'database.sqlite'),
+      path_v627.join(__dirname, 'db.sqlite'),
+      path_v627.join(__dirname, 'marfan.sqlite'),
+      path_v627.join(__dirname, 'marfan-crew-hours.sqlite'),
+      path_v627.join(__dirname, 'data.sqlite'),
+      path_v627.join(__dirname, 'database.db'),
+      path_v627.join(__dirname, 'db.db'),
+      path_v627.join(__dirname, 'data', 'database.sqlite'),
+      path_v627.join(__dirname, 'data', 'db.sqlite'),
+      path_v627.join(process.cwd(), 'database.sqlite'),
+      path_v627.join(process.cwd(), 'db.sqlite'),
+      path_v627.join(process.cwd(), 'marfan-crew-hours.sqlite')
+    ];
+
+    for(const candidate of localCandidates){
+      if(v627CopyIfExists(candidate, DB_PATH_V627)){
+        console.log('[V62.7] Copied existing DB to persistent path:', DB_PATH_V627);
+        break;
+      }
+    }
+
+    process.env.DB_PATH = DB_PATH_V627;
+    process.env.SQLITE_PATH = DB_PATH_V627;
+    global.DB_PATH_V627 = DB_PATH_V627;
+    global.DATA_DIR_V627 = DATA_DIR_V627;
+  }catch(e){
+    console.error('[V62.7] Persistent DB setup error:', e.message);
+  }
+}
+v627EnsurePersistentDb();
+
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
@@ -532,6 +592,47 @@ app.post('/api/v614/event-form-save', requireAdmin, async (req,res)=>{
 app.post('/api/v614/events/:id/push-google', requireAdmin, async (req,res)=>{
   const result = await v614PushEventToGoogle(Number(req.params.id));
   res.json(result);
+});
+
+
+// ---------- V62.7 PERSISTENT DATA API ----------
+app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
+  try{
+    const dbPath = process.env.DB_PATH || global.DB_PATH_V627 || '';
+    const dataDir = global.DATA_DIR_V627 || process.env.DATA_DIR || '';
+    let exists = false;
+    let size = 0;
+    try{
+      exists = fs_v627.existsSync(dbPath);
+      size = exists ? fs_v627.statSync(dbPath).size : 0;
+    }catch(e){}
+    res.json({ok:true, version:'62.7.0', data_dir:dataDir, db_path:dbPath, exists, size});
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+app.post('/api/v627-backup-now', requireAdmin, (req,res)=>{
+  try{
+    const dbPath = process.env.DB_PATH || global.DB_PATH_V627 || '';
+    if(!dbPath || !fs_v627.existsSync(dbPath)) return res.status(404).json({ok:false,error:'Base de datos persistente no encontrada'});
+    const backupDir = path_v627.join(global.DATA_DIR_V627 || '/data', 'backups');
+    fs_v627.mkdirSync(backupDir, {recursive:true});
+    const stamp = new Date().toISOString().replace(/[:.]/g,'-');
+    const out = path_v627.join(backupDir, `manual-backup-${stamp}.sqlite`);
+    fs_v627.copyFileSync(dbPath, out);
+
+    const files = fs_v627.readdirSync(backupDir)
+      .filter(f=>f.endsWith('.sqlite') || f.endsWith('.db'))
+      .map(f=>({f, p:path_v627.join(backupDir,f), t:fs_v627.statSync(path_v627.join(backupDir,f)).mtimeMs}))
+      .sort((a,b)=>b.t-a.t);
+
+    files.slice(10).forEach(x=>{ try{fs_v627.unlinkSync(x.p);}catch(e){} });
+
+    res.json({ok:true, backup:out, kept:Math.min(files.length,10)});
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
