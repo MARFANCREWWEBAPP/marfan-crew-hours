@@ -606,7 +606,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version:'62.16.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version:'62.17.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -2880,7 +2880,7 @@ app.get('/api/v6216-auto-restore-status', requireAdmin, (req,res)=>{
   try{
     res.json({
       ok:true,
-      version:'62.16.0',
+      version:'62.17.0',
       status:global.V6216_RESTORE_STATUS || null,
       db_path:v6216DbPath(),
       data_dir:v6216DataDir(),
@@ -2900,6 +2900,108 @@ app.post('/api/v6216-auto-restore-now', requireAdmin, (req,res)=>{
     res.status(500).json({ok:false,error:e.message});
   }
 });
+
+
+// ---------- V62.17 CALENDAR AUTO SYNC + FULL EVENT DATA PERSISTENCE ----------
+function v6217Norm(v){ return String(v||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim(); }
+function v6217Date(v){ return String(v||'').slice(0,10); }
+function v6217StableKey(event){
+  if(!event) return '';
+  const googleId = event.google_event_id || event.google_id || event.gcal_id || event.googleCalendarEventId || '';
+  if(googleId) return 'google:' + String(googleId);
+  return 'event:' + v6217Date(event.event_date || event.date || event.start_date || '') + ':' + v6217Norm(event.name || event.title || event.summary || '') + ':' + v6217Norm(event.client || '');
+}
+function v6217EnsurePersistentTables(){
+  try{ db.exec(`CREATE TABLE IF NOT EXISTS event_extra_data_v2 (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER DEFAULT NULL,
+    stable_key TEXT UNIQUE NOT NULL,
+    event_date TEXT DEFAULT '',
+    event_name TEXT DEFAULT '',
+    payload_json TEXT DEFAULT '{}',
+    assignments_json TEXT DEFAULT '[]',
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );`); }catch(e){}
+  try{ if(typeof v6215EnsureHardPersistence === 'function') v6215EnsureHardPersistence(); }catch(e){}
+  try{ if(typeof v612EnsureAssignmentsColumns === 'function') v612EnsureAssignmentsColumns(); }catch(e){}
+}
+function v6217PersistEventFull(eventId,eventPayload,assignments){
+  v6217EnsurePersistentTables();
+  let event = eventPayload || {};
+  try{ event = Object.assign({}, db.prepare('SELECT * FROM events WHERE id=?').get(eventId) || {}, eventPayload || {}); }catch(e){}
+  const key = v6217StableKey(event);
+  if(!key || key==='event:::') return false;
+  db.prepare(`INSERT INTO event_extra_data_v2 (event_id,stable_key,event_date,event_name,payload_json,assignments_json,updated_at)
+    VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP)
+    ON CONFLICT(stable_key) DO UPDATE SET event_id=excluded.event_id,event_date=excluded.event_date,event_name=excluded.event_name,payload_json=excluded.payload_json,assignments_json=excluded.assignments_json,updated_at=CURRENT_TIMESTAMP`)
+    .run(eventId,key,v6217Date(event.event_date||''),String(event.name||''),JSON.stringify(eventPayload||event||{}),JSON.stringify(assignments||[]));
+  try{ if(typeof v6215PersistEventExtra === 'function') v6215PersistEventExtra(eventId,eventPayload||event,assignments||[]); }catch(e){}
+  return true;
+}
+function v6217FindExtraForEvent(event){
+  v6217EnsurePersistentTables();
+  const key = v6217StableKey(event);
+  if(key){ const row=db.prepare('SELECT * FROM event_extra_data_v2 WHERE stable_key=?').get(key); if(row) return row; }
+  const date=v6217Date(event.event_date||event.date||''); const name=v6217Norm(event.name||event.title||event.summary||'');
+  if(date && name){
+    const rows=db.prepare('SELECT * FROM event_extra_data_v2 WHERE event_date=? ORDER BY updated_at DESC').all(date);
+    return rows.find(r=>v6217Norm(r.event_name)===name || name.includes(v6217Norm(r.event_name)) || v6217Norm(r.event_name).includes(name)) || null;
+  }
+  return null;
+}
+function v6217RestoreFullForEvent(eventId){
+  v6217EnsurePersistentTables();
+  const event=db.prepare('SELECT * FROM events WHERE id=?').get(eventId); if(!event) return false;
+  const extra=v6217FindExtraForEvent(event); if(!extra) return false;
+  let payload={}, assignments=[]; try{payload=JSON.parse(extra.payload_json||'{}')}catch(e){}; try{assignments=JSON.parse(extra.assignments_json||'[]')}catch(e){}
+  const cols=db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
+  const keys=Object.keys(payload||{}).filter(k=>cols.includes(k));
+  if(keys.length) db.prepare(`UPDATE events SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>payload[k]), eventId);
+  if(assignments && assignments.length && typeof v612SaveAssignments==='function'){ try{ v612SaveAssignments(eventId, assignments.map(a=>Object.assign({},a,{event_id:eventId}))); }catch(e){} }
+  try{ db.prepare('UPDATE event_extra_data_v2 SET event_id=? WHERE id=?').run(eventId, extra.id); }catch(e){}
+  return true;
+}
+function v6217RestoreAllFullEvents(){
+  v6217EnsurePersistentTables(); let restored=0;
+  try{ for(const e of db.prepare('SELECT * FROM events').all()){ try{ if(v6217RestoreFullForEvent(e.id)) restored++; }catch(err){} } }catch(e){}
+  console.log('[V62.17] Full event data restored:', restored); return restored;
+}
+app.post('/api/v6217/event-form-save-full', async (req,res)=>{
+  try{
+    if(typeof v6213AdminSoft==='function' && !v6213AdminSoft(req)) return res.status(403).json({ok:false,error:'Solo administrador'});
+    v6217EnsurePersistentTables();
+    const id=Number(req.query.id||0), body=req.body||{};
+    const payload=(typeof v6213CleanEventPayload==='function') ? v6213CleanEventPayload(body.event||body) : (body.event||body);
+    const assignments=body.assignments||[];
+    const cols=db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
+    const keys=Object.keys(payload).filter(k=>cols.includes(k));
+    let eventId=id;
+    if(eventId){ if(!db.prepare('SELECT id FROM events WHERE id=?').get(eventId)) return res.status(404).json({ok:false,error:'Evento no encontrado'}); if(keys.length) db.prepare(`UPDATE events SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>payload[k]), eventId); }
+    else { const info=db.prepare(`INSERT INTO events (${keys.map(k=>`"${k}"`).join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>payload[k])); eventId=info.lastInsertRowid; }
+    if(typeof v612SaveAssignments==='function'){ try{ v612SaveAssignments(eventId, assignments); }catch(e){} }
+    v6217PersistEventFull(eventId,payload,assignments);
+    let google={ok:false,skipped:true,reason:'Google push no disponible'};
+    if(typeof v614PushEventToGoogle==='function'){ try{google=await v614PushEventToGoogle(eventId)}catch(e){google={ok:false,error:e.message}} }
+    try{ v6217PersistEventFull(eventId,Object.assign({},db.prepare('SELECT * FROM events WHERE id=?').get(eventId)||{},payload),assignments); }catch(e){}
+    res.json({ok:true,event_id:eventId,updated:!!id,google});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+app.post('/api/v6217/calendar-auto-sync-restore', async (req,res)=>{
+  try{
+    if(typeof v6213AdminSoft==='function' && !v6213AdminSoft(req)) return res.status(403).json({ok:false,error:'Solo administrador'});
+    let sync={ok:false,skipped:true};
+    for(const fn of ['v589SyncGoogleCalendar','v586SyncGoogleCalendar','v574SyncGoogleCalendar','syncGoogleCalendar','syncGoogleEvents']){
+      try{ if(typeof global[fn]==='function'){ sync=await global[fn](); break; } }catch(e){ sync={ok:false,error:e.message}; }
+    }
+    const restored=v6217RestoreAllFullEvents();
+    res.json({ok:true,sync,restored});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+app.get('/api/v6217/event-full/:id', requireAdmin, (req,res)=>{
+  try{ const id=Number(req.params.id); v6217RestoreFullForEvent(id); res.json({ok:true,event:db.prepare('SELECT * FROM events WHERE id=?').get(id),assignments:db.prepare('SELECT * FROM assignments WHERE event_id=?').all(id)}); }
+  catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+setTimeout(()=>{ try{ v6217RestoreAllFullEvents(); }catch(e){} }, 1800);
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads'), { maxAge: 0 }));

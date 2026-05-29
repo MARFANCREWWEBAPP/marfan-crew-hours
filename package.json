@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.16.0",
-  "description": "V62.16 Automatic Restore On Startup",
+  "version": "62.17.0",
+  "description": "V62.17 Calendar Auto Sync Event Data Persistence",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

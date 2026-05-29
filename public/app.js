@@ -9823,3 +9823,47 @@ async function checkAutoRestoreV6216(){
     alert('No se pudo comprobar auto-restore: ' + e.message);
   }
 }
+
+
+// ---------- V62.17 CALENDAR AUTO SYNC + FULL EVENT DATA PERSISTENCE FRONTEND ----------
+async function v6217Fetch(path, opts={}){
+  const headers={'Content-Type':'application/json','Accept':'application/json'};
+  try{ let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||''; if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;} }catch(e){}
+  const r=await fetch(new URL(path,window.location.origin).toString(),{method:opts.method||'GET',headers:{...headers,...(opts.headers||{})},body:opts.body,credentials:'include',cache:'no-store'});
+  const text=await r.text(); if(text.trim().startsWith('<')) throw new Error('La API ha devuelto HTML.');
+  let data={}; try{data=text?JSON.parse(text):{}}catch(e){data={ok:false,error:text}}
+  if(!r.ok || data.ok===false) throw new Error(data.error||text||'HTTP '+r.status); return data;
+}
+async function v6217CalendarAutoSyncRestore(){
+  const now=Date.now(); if(window.__v6217LastAutoSync && now-window.__v6217LastAutoSync<60000) return; window.__v6217LastAutoSync=now;
+  try{ if(typeof v534Toast==='function') v534Toast('Sincronizando calendario y restaurando datos...');
+    const r=await v6217Fetch('/api/v6217/calendar-auto-sync-restore',{method:'POST'});
+    if(typeof showCalendarV582==='function') await showCalendarV582();
+    if(typeof v534Toast==='function') v534Toast('Calendario actualizado. Datos restaurados: '+(r.restored||0));
+  }catch(e){ console.warn('[V62.17] auto sync restore error', e.message); }
+}
+function patchEventSaveV6217(){
+  const form=document.getElementById('v612EventForm')||document.getElementById('v61EventForm')||document.getElementById('v60EditForm');
+  if(!form || form.__v6217Patched) return; form.__v6217Patched=true;
+  const id=Number(window.__lastEditingEventIdV6217||window.__lastEditingEventIdV6215||window.__lastEditingEventIdV6213||0);
+  form.onsubmit=async ev=>{
+    ev.preventDefault();
+    const event=Object.fromEntries(new FormData(ev.target));
+    const assignments=typeof v612CollectAssignments==='function'?v612CollectAssignments():[];
+    const possibleId=Number(event.id||event.event_id||id||window.__lastEditingEventIdV6217||0);
+    try{ const saved=await v6217Fetch('/api/v6217/event-form-save-full'+(possibleId?'?id='+encodeURIComponent(possibleId):''),{method:'POST',body:JSON.stringify({event,assignments})});
+      if(typeof v534Toast==='function') v534Toast(saved.google&&saved.google.ok?'Evento guardado y sincronizado':'Evento guardado con datos completos');
+      try{closeWizard()}catch(e){const root=document.getElementById('modalRoot'); if(root) root.innerHTML='';}
+      if(typeof showCalendarV582==='function') await showCalendarV582(); else if(typeof viewCalendar==='function') await viewCalendar();
+    }catch(err){ alert('Error guardando evento: '+err.message); }
+  };
+}
+if(typeof openV612EventForm==='function' && !openV612EventForm.__v6217Wrapped){
+  const old=openV612EventForm;
+  openV612EventForm=async function(id=0){ window.__lastEditingEventIdV6217=Number(id||0); if(Number(id)){try{await v6217Fetch('/api/v6217/event-full/'+Number(id));}catch(e){}}
+    const r=await old.apply(this,arguments); setTimeout(patchEventSaveV6217,100); setTimeout(patchEventSaveV6217,500); return r; };
+  openV612EventForm.__v6217Wrapped=true; window.openV612EventForm=openV612EventForm; window.openEditEventV60=openV612EventForm; window.editEventV582=openV612EventForm; window.editEventV587=openV612EventForm; window.editEventV593=openV612EventForm; window.editCalendarEventV58=openV612EventForm; window.editCalendarEventV576=openV612EventForm;
+}
+if(typeof viewCalendar==='function' && !viewCalendar.__v6217Wrapped){ const old=viewCalendar; viewCalendar=async function(){const r=await old.apply(this,arguments); setTimeout(v6217CalendarAutoSyncRestore,600); return r;}; viewCalendar.__v6217Wrapped=true; window.viewCalendar=viewCalendar; }
+if(typeof showCalendarV582==='function' && !showCalendarV582.__v6217Wrapped){ const old=showCalendarV582; showCalendarV582=async function(){const r=await old.apply(this,arguments); setTimeout(patchEventSaveV6217,300); return r;}; showCalendarV582.__v6217Wrapped=true; window.showCalendarV582=showCalendarV582; }
+setInterval(patchEventSaveV6217,1000);
