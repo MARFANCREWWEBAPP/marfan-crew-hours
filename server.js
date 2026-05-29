@@ -606,7 +606,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version:'62.11.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version:'62.12.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -2208,6 +2208,105 @@ app.post('/api/v6211/clients/:id/edit', requireAdmin, (req,res)=>{
     }
 
     res.json({ok:true, id, updated:keys.length});
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+
+// ---------- V62.12 OPERATOR EDIT ID FIX API ----------
+function v6212EnsureOperatorEditColumns(){
+  if(typeof v6210EnsureOperatorEditColumns === 'function'){
+    try{ v6210EnsureOperatorEditColumns(); }catch(e){}
+  }
+  function addUserCol(name, type){
+    try{
+      const cols = db.prepare('PRAGMA table_info(users)').all().map(c=>c.name);
+      if(!cols.includes(name)) db.prepare(`ALTER TABLE users ADD COLUMN "${name}" ${type}`).run();
+    }catch(e){}
+  }
+  addUserCol('nickname', 'TEXT DEFAULT ""');
+  addUserCol('dni', 'TEXT DEFAULT ""');
+  addUserCol('iban', 'TEXT DEFAULT ""');
+  addUserCol('bank_iban', 'TEXT DEFAULT ""');
+  addUserCol('bank_name', 'TEXT DEFAULT ""');
+  addUserCol('social_security_number', 'TEXT DEFAULT ""');
+  addUserCol('full_address', 'TEXT DEFAULT ""');
+  addUserCol('address', 'TEXT DEFAULT ""');
+  addUserCol('operator_role_name', 'TEXT DEFAULT ""');
+  addUserCol('operator_role_id', 'INTEGER DEFAULT NULL');
+  addUserCol('shirt_size', 'TEXT DEFAULT ""');
+  addUserCol('pants_size', 'TEXT DEFAULT ""');
+  addUserCol('shoe_size', 'TEXT DEFAULT ""');
+  addUserCol('epis_delivered', 'INTEGER DEFAULT 0');
+  addUserCol('has_prl', 'INTEGER DEFAULT 0');
+  addUserCol('emergency_contact_name', 'TEXT DEFAULT ""');
+  addUserCol('emergency_contact_phone', 'TEXT DEFAULT ""');
+  addUserCol('internal_notes', 'TEXT DEFAULT ""');
+  addUserCol('notes', 'TEXT DEFAULT ""');
+  addUserCol('active', 'INTEGER DEFAULT 1');
+}
+
+function v6212FindOperatorFlexible(q){
+  v6212EnsureOperatorEditColumns();
+  const cols = db.prepare('PRAGMA table_info(users)').all().map(c=>c.name);
+  const id = Number(q.id || 0);
+
+  if(id){
+    const byId = db.prepare(`SELECT * FROM users WHERE id=? AND COALESCE(role,'')!='admin'`).get(id);
+    if(byId) return byId;
+  }
+
+  const dni = String(q.dni || '').trim();
+  if(dni && cols.includes('dni')){
+    const row = db.prepare(`SELECT * FROM users WHERE lower(dni)=lower(?) AND COALESCE(role,'')!='admin'`).get(dni);
+    if(row) return row;
+  }
+
+  const email = String(q.email || '').trim();
+  if(email && cols.includes('email')){
+    const row = db.prepare(`SELECT * FROM users WHERE lower(email)=lower(?) AND COALESCE(role,'')!='admin'`).get(email);
+    if(row) return row;
+  }
+
+  const phoneRaw = String(q.phone || '').trim();
+  if(phoneRaw && cols.includes('phone')){
+    const digits = phoneRaw.replace(/\D/g,'');
+    if(digits){
+      const rows = db.prepare(`SELECT * FROM users WHERE COALESCE(role,'')!='admin'`).all();
+      const found = rows.find(u => String(u.phone||'').replace(/\D/g,'') === digits);
+      if(found) return found;
+    }
+  }
+
+  const name = String(q.name || '').trim().toLowerCase();
+  if(name){
+    const rows = db.prepare(`SELECT * FROM users WHERE COALESCE(role,'')!='admin'`).all();
+    const norm = s => String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
+    const n = norm(name);
+    const found = rows.find(u=>{
+      const full1 = norm((u.first_name||'') + ' ' + (u.last_name||''));
+      const full2 = norm((u.last_name||'') + ' ' + (u.first_name||''));
+      const nick = norm(u.nickname||'');
+      return (full1 && n.includes(full1)) || (full2 && n.includes(full2)) || (nick && n.includes(nick));
+    });
+    if(found) return found;
+  }
+
+  return null;
+}
+
+app.post('/api/v6212/operators/find-edit', requireAdmin, (req,res)=>{
+  try{
+    const operator = v6212FindOperatorFlexible(req.body || {});
+    if(!operator) return res.status(404).json({ok:false,error:'Operario no encontrado'});
+    let roles = [];
+    try{
+      roles = db.prepare(`SELECT * FROM rates WHERE COALESCE(active,1)!=0 ORDER BY role COLLATE NOCASE`).all();
+    }catch(e){
+      try{ roles = db.prepare(`SELECT * FROM operator_roles ORDER BY role COLLATE NOCASE`).all(); }catch(_e){}
+    }
+    res.json({ok:true, operator, roles});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }

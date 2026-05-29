@@ -1,20 +1,21 @@
 
-# V62.11 Client Edit Button Fix
+# V62.12 Operator Edit ID Fix
 
 Corrige:
-- En Clientes, algunos botones Editar abrían formulario de evento y daban:
-  "Error abriendo formulario de evento: Evento no encontrado"
+- En Operarios, algunos botones Editar abrían con un ID incorrecto y daban:
+  "Operario no encontrado".
 
-Añade:
-- Formulario propio "Editar cliente".
-- Endpoint separado de eventos:
-  - GET /api/v6211/clients/:id/edit
-  - POST /api/v6211/clients/:id/edit
-- Fuerza botones Editar de clientes a abrir cliente, no evento.
+Causa:
+- El extractor cogía números de DNI/teléfono/IBAN como si fueran ID.
+
+Solución:
+- Solo usa ID si está en data-user-id / data-operator-id / onclick claro.
+- Si no, busca el operario por DNI, email, teléfono o nombre visible de la fila.
+- Reutiliza el modal de edición V62.10 cuando encuentra el ID real.
 
 No toca:
+- Clientes
 - Eventos
 - Calendario
 - Google Sync
-- Operarios
 - Persistencia

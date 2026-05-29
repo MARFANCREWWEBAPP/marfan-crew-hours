@@ -9304,3 +9304,137 @@ if(__viewClients_v6211){
     return r;
   };
 }
+
+
+// ---------- V62.12 OPERATOR EDIT ID FIX FRONTEND ----------
+function v6212RowPayload(row, id){
+  const text = row ? (row.textContent || '') : '';
+  const html = row ? (row.innerHTML || '') : '';
+
+  const dni = (text.match(/\b[XYZ]?\d{7,8}[A-Z]\b/i) || [])[0] || '';
+  const email = (text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i) || [])[0] || '';
+  const phones = text.match(/(?:\+34\s*)?(?:\d[\s.-]*){9,}/g) || [];
+  const phone = phones.map(p=>p.trim()).find(p=>p.replace(/\D/g,'').length >= 9) || '';
+
+  return {
+    id:Number(id||0),
+    dni,
+    email,
+    phone,
+    name:text.trim().replace(/\s+/g,' ').slice(0,300)
+  };
+}
+
+async function openOperatorEditV6212FromPayload(payload){
+  let data;
+  try{
+    data = await v6210Fetch('/api/v6212/operators/find-edit', {
+      method:'POST',
+      body:JSON.stringify(payload || {})
+    });
+  }catch(e){
+    alert('Error abriendo edición de operario: '+e.message);
+    return;
+  }
+
+  // Reutiliza el modal original V62.10, pero con el ID correcto encontrado por backend.
+  const realId = Number((data.operator || {}).id || 0);
+  if(!realId){
+    alert('Error abriendo edición de operario: Operario no encontrado');
+    return;
+  }
+
+  // Inyectamos una cache temporal para evitar que el endpoint antiguo falle por ID equivocado.
+  try{
+    window.__v6212LastOperatorData = data;
+  }catch(e){}
+
+  await openOperatorEditV6210(realId);
+}
+
+function v6212ExtractSafeId(el){
+  if(!el) return 0;
+
+  // Solo aceptar IDs de atributos explícitos. No coger DNI/teléfono del HTML.
+  const explicit = [
+    el.dataset && (el.dataset.userId || el.dataset.operatorId),
+    el.getAttribute && el.getAttribute('data-user-id'),
+    el.getAttribute && el.getAttribute('data-operator-id')
+  ].filter(Boolean).join(' ');
+
+  let m = explicit.match(/\b(\d{1,6})\b/);
+  if(m) return Number(m[1]);
+
+  const onclick = el.getAttribute && (el.getAttribute('onclick') || '');
+  m = onclick.match(/(?:edit|operator|user|operario)[^\d]{0,40}(\d{1,6})/i);
+  if(m) return Number(m[1]);
+
+  const row = el.closest && el.closest('[data-user-id],[data-operator-id],tr,.card,.operator-card,.user-card');
+  if(row){
+    const rowExplicit = [
+      row.dataset && (row.dataset.userId || row.dataset.operatorId),
+      row.getAttribute && row.getAttribute('data-user-id'),
+      row.getAttribute && row.getAttribute('data-operator-id')
+    ].filter(Boolean).join(' ');
+    m = rowExplicit.match(/\b(\d{1,6})\b/);
+    if(m) return Number(m[1]);
+  }
+
+  return 0;
+}
+
+// Sobrescribir el extractor anterior para que no confunda DNI/teléfono con ID.
+v6210ExtractOperatorIdFromElement = v6212ExtractSafeId;
+
+// Repatch fuerte de botones editar de operarios.
+function v6212PatchOperatorEditButtons(){
+  const bodyTxt = (document.body.textContent || '').toLowerCase();
+  if(!bodyTxt.includes('operario')) return;
+
+  document.querySelectorAll('.v6210-edit-operator-btn, button, a').forEach(btn=>{
+    const txt = (btn.textContent || '').toLowerCase().trim();
+    if(txt !== 'editar' && !btn.classList.contains('v6210-edit-operator-btn')) return;
+
+    const row = btn.closest && btn.closest('tr,.card,.operator-card,.user-card,[data-user-id],[data-operator-id]');
+    if(!row) return;
+
+    const rowText = (row.textContent || '').toLowerCase();
+    const looksOperator = rowText.includes('dni') || rowText.includes('iban') || rowText.includes('seguridad social') || rowText.includes('operario') || rowText.includes('@marfancrew.local') || row.closest('#users,#operators,#operarios,.users,.operators,.operarios');
+    if(!looksOperator) return;
+
+    const safeId = v6212ExtractSafeId(btn) || v6212ExtractSafeId(row);
+    const payload = v6212RowPayload(row, safeId);
+
+    btn.removeAttribute('onclick');
+    btn.href = 'javascript:void(0)';
+    btn.classList.add('v6210-edit-operator-btn');
+    btn.textContent = 'Editar';
+    btn.onclick = ev=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      openOperatorEditV6212FromPayload(payload);
+    };
+  });
+}
+
+setInterval(v6212PatchOperatorEditButtons, 900);
+
+const __viewUsers_v6212 = typeof viewUsers === 'function' ? viewUsers : null;
+if(__viewUsers_v6212){
+  viewUsers = async function(){
+    const r = await __viewUsers_v6212.apply(this, arguments);
+    setTimeout(v6212PatchOperatorEditButtons, 150);
+    setTimeout(v6212PatchOperatorEditButtons, 700);
+    return r;
+  };
+}
+
+const __viewOperators_v6212 = typeof viewOperators === 'function' ? viewOperators : null;
+if(__viewOperators_v6212){
+  viewOperators = async function(){
+    const r = await __viewOperators_v6212.apply(this, arguments);
+    setTimeout(v6212PatchOperatorEditButtons, 150);
+    setTimeout(v6212PatchOperatorEditButtons, 700);
+    return r;
+  };
+}
