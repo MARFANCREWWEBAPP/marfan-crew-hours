@@ -606,7 +606,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version:'62.18.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version:'62.19.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -2880,7 +2880,7 @@ app.get('/api/v6216-auto-restore-status', requireAdmin, (req,res)=>{
   try{
     res.json({
       ok:true,
-      version:'62.18.0',
+      version:'62.19.0',
       status:global.V6216_RESTORE_STATUS || null,
       db_path:v6216DbPath(),
       data_dir:v6216DataDir(),
@@ -3176,6 +3176,126 @@ app.post('/api/v6218/calendar-restore-now', async (req,res)=>{
   }catch(e){ res.status(500).json({ok:false,error:e.message}); }
 });
 setTimeout(()=>{ try{ console.log('[V62.18] restored snapshots', v6218RestoreAll()); }catch(e){} }, 2200);
+
+
+// ---------- V62.19 EVENT OPERATORS ROLES HARD SAVE ----------
+function v6219EnsureAssignmentsHard(){
+  try{
+    db.exec(`CREATE TABLE IF NOT EXISTS assignments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      service_role TEXT DEFAULT '',
+      planned_start TEXT DEFAULT '',
+      planned_end TEXT DEFAULT '',
+      status TEXT DEFAULT 'asignado',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );`);
+  }catch(e){}
+  function addCol(name,type){
+    try{
+      const cols = db.prepare('PRAGMA table_info(assignments)').all().map(c=>c.name);
+      if(!cols.includes(name)) db.prepare(`ALTER TABLE assignments ADD COLUMN "${name}" ${type}`).run();
+    }catch(e){}
+  }
+  addCol('role_id','INTEGER DEFAULT NULL');
+  addCol('shift_type','TEXT DEFAULT "D"');
+  addCol('hourly_rate','REAL DEFAULT 0');
+  addCol('is_team_lead','INTEGER DEFAULT 0');
+  addCol('notes','TEXT DEFAULT ""');
+}
+function v6219NormalizeAssignments(rows){
+  rows = Array.isArray(rows) ? rows : [];
+  return rows.map(r => ({
+    user_id: Number(r.user_id || r.operator_id || r.worker_id || 0),
+    role_id: r.role_id ? Number(r.role_id) : null,
+    service_role: String(r.service_role || r.role_name || r.operator_role_name || r.role || '').trim(),
+    shift_type: String(r.shift_type || r.shift || 'D').trim() || 'D',
+    planned_start: String(r.planned_start || r.start_time || r.start || '').trim(),
+    planned_end: String(r.planned_end || r.end_time || r.end || '').trim(),
+    hourly_rate: Number(r.hourly_rate || r.rate || r.price || 0),
+    is_team_lead: Number(r.is_team_lead || r.team_lead || r.lead || 0),
+    status: String(r.status || 'asignado'),
+    notes: String(r.notes || '')
+  })).filter(r => r.user_id);
+}
+function v6219SaveAssignmentsHard(eventId, rows){
+  v6219EnsureAssignmentsHard();
+  const assignments = v6219NormalizeAssignments(rows);
+  const cols = db.prepare('PRAGMA table_info(assignments)').all().map(c=>c.name);
+  const allowed = ['event_id','user_id','service_role','planned_start','planned_end','status','role_id','shift_type','hourly_rate','is_team_lead','notes'].filter(c=>cols.includes(c));
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM assignments WHERE event_id=?').run(eventId);
+    if(!assignments.length) return;
+    const stmt = db.prepare(`INSERT INTO assignments (${allowed.map(c=>`"${c}"`).join(',')}) VALUES (${allowed.map(()=>'?').join(',')})`);
+    for(const a of assignments){
+      const item = Object.assign({}, a, {event_id:eventId});
+      stmt.run(...allowed.map(c=>item[c]));
+    }
+  });
+  tx();
+  return assignments.length;
+}
+function v6219GetAssignmentsFull(eventId){
+  v6219EnsureAssignmentsHard();
+  try{
+    return db.prepare(`
+      SELECT a.*, 
+        u.first_name, u.last_name, u.nickname, u.phone, u.email,
+        COALESCE(r.role, r.name, a.service_role) AS resolved_role
+      FROM assignments a
+      LEFT JOIN users u ON u.id=a.user_id
+      LEFT JOIN rates r ON r.id=a.role_id
+      WHERE a.event_id=?
+      ORDER BY COALESCE(a.is_team_lead,0) DESC, u.first_name, u.last_name
+    `).all(eventId);
+  }catch(e){
+    try{
+      return db.prepare(`
+        SELECT a.*, u.first_name, u.last_name, u.nickname, u.phone, u.email
+        FROM assignments a
+        LEFT JOIN users u ON u.id=a.user_id
+        WHERE a.event_id=?
+        ORDER BY COALESCE(a.is_team_lead,0) DESC, u.first_name, u.last_name
+      `).all(eventId);
+    }catch(_e){ return []; }
+  }
+}
+function v6219PersistAssignmentsSnapshot(eventId, assignments){
+  try{
+    if(typeof v6218SaveSnapshot === 'function'){
+      const ev = db.prepare('SELECT * FROM events WHERE id=?').get(eventId) || {};
+      v6218SaveSnapshot(eventId, ev, assignments);
+    }
+    if(typeof v6217PersistEventFull === 'function'){
+      const ev = db.prepare('SELECT * FROM events WHERE id=?').get(eventId) || {};
+      v6217PersistEventFull(eventId, ev, assignments);
+    }
+    if(typeof v6215PersistEventExtra === 'function'){
+      const ev = db.prepare('SELECT * FROM events WHERE id=?').get(eventId) || {};
+      v6215PersistEventExtra(eventId, ev, assignments);
+    }
+  }catch(e){}
+}
+app.post('/api/v6219/events/:id/assignments-hard-save', async (req,res)=>{
+  try{
+    if(typeof v6213AdminSoft === 'function' && !v6213AdminSoft(req)) return res.status(403).json({ok:false,error:'Solo administrador'});
+    const eventId = Number(req.params.id);
+    if(!eventId) return res.status(400).json({ok:false,error:'ID de evento inválido'});
+    const exists = db.prepare('SELECT id FROM events WHERE id=?').get(eventId);
+    if(!exists) return res.status(404).json({ok:false,error:'Evento no encontrado'});
+    const assignments = v6219NormalizeAssignments((req.body || {}).assignments || req.body || []);
+    const count = v6219SaveAssignmentsHard(eventId, assignments);
+    v6219PersistAssignmentsSnapshot(eventId, assignments);
+    res.json({ok:true,event_id:eventId,count,assignments:v6219GetAssignmentsFull(eventId)});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+app.get('/api/v6219/events/:id/assignments-full', requireAdmin, (req,res)=>{
+  try{
+    const eventId = Number(req.params.id);
+    res.json({ok:true,event_id:eventId,assignments:v6219GetAssignmentsFull(eventId)});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads'), { maxAge: 0 }));

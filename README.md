@@ -1,3 +1,3 @@
-# V62.18 Calendar Data Real Fix + Header Sync
+# V62.19 Event Operators Roles Hard Save
 
-Corrige título de página al cambiar menú y guarda/rellena snapshot real de eventos con localización, operarios y roles.
+Corrige guardado/carga de operarios asignados, roles y jefe de equipo en eventos.

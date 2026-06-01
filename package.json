@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.18.0",
-  "description": "V62.18 Calendar Data Real Fix Header Sync",
+  "version": "62.19.0",
+  "description": "V62.19 Event Operators Roles Hard Save",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

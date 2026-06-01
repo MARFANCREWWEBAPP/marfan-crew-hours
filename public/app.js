@@ -9972,3 +9972,119 @@ if(typeof showCalendarV582==='function' && !showCalendarV582.__v6218Wrapped){
   showCalendarV582.__v6218Wrapped=true; window.showCalendarV582=showCalendarV582;
 }
 setInterval(patchEventSaveV6218,1000);
+
+
+// ---------- V62.19 EVENT OPERATORS ROLES HARD SAVE FRONTEND ----------
+function v6219AssignmentRows(){
+  return [...document.querySelectorAll('#v612Assignments .v612-assignment,.v612-assignment,#v61Assignments .v61-assignment,.v61-assignment,[data-assignment-row]')];
+}
+function v6219CollectAssignmentsHard(){
+  const rows = v6219AssignmentRows();
+  return rows.map(row=>{
+    const get = names => {
+      for(const n of names){
+        const el = row.querySelector(`[name="${n}"],[data-field="${n}"]`);
+        if(el) return el.type === 'checkbox' ? (el.checked ? 1 : 0) : el.value;
+      }
+      return '';
+    };
+    const roleSel = row.querySelector('[name="role_id"],[data-field="role_id"]');
+    const roleOpt = roleSel && roleSel.options ? roleSel.options[roleSel.selectedIndex] : null;
+    const serviceRole = get(['service_role','role_name','operator_role_name']) || (roleOpt ? (roleOpt.dataset.name || roleOpt.textContent || '') : '');
+    return {
+      user_id: Number(get(['user_id','operator_id','worker_id']) || 0),
+      role_id: get(['role_id']) ? Number(get(['role_id'])) : null,
+      service_role: String(serviceRole || '').trim(),
+      shift_type: get(['shift_type','shift']) || 'D',
+      planned_start: get(['planned_start','start_time','start']) || '',
+      planned_end: get(['planned_end','end_time','end']) || '',
+      hourly_rate: Number(get(['hourly_rate','rate','price']) || (roleOpt ? roleOpt.dataset.day || roleOpt.dataset.rate || 0 : 0) || 0),
+      is_team_lead: Number(get(['is_team_lead','team_lead','lead']) || 0),
+      status: 'asignado'
+    };
+  }).filter(a=>a.user_id);
+}
+async function v6219Fetch(path, opts={}){
+  const headers={'Content-Type':'application/json','Accept':'application/json'};
+  try{ let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||''; if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;} }catch(e){}
+  const r=await fetch(new URL(path,window.location.origin).toString(),{method:opts.method||'GET',headers:{...headers,...(opts.headers||{})},body:opts.body,credentials:'include',cache:'no-store'});
+  const text=await r.text(); if(text.trim().startsWith('<')) throw new Error('La API ha devuelto HTML.');
+  let data={}; try{data=text?JSON.parse(text):{}}catch(e){data={ok:false,error:text}}
+  if(!r.ok||data.ok===false) throw new Error(data.error||text||'HTTP '+r.status); return data;
+}
+async function v6219SaveAssignmentsHard(eventId){
+  const assignments = v6219CollectAssignmentsHard();
+  if(!eventId) return {ok:false,count:assignments.length};
+  return await v6219Fetch('/api/v6219/events/'+Number(eventId)+'/assignments-hard-save', {
+    method:'POST',
+    body:JSON.stringify({assignments})
+  });
+}
+async function v6219LoadAssignmentsIntoForm(eventId){
+  if(!eventId || typeof v612AddAssignment !== 'function') return;
+  try{
+    const data = await v6219Fetch('/api/v6219/events/'+Number(eventId)+'/assignments-full');
+    const assignments = data.assignments || [];
+    if(!assignments.length) return;
+    const box = document.getElementById('v612Assignments');
+    if(box) box.innerHTML = '';
+    const users = window.__v612Users || [];
+    const roles = window.__v612Roles || [];
+    assignments.forEach(a=>{
+      v612AddAssignment(users, roles, {
+        user_id: a.user_id,
+        role_id: a.role_id,
+        service_role: a.service_role || a.resolved_role || '',
+        shift_type: a.shift_type || 'D',
+        planned_start: a.planned_start || '',
+        planned_end: a.planned_end || '',
+        hourly_rate: a.hourly_rate || 0,
+        is_team_lead: a.is_team_lead || 0,
+        status: a.status || 'asignado'
+      });
+    });
+  }catch(e){ console.warn('[V62.19] load assignments', e.message); }
+}
+function patchEventSaveV6219(){
+  const form=document.getElementById('v612EventForm')||document.getElementById('v61EventForm')||document.getElementById('v60EditForm');
+  if(!form || form.__v6219Patched) return;
+  form.__v6219Patched = true;
+  const previousSubmit = form.onsubmit;
+  form.onsubmit = async ev=>{
+    ev.preventDefault();
+    const eventId = Number(window.__lastEditingEventIdV6218 || window.__lastEditingEventIdV6217 || window.__lastEditingEventIdV6215 || window.__lastEditingEventIdV6213 || 0);
+    const event = Object.fromEntries(new FormData(form));
+    const assignments = v6219CollectAssignmentsHard();
+    try{
+      // Guardado completo de evento si existe la ruta V62.18
+      const possibleId = Number(event.id || event.event_id || eventId || 0);
+      let saved = null;
+      if(possibleId){
+        saved = await v6219Fetch('/api/v6218/event-save-real?id='+encodeURIComponent(possibleId), {method:'POST', body:JSON.stringify({event, assignments})});
+        await v6219SaveAssignmentsHard(possibleId);
+      }else{
+        saved = await v6219Fetch('/api/v6218/event-save-real', {method:'POST', body:JSON.stringify({event, assignments})});
+        if(saved && saved.event_id) await v6219SaveAssignmentsHard(saved.event_id);
+      }
+      if(typeof v534Toast === 'function') v534Toast('Evento guardado con operarios y roles');
+      try{ closeWizard(); }catch(e){ const root=document.getElementById('modalRoot'); if(root) root.innerHTML=''; }
+      if(typeof showCalendarV582 === 'function') await showCalendarV582(); else if(typeof viewCalendar === 'function') await viewCalendar();
+    }catch(err){
+      alert('Error guardando evento: '+err.message);
+    }
+  };
+}
+if(typeof openV612EventForm === 'function' && !openV612EventForm.__v6219Wrapped){
+  const oldOpen = openV612EventForm;
+  openV612EventForm = async function(id=0){
+    window.__lastEditingEventIdV6219 = Number(id||0);
+    const r = await oldOpen.apply(this, arguments);
+    setTimeout(()=>v6219LoadAssignmentsIntoForm(id), 450);
+    setTimeout(patchEventSaveV6219, 500);
+    setTimeout(patchEventSaveV6219, 1000);
+    return r;
+  };
+  openV612EventForm.__v6219Wrapped = true;
+  window.openV612EventForm=openV612EventForm; window.openEditEventV60=openV612EventForm; window.editEventV582=openV612EventForm; window.editEventV587=openV612EventForm; window.editEventV593=openV612EventForm; window.editCalendarEventV58=openV612EventForm; window.editCalendarEventV576=openV612EventForm;
+}
+setInterval(patchEventSaveV6219, 1000);
