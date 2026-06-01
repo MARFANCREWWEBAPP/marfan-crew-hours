@@ -1,3 +1,3 @@
-# V62.29 Calendar Month Navigation Real Fix
+# V62.30 Clean Real Calendar Only
 
-Corrige Mes anterior/Hoy/Mes siguiente cargando eventos reales del mes seleccionado desde backend.
+Elimina bloque negro duplicado y deja solo calendario mensual real con navegación integrada.

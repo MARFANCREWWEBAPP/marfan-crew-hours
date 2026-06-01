@@ -10901,3 +10901,189 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
     if((document.body.textContent||'').toLowerCase().includes('calendario') && document.getElementById('v6228MonthTitle')) ensureToolbar6229();
   },2500);
 })();
+
+
+// ---------- V62.30 CLEAN REAL CALENDAR ONLY FRONTEND ----------
+(function(){
+  function esc6230(v){
+    if(typeof escV582==='function')return escV582(v);
+    if(typeof esc==='function')return esc(v);
+    return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+  }
+  function isCalendarPage6230(){
+    const h=[...document.querySelectorAll('h1,h2,.page-title,.content-title')].map(x=>(x.textContent||'').toLowerCase()).join(' ');
+    return h.includes('calendario') || (document.body.textContent||'').toLowerCase().includes('calendario de eventos');
+  }
+  function getRoot6230(){
+    return document.getElementById('content') || document.querySelector('#main') || document.querySelector('.content') || document.getElementById('app');
+  }
+  function month6230(){ if(!window.__v6230Month) window.__v6230Month=new Date(); return window.__v6230Month; }
+  function title6230(d){ return d.toLocaleDateString('es-ES',{month:'long',year:'numeric'}); }
+  async function fetch6230(path){
+    const headers={'Accept':'application/json'};
+    try{
+      let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||localStorage.getItem('adminToken')||'';
+      if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;}
+    }catch(e){}
+    const r=await fetch(path,{headers,credentials:'include',cache:'no-store'});
+    const text=await r.text();
+    if(text.trim().startsWith('<')) throw new Error('API HTML');
+    const j=text?JSON.parse(text):{};
+    if(!r.ok||j.ok===false) throw new Error(j.error||text||'HTTP '+r.status);
+    return j;
+  }
+  function removeBadBlocks6230(){
+    // Quitar la vista negra duplicada y toolbars anteriores.
+    document.querySelectorAll('#v6228CalendarToolbar,#v6229CalendarToolbar,#v6229MonthEvents,.v6228-calendar-toolbar,.v6225-cal-nav').forEach(x=>x.remove());
+    [...document.querySelectorAll('section,div,article')].forEach(el=>{
+      const txt=(el.textContent||'').toLowerCase();
+      const cls=String(el.className||'').toLowerCase();
+      if(
+        (txt.includes('calendario eventos · v58.3') || txt.includes('abrir calendario v58.2')) ||
+        (txt.includes('vista con google sync restaurado') && txt.includes('mes anterior') && txt.includes('mes siguiente')) ||
+        (cls.includes('v58') && txt.includes('calendario'))
+      ){
+        el.remove();
+      }
+    });
+  }
+  function buildSkeleton6230(){
+    const root=getRoot6230(); if(!root) return null;
+    removeBadBlocks6230();
+
+    let existing=document.getElementById('v6230CalendarReal');
+    if(existing) return existing;
+
+    // Dejar encabezado principal y borrar bloques duplicados antiguos del calendario si hace falta.
+    const container=document.createElement('div');
+    container.id='v6230CalendarReal';
+    container.innerHTML=`
+      <div class="v6230-calendar-controls">
+        <div id="v6230CalendarTitle" class="v6230-calendar-title"></div>
+        <button class="light" type="button" onclick="window.v6230MoveMonth(-1)">← Mes anterior</button>
+        <button class="dark" type="button" onclick="window.v6230Today()">Hoy</button>
+        <button class="light" type="button" onclick="window.v6230MoveMonth(1)">Mes siguiente →</button>
+      </div>
+      <div id="v6230CalendarGrid" class="v6230-calendar-grid"></div>
+    `;
+
+    const h=root.querySelector('h1,h2,.page-title,.content-title');
+    if(h && h.parentNode) h.parentNode.insertBefore(container,h.nextSibling);
+    else root.prepend(container);
+    return container;
+  }
+  function render6230(events){
+    const d=month6230();
+    const title=document.getElementById('v6230CalendarTitle');
+    if(title) title.textContent=title6230(d);
+
+    const grid=document.getElementById('v6230CalendarGrid');
+    if(!grid) return;
+
+    const y=d.getFullYear(), m=d.getMonth();
+    const first=new Date(y,m,1);
+    const last=new Date(y,m+1,0);
+    const days=last.getDate();
+    const startDow=(first.getDay()+6)%7; // lunes = 0
+
+    const byDay={};
+    (events||[]).forEach(ev=>{
+      const ds=String(ev.event_date||ev.date||ev.start_date||ev.start||'').slice(0,10);
+      const day=Number(ds.slice(8,10));
+      if(day) (byDay[day]||(byDay[day]=[])).push(ev);
+    });
+
+    let html='';
+    for(let i=0;i<startDow;i++) html+='<div class="v6230-day" style="opacity:.35"></div>';
+    for(let day=1;day<=days;day++){
+      const evs=byDay[day]||[];
+      html+=`<div class="v6230-day"><div class="v6230-day-num">${day}</div>`;
+      html+=evs.map(ev=>{
+        const time=ev.start_time||'';
+        const name=ev.name||ev.title||'Evento';
+        return `<div class="v6230-event" onclick="if(typeof openV612EventForm==='function')openV612EventForm(${Number(ev.id)})">
+          ${esc6230(time)} ${esc6230(name)}
+          ${(ev.location||ev.address)?`<small>${esc6230(ev.location||ev.address)}</small>`:''}
+        </div>`;
+      }).join('');
+      html+='</div>';
+    }
+    grid.innerHTML=html || '<div class="v6230-empty-note">No hay eventos en este mes.</div>';
+  }
+  async function load6230(){
+    if(!isCalendarPage6230()) return;
+    buildSkeleton6230();
+    const d=month6230();
+    const title=document.getElementById('v6230CalendarTitle');
+    if(title) title.textContent=title6230(d);
+    const grid=document.getElementById('v6230CalendarGrid');
+    if(grid) grid.innerHTML='<div class="v6230-empty-note">Cargando calendario...</div>';
+    try{
+      const j=await fetch6230(`/api/v6229/calendar-month-events?year=${d.getFullYear()}&month=${d.getMonth()}`);
+      render6230(j.events||[]);
+    }catch(e){
+      if(grid) grid.innerHTML='<div class="v6230-empty-note">Error cargando calendario: '+esc6230(e.message)+'</div>';
+    }
+  }
+  window.v6230MoveMonth=function(n){
+    const d=new Date(month6230());
+    d.setMonth(d.getMonth()+n);
+    window.__v6230Month=d;
+    window.__v6229Month=d;
+    window.__v6228Month=d;
+    load6230();
+  };
+  window.v6230Today=function(){
+    const d=new Date();
+    window.__v6230Month=d;
+    window.__v6229Month=d;
+    window.__v6228Month=d;
+    load6230();
+  };
+  // neutralizar funciones antiguas duplicadas para que no creen barras/listas.
+  window.v6229MoveMonth=window.v6230MoveMonth;
+  window.v6229Today=window.v6230Today;
+  window.v6228MoveMonth=window.v6230MoveMonth;
+  window.v6228Today=window.v6230Today;
+
+  if(typeof viewCalendar==='function' && !viewCalendar.__v6230Wrapped){
+    const old=viewCalendar;
+    viewCalendar=async function(){
+      const r=await old.apply(this,arguments);
+      setTimeout(removeBadBlocks6230,100);
+      setTimeout(load6230,300);
+      setTimeout(removeBadBlocks6230,900);
+      setTimeout(load6230,1100);
+      return r;
+    };
+    viewCalendar.__v6230Wrapped=true;
+    window.viewCalendar=viewCalendar;
+  }
+  if(typeof showCalendarV582==='function' && !showCalendarV582.__v6230Wrapped){
+    const old=showCalendarV582;
+    showCalendarV582=async function(){
+      const r=await old.apply(this,arguments);
+      setTimeout(removeBadBlocks6230,100);
+      setTimeout(load6230,300);
+      return r;
+    };
+    showCalendarV582.__v6230Wrapped=true;
+    window.showCalendarV582=showCalendarV582;
+  }
+  document.addEventListener('click',ev=>{
+    const el=ev.target.closest&&ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn,.v622-menu-btn');
+    if(!el)return;
+    const t=(el.textContent||'').toLowerCase();
+    if(t.includes('calendario')){
+      setTimeout(removeBadBlocks6230,300);
+      setTimeout(load6230,600);
+      setTimeout(removeBadBlocks6230,1300);
+    }
+  },true);
+  setInterval(()=>{
+    if(isCalendarPage6230()){
+      removeBadBlocks6230();
+      if(!document.getElementById('v6230CalendarReal')) load6230();
+    }
+  },1500);
+})();

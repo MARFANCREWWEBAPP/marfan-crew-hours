@@ -2196,3 +2196,74 @@ nav a.active:not(.v626-active),
 .v6229-event-meta{font-size:13px;color:#6b7280;margin-bottom:8px}
 .v6229-techs{font-size:12px;color:#374151;background:#f9fafb;border-radius:10px;padding:8px;margin-top:8px}
 .v6229-empty{background:#fff;border:1px dashed #d1d5db;border-radius:16px;padding:18px;color:#6b7280}
+
+/* ---------- V62.30 CLEAN REAL CALENDAR ONLY ---------- */
+#v6228CalendarToolbar,
+#v6229CalendarToolbar,
+#v6229MonthEvents,
+.v6228-calendar-toolbar,
+.v6225-cal-nav{
+  display:none!important;
+}
+.v6230-calendar-controls{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+  margin:0 0 16px 0;
+  padding:14px;
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:18px;
+}
+.v6230-calendar-title{
+  font-size:24px;
+  font-weight:1000;
+  color:#111;
+  text-transform:capitalize;
+  margin-right:auto;
+}
+.v6230-calendar-controls button{
+  border:0;
+  border-radius:12px;
+  padding:10px 14px;
+  font-weight:950;
+  cursor:pointer;
+}
+.v6230-calendar-controls .dark{background:#111;color:#fff}
+.v6230-calendar-controls .light{background:#f3f4f6;color:#111}
+.v6230-calendar-grid{
+  display:grid;
+  grid-template-columns:repeat(7,minmax(120px,1fr));
+  gap:10px;
+}
+.v6230-day{
+  min-height:115px;
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:14px;
+  padding:10px;
+}
+.v6230-day-num{
+  font-weight:950;
+  color:#111;
+  margin-bottom:8px;
+}
+.v6230-event{
+  background:#1d4ed8;
+  color:#fff;
+  border-radius:9px;
+  padding:6px 8px;
+  font-weight:900;
+  font-size:12px;
+  margin:4px 0;
+  cursor:pointer;
+}
+.v6230-event small{display:block;font-weight:700;opacity:.9}
+.v6230-empty-note{
+  background:#fff;
+  border:1px dashed #d1d5db;
+  color:#6b7280;
+  border-radius:14px;
+  padding:16px;
+}
