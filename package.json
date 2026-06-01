@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.28.0",
-  "description": "V62.28 Calendar Month Header Silent Sync Tech Persistence",
+  "version": "62.29.0",
+  "description": "V62.29 Calendar Month Navigation Real Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

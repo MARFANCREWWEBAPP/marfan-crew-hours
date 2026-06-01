@@ -10766,3 +10766,138 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
   document.addEventListener('click',ev=>{const el=ev.target.closest&&ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn,.v622-menu-btn');if(!el)return;const t=(el.textContent||'').toLowerCase();if(t.includes('calendario')){setTimeout(installToolbar6228,500);setTimeout(updateMonth6228,900);setTimeout(silentSyncGuard6228,1200);}},true);
   setInterval(()=>{installToolbar6228();updateMonth6228();silentSyncGuard6228();patchSubmit6228();},2000);
 })();
+
+
+// ---------- V62.29 CALENDAR MONTH NAVIGATION REAL FIX FRONTEND ----------
+(function(){
+  function esc6229(v){
+    if(typeof escV582==='function') return escV582(v);
+    if(typeof esc==='function') return esc(v);
+    return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+  }
+  function monthTitle6229(d){return d.toLocaleDateString('es-ES',{month:'long',year:'numeric'});}
+  function cur6229(){if(!window.__v6229Month) window.__v6229Month=new Date(); return window.__v6229Month;}
+  async function fetch6229(path){
+    const headers={'Accept':'application/json'};
+    try{let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||localStorage.getItem('adminToken')||''; if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;}}catch(e){}
+    const r=await fetch(path,{headers,credentials:'include',cache:'no-store'});
+    const text=await r.text(); if(text.trim().startsWith('<')) throw new Error('API HTML');
+    const j=text?JSON.parse(text):{};
+    if(!r.ok||j.ok===false) throw new Error(j.error||text||'HTTP '+r.status);
+    return j;
+  }
+  function ensureToolbar6229(){
+    const content=document.getElementById('content')||document.querySelector('#main')||document.querySelector('.content')||document.body;
+    if(!content) return;
+    let bar=document.getElementById('v6228CalendarToolbar')||document.getElementById('v6229CalendarToolbar');
+    if(!bar){
+      bar=document.createElement('div');
+      bar.id='v6229CalendarToolbar';
+      bar.className='v6228-calendar-toolbar';
+      bar.innerHTML=`<div id="v6228MonthTitle" class="v6228-month-title"></div>
+        <button class="light" type="button" onclick="window.v6229MoveMonth(-1)">← Mes anterior</button>
+        <button class="dark" type="button" onclick="window.v6229Today()">Hoy</button>
+        <button class="light" type="button" onclick="window.v6229MoveMonth(1)">Mes siguiente →</button>
+        <span id="v6228SyncStatus" class="ok">Vista mensual real</span>`;
+      const h=content.querySelector('h1,h2,.page-title,.content-title');
+      if(h&&h.parentNode)h.parentNode.insertBefore(bar,h.nextSibling);else content.prepend(bar);
+    }else{
+      // reescribir botones para que usen función real V62.29
+      const buttons=[...bar.querySelectorAll('button')];
+      if(buttons[0]) buttons[0].setAttribute('onclick','window.v6229MoveMonth(-1)');
+      if(buttons[1]) buttons[1].setAttribute('onclick','window.v6229Today()');
+      if(buttons[2]) buttons[2].setAttribute('onclick','window.v6229MoveMonth(1)');
+    }
+    const title=document.getElementById('v6228MonthTitle')||bar.querySelector('.v6228-month-title,.v6229-month-title');
+    if(title) title.textContent=monthTitle6229(cur6229());
+    let holder=document.getElementById('v6229MonthEvents');
+    if(!holder){
+      holder=document.createElement('div');
+      holder.id='v6229MonthEvents';
+      bar.insertAdjacentElement('afterend',holder);
+    }
+  }
+  function renderEvents6229(events){
+    ensureToolbar6229();
+    const holder=document.getElementById('v6229MonthEvents');
+    if(!holder) return;
+    if(!events.length){
+      holder.innerHTML='<div class="v6229-empty">No hay eventos en este mes.</div>';
+      return;
+    }
+    holder.innerHTML=events.map(ev=>{
+      const date=ev.event_date||ev.date||ev.start_date||'';
+      const time=[ev.start_time,ev.end_time].filter(Boolean).join(' - ');
+      const techs=(ev.technicians||[]).map(t=>`${t.first_name||''} ${t.last_name||''}${(t.role_name||t.resolved_role)?' · '+(t.role_name||t.resolved_role):''}`).filter(Boolean);
+      return `<div class="v6229-event-card" data-event-id="${Number(ev.id)}" onclick="if(typeof openV612EventForm==='function')openV612EventForm(${Number(ev.id)})">
+        <h3>${esc6229(ev.name||ev.title||'Evento')}</h3>
+        <div class="v6229-event-meta">${esc6229(date)} ${time? '· '+esc6229(time):''}</div>
+        ${(ev.location||ev.address)?`<div class="v6229-event-meta">${esc6229(ev.location||ev.address)}</div>`:''}
+        ${techs.length?`<div class="v6229-techs"><b>Técnicos:</b><br>${techs.map(esc6229).join('<br>')}</div>`:''}
+      </div>`;
+    }).join('');
+  }
+  async function loadMonth6229(){
+    ensureToolbar6229();
+    const d=cur6229();
+    const title=document.getElementById('v6228MonthTitle');
+    if(title) title.textContent=monthTitle6229(d);
+    const holder=document.getElementById('v6229MonthEvents');
+    if(holder) holder.innerHTML='<div class="v6229-empty">Cargando eventos...</div>';
+    try{
+      const j=await fetch6229(`/api/v6229/calendar-month-events?year=${d.getFullYear()}&month=${d.getMonth()}`);
+      renderEvents6229(j.events||[]);
+      const status=document.getElementById('v6228SyncStatus');
+      if(status) status.textContent='Mes cargado';
+    }catch(e){
+      if(holder) holder.innerHTML='<div class="v6229-empty">Error cargando mes: '+esc6229(e.message)+'</div>';
+    }
+  }
+  window.v6229MoveMonth=function(n){
+    const d=new Date(cur6229());
+    d.setMonth(d.getMonth()+n);
+    window.__v6229Month=d;
+    window.__v6228Month=d;
+    loadMonth6229();
+  };
+  window.v6229Today=function(){
+    const d=new Date();
+    window.__v6229Month=d;
+    window.__v6228Month=d;
+    loadMonth6229();
+  };
+  // Compatibilidad: sobreescribe botones viejos
+  window.v6228MoveMonth=window.v6229MoveMonth;
+  window.v6228Today=window.v6229Today;
+
+  if(typeof viewCalendar==='function' && !viewCalendar.__v6229Wrapped){
+    const old=viewCalendar;
+    viewCalendar=async function(){
+      const r=await old.apply(this,arguments);
+      setTimeout(loadMonth6229,500);
+      setTimeout(loadMonth6229,1400);
+      return r;
+    };
+    viewCalendar.__v6229Wrapped=true;
+    window.viewCalendar=viewCalendar;
+  }
+  if(typeof showCalendarV582==='function' && !showCalendarV582.__v6229Wrapped){
+    const old=showCalendarV582;
+    showCalendarV582=async function(){
+      const r=await old.apply(this,arguments);
+      setTimeout(loadMonth6229,500);
+      return r;
+    };
+    showCalendarV582.__v6229Wrapped=true;
+    window.showCalendarV582=showCalendarV582;
+  }
+  document.addEventListener('click',ev=>{
+    const el=ev.target.closest&&ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn,.v622-menu-btn');
+    if(!el)return;
+    const t=(el.textContent||'').toLowerCase();
+    if(t.includes('calendario')) setTimeout(loadMonth6229,900);
+  },true);
+  setInterval(()=>{
+    if((document.body.textContent||'').toLowerCase().includes('calendario') && document.getElementById('v6228MonthTitle')) ensureToolbar6229();
+  },2500);
+})();

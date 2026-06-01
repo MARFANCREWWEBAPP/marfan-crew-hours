@@ -1,3 +1,3 @@
-# V62.28 Calendar Final
+# V62.29 Calendar Month Navigation Real Fix
 
-Mes visible, navegación mensual real, sync silenciosa y persistencia propia de técnicos/roles por evento.
+Corrige Mes anterior/Hoy/Mes siguiente cargando eventos reales del mes seleccionado desde backend.
