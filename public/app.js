@@ -10570,3 +10570,199 @@ async function viewPasswordsV6226(){
 window.loadPasswordsV6220=loadPasswordsV6226;window.openPasswordEditV6220=openPasswordEditV6226;window.deletePasswordV6220=deletePasswordV6226;window.viewPasswordsV6220=viewPasswordsV6226;window.viewPasswords=viewPasswordsV6226;window.viewContrasenas=viewPasswordsV6226;
 document.addEventListener('click',ev=>{const btn=ev.target.closest&&ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn,.v622-menu-btn');if(!btn)return;const t=(btn.textContent||'').toLowerCase();if(t.includes('contraseña')||t.includes('contrasena')||t.includes('password')){ev.stopPropagation();setTimeout(viewPasswordsV6226,80);}},true);
 setTimeout(()=>{v6226Fetch('/api/v6226-admin-repair-status').catch(()=>{});},2000);
+
+
+// ---------- V62.27 USER ROLE SELECTOR FRONTEND ----------
+async function v6227Fetch(path,opts={}){
+  const headers={'Content-Type':'application/json','Accept':'application/json'};
+  try{let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||localStorage.getItem('adminToken')||'';if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;}}catch(e){}
+  const r=await fetch(new URL(path,window.location.origin).toString(),{method:opts.method||'GET',headers:{...headers,...(opts.headers||{})},body:opts.body,credentials:'include',cache:'no-store'});
+  const text=await r.text();if(text.trim().startsWith('<'))throw new Error('La API ha devuelto HTML.');
+  let data={};try{data=text?JSON.parse(text):{}}catch(e){data={ok:false,error:text}}
+  if(!r.ok||data.ok===false)throw new Error(data.error||text||'HTTP '+r.status);return data;
+}
+async function v6227EnhanceRoleSelector(id){
+  const form=document.getElementById('operatorEditFormV6210'); if(!form||form.__v6227RoleEnhanced)return;
+  form.__v6227RoleEnhanced=true;
+  let data;try{data=await v6227Fetch('/api/v6227/users/'+Number(id)+'/role')}catch(e){return}
+  const current=data.role||'operario';
+  const laboral=[...form.querySelectorAll('.v6210-section')].find(s=>(s.textContent||'').toLowerCase().includes('datos laborales'))||form.querySelector('.v6210-section')||form;
+  if(!document.getElementById('userRoleSelectorV6227')){
+    const box=document.createElement('div');
+    box.className='v6227-role-box';
+    box.innerHTML=`<label>Rol del usuario en el ERP</label>
+      <select id="userRoleSelectorV6227" name="system_role" class="field">
+        <option value="operario" ${current==='operario'?'selected':''}>Operario</option>
+        <option value="admin" ${current==='admin'?'selected':''}>Administrador</option>
+      </select>
+      <span class="v6227-role-help">Administrador: acceso completo. Operario: acceso limitado.</span>`;
+    laboral.appendChild(box);
+  }
+  form.onsubmit=async ev=>{
+    ev.preventDefault();
+    try{
+      const fd=new FormData(form); const payload=Object.fromEntries(fd);
+      payload.epis_delivered=form.epis_delivered&&form.epis_delivered.checked?1:0;
+      payload.has_prl=form.has_prl&&form.has_prl.checked?1:0;
+      payload.is_team_lead=form.is_team_lead&&form.is_team_lead.checked?1:0;
+      payload.team_lead=payload.is_team_lead;
+      if(typeof v6210Fetch==='function') await v6210Fetch('/api/v6210/operators/'+Number(id)+'/edit',{method:'POST',body:JSON.stringify(payload)});
+      if(typeof v6214UploadOperatorPhoto==='function') await v6214UploadOperatorPhoto(id);
+      if(typeof v6214UploadOperatorDocs==='function') await v6214UploadOperatorDocs(id);
+      const role=document.getElementById('userRoleSelectorV6227')?.value||'operario';
+      await v6227Fetch('/api/v6227/users/'+Number(id)+'/role',{method:'POST',body:JSON.stringify({role})});
+      if(typeof v534Toast==='function')v534Toast('Usuario actualizado con rol '+(role==='admin'?'Administrador':'Operario'));
+      try{closeWizard()}catch(e){const root=document.getElementById('modalRoot');if(root)root.innerHTML='';}
+      if(typeof viewUsers==='function')viewUsers();else if(typeof viewOperators==='function')viewOperators();
+    }catch(e){alert('Error guardando usuario: '+e.message);}
+  };
+}
+if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrapped){
+  const old=openOperatorEditV6210;
+  openOperatorEditV6210=async function(id){
+    const r=await old.apply(this,arguments);
+    setTimeout(()=>v6227EnhanceRoleSelector(id),350);
+    setTimeout(()=>v6227EnhanceRoleSelector(id),900);
+    return r;
+  };
+  openOperatorEditV6210.__v6227Wrapped=true;window.openOperatorEditV6210=openOperatorEditV6210;
+}
+
+
+// ---------- V62.28 CALENDAR MONTH HEADER + SILENT SYNC + TECH PERSISTENCE FINAL FRONTEND ----------
+(function(){
+  function monthName6228(d){return d.toLocaleDateString('es-ES',{month:'long',year:'numeric'});}
+  function current6228(){if(!window.__v6228Month)window.__v6228Month=new Date();return window.__v6228Month;}
+  function range6228(){const d=current6228();return {start:new Date(d.getFullYear(),d.getMonth(),1),end:new Date(d.getFullYear(),d.getMonth()+1,1)};}
+  function dateFrom6228(el){
+    const s=[el.getAttribute('data-date'),el.getAttribute('data-event-date'),el.textContent].filter(Boolean).join(' ');
+    let m=s.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/); if(m)return new Date(+m[1],+m[2]-1,+m[3]);
+    m=s.match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](20\d{2})\b/); if(m)return new Date(+m[3],+m[2]-1,+m[1]);
+    return null;
+  }
+  function installToolbar6228(){
+    const txt=(document.body.textContent||'').toLowerCase();
+    if(!txt.includes('calendario'))return;
+    const content=document.getElementById('content')||document.querySelector('#main')||document.querySelector('.content')||document.body;
+    if(!content)return;
+    let bar=document.getElementById('v6228CalendarToolbar');
+    if(!bar){
+      bar=document.createElement('div');bar.id='v6228CalendarToolbar';bar.className='v6228-calendar-toolbar';
+      bar.innerHTML=`<div id="v6228MonthTitle" class="v6228-month-title"></div>
+        <button class="light" type="button" onclick="window.v6228MoveMonth(-1)">← Mes anterior</button>
+        <button class="dark" type="button" onclick="window.v6228Today()">Hoy</button>
+        <button class="light" type="button" onclick="window.v6228MoveMonth(1)">Mes siguiente →</button>
+        <span id="v6228SyncStatus" class="ok">Sync automática silenciosa</span>`;
+      const h=content.querySelector('h1,h2,.page-title,.content-title');
+      if(h&&h.parentNode)h.parentNode.insertBefore(bar,h.nextSibling);else content.prepend(bar);
+    }
+    updateMonth6228();
+  }
+  function eventItems6228(){
+    return [...document.querySelectorAll('.calendar-event,.fc-event,.event-card,.event-item,[data-event-id],tr')].filter(el=>{
+      const c=String(el.className||'').toLowerCase(),t=(el.textContent||'').toLowerCase();
+      return el.dataset.eventId||c.includes('event')||t.includes('evento');
+    });
+  }
+  function updateMonth6228(){
+    const title=document.getElementById('v6228MonthTitle'); if(title)title.textContent=monthName6228(current6228());
+    const {start,end}=range6228();
+    eventItems6228().forEach(el=>{
+      const dt=dateFrom6228(el);
+      if(!dt){el.style.display='';return;}
+      el.style.display=(dt>=start&&dt<end)?'':'none';
+    });
+  }
+  window.v6228MoveMonth=function(n){const d=new Date(current6228());d.setMonth(d.getMonth()+n);window.__v6228Month=d;installToolbar6228();updateMonth6228();};
+  window.v6228Today=function(){window.__v6228Month=new Date();installToolbar6228();updateMonth6228();};
+
+  function collectTechs6228(){
+    const rows=[...document.querySelectorAll('#v612Assignments .v612-assignment,.v612-assignment,#v61Assignments .v61-assignment,.v61-assignment,[data-assignment-row]')];
+    return rows.map(row=>{
+      const val=names=>{for(const n of names){const el=row.querySelector(`[name="${n}"],[data-field="${n}"]`);if(el)return el.type==='checkbox'?(el.checked?1:0):el.value;}return '';};
+      const roleSel=row.querySelector('[name="role_id"],[data-field="role_id"]');
+      const opt=roleSel&&roleSel.options?roleSel.options[roleSel.selectedIndex]:null;
+      return {
+        user_id:Number(val(['user_id','operator_id','worker_id'])||0),
+        role_id:val(['role_id'])?Number(val(['role_id'])):null,
+        role_name:String(val(['service_role','role_name','operator_role_name'])||(opt?(opt.dataset.name||opt.textContent||''):'')).trim(),
+        is_team_lead:Number(val(['is_team_lead','team_lead','lead'])||0),
+        planned_start:val(['planned_start','start_time','start'])||'',
+        planned_end:val(['planned_end','end_time','end'])||'',
+        hourly_rate:Number(val(['hourly_rate','rate','price'])||(opt?(opt.dataset.day||opt.dataset.rate||0):0)||0)
+      };
+    }).filter(x=>x.user_id);
+  }
+  async function fetch6228(path,opts={}){
+    const h={'Content-Type':'application/json','Accept':'application/json'};
+    try{let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||localStorage.getItem('adminToken')||'';if(t){h.Authorization='Bearer '+t;h['X-Admin-Token']=t;h['X-Auth-Token']=t;}}catch(e){}
+    const r=await fetch(path,{method:opts.method||'GET',headers:{...h,...(opts.headers||{})},body:opts.body,credentials:'include',cache:'no-store'});
+    const text=await r.text(); if(text.trim().startsWith('<'))throw new Error('API HTML');
+    let j={};try{j=text?JSON.parse(text):{}}catch(e){j={ok:false,error:text}}; if(!r.ok||j.ok===false)throw new Error(j.error||text||'HTTP '+r.status);return j;
+  }
+  async function saveTechs6228(eventId){
+    if(!eventId)return;
+    const technicians=collectTechs6228();
+    await fetch6228('/api/v6228/events/'+Number(eventId)+'/technicians-save',{method:'POST',body:JSON.stringify({technicians})});
+  }
+  async function loadTechs6228(eventId){
+    if(!eventId||typeof v612AddAssignment!=='function')return;
+    try{
+      const j=await fetch6228('/api/v6228/events/'+Number(eventId)+'/technicians');
+      const techs=j.technicians||[];
+      if(!techs.length)return;
+      const box=document.getElementById('v612Assignments'); if(box)box.innerHTML='';
+      const users=window.__v612Users||[], roles=window.__v612Roles||[];
+      techs.forEach(t=>v612AddAssignment(users,roles,{user_id:t.user_id,role_id:t.role_id,service_role:t.role_name||t.resolved_role||'',is_team_lead:t.is_team_lead||0,planned_start:t.planned_start||'',planned_end:t.planned_end||'',hourly_rate:t.hourly_rate||0}));
+    }catch(e){console.warn('[V62.28] load techs',e.message);}
+  }
+  function patchSubmit6228(){
+    const form=document.getElementById('v612EventForm')||document.getElementById('v61EventForm')||document.getElementById('v60EditForm');
+    if(!form||form.__v6228Patched)return; form.__v6228Patched=true;
+    const old=form.onsubmit;
+    form.onsubmit=async ev=>{
+      ev.preventDefault();
+      const eventId=Number(window.__lastEditingEventIdV6219||window.__lastEditingEventIdV6218||window.__lastEditingEventIdV6217||window.__lastEditingEventIdV6215||window.__lastEditingEventIdV6213||0);
+      try{
+        if(typeof old==='function'){ try{ await old.call(form,ev); }catch(e){} }
+        if(eventId) await saveTechs6228(eventId);
+        if(typeof v534Toast==='function')v534Toast('Evento guardado con técnicos y roles');
+        if(typeof showCalendarV582==='function')setTimeout(showCalendarV582,400);
+      }catch(e){alert('Error guardando técnicos: '+e.message);}
+    };
+  }
+  if(typeof openV612EventForm==='function'&&!openV612EventForm.__v6228Wrapped){
+    const old=openV612EventForm;
+    openV612EventForm=async function(id=0){
+      window.__lastEditingEventIdV6219=Number(id||0);
+      const r=await old.apply(this,arguments);
+      setTimeout(()=>loadTechs6228(id),700);
+      setTimeout(patchSubmit6228,800);
+      setTimeout(patchSubmit6228,1400);
+      return r;
+    };
+    openV612EventForm.__v6228Wrapped=true;
+    window.openV612EventForm=openV612EventForm;window.openEditEventV60=openV612EventForm;window.editEventV582=openV612EventForm;window.editEventV587=openV612EventForm;window.editEventV593=openV612EventForm;window.editCalendarEventV58=openV612EventForm;window.editCalendarEventV576=openV612EventForm;
+  }
+  function silentSyncGuard6228(){
+    const root=document.getElementById('modalRoot');
+    if(root&&(root.textContent||'').toLowerCase().includes('sincron'))root.innerHTML='';
+    document.querySelectorAll('.modal,.modal-back').forEach(m=>{if((m.textContent||'').toLowerCase().includes('sincron'))m.remove();});
+  }
+  const oldAlert6228=window.alert;
+  window.__v6228Silent=true;
+  function enableSilentForCalendar(){window.alert=function(msg){if(String(msg||'').toLowerCase().includes('sincron'))return; return oldAlert6228.call(window,msg);};}
+  enableSilentForCalendar();
+  if(typeof viewCalendar==='function'&&!viewCalendar.__v6228Wrapped){
+    const old=viewCalendar;
+    viewCalendar=async function(){enableSilentForCalendar();const r=await old.apply(this,arguments);setTimeout(installToolbar6228,200);setTimeout(updateMonth6228,700);setTimeout(silentSyncGuard6228,800);setTimeout(silentSyncGuard6228,1600);return r;};
+    viewCalendar.__v6228Wrapped=true;window.viewCalendar=viewCalendar;
+  }
+  if(typeof showCalendarV582==='function'&&!showCalendarV582.__v6228Wrapped){
+    const old=showCalendarV582;
+    showCalendarV582=async function(){const r=await old.apply(this,arguments);setTimeout(installToolbar6228,200);setTimeout(updateMonth6228,500);setTimeout(silentSyncGuard6228,700);return r;};
+    showCalendarV582.__v6228Wrapped=true;window.showCalendarV582=showCalendarV582;
+  }
+  document.addEventListener('click',ev=>{const el=ev.target.closest&&ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn,.v622-menu-btn');if(!el)return;const t=(el.textContent||'').toLowerCase();if(t.includes('calendario')){setTimeout(installToolbar6228,500);setTimeout(updateMonth6228,900);setTimeout(silentSyncGuard6228,1200);}},true);
+  setInterval(()=>{installToolbar6228();updateMonth6228();silentSyncGuard6228();patchSubmit6228();},2000);
+})();

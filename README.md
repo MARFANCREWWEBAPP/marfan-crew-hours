@@ -1,3 +1,3 @@
-# V62.26 Admin Auth Repair + Password Access Fix
+# V62.28 Calendar Final
 
-Corrige Contraseñas: evita Solo administrador con rutas flexibles y repara admin automático.
+Mes visible, navegación mensual real, sync silenciosa y persistencia propia de técnicos/roles por evento.

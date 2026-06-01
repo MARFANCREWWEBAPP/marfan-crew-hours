@@ -606,7 +606,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version:'62.26.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version:'62.28.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -2880,7 +2880,7 @@ app.get('/api/v6216-auto-restore-status', requireAdmin, (req,res)=>{
   try{
     res.json({
       ok:true,
-      version:'62.26.0',
+      version:'62.28.0',
       status:global.V6216_RESTORE_STATUS || null,
       db_path:v6216DbPath(),
       data_dir:v6216DataDir(),
@@ -3553,7 +3553,7 @@ function v6223ExportUsersJson(){
     const users = db.prepare('SELECT * FROM users ORDER BY id').all();
     const stamp = new Date().toISOString().replace(/[:.]/g,'-');
     const out = p.join(v6223JsonDir(), `users-${stamp}.json`);
-    f.writeFileSync(out, JSON.stringify({version:'62.26.0', created_at:new Date().toISOString(), users}, null, 2));
+    f.writeFileSync(out, JSON.stringify({version:'62.28.0', created_at:new Date().toISOString(), users}, null, 2));
     v6223KeepLastFiles(v6223JsonDir(), 'users-', 10);
     return {ok:true,path:out,count:users.length};
   }catch(e){ return {ok:false,error:e.message}; }
@@ -3667,7 +3667,7 @@ app.get('/api/v6223-persistence-status', requireAdmin, (req,res)=>{
     try{ snapshots = db.prepare("SELECT COUNT(*) AS c FROM event_snapshots_v6218").get().c || 0; }catch(e){}
     res.json({
       ok:true,
-      version:'62.26.0',
+      version:'62.28.0',
       data_dir:v6223DataDir(),
       users,
       events,
@@ -3765,6 +3765,145 @@ app.post('/api/v6226-admin-repair-now', requireAdminSoftV6226, (req,res)=>{
   catch(e){res.status(500).json({ok:false,error:e.message});}
 });
 setTimeout(()=>{try{v6226EnsureAtLeastOneAdmin()}catch(e){}},1500);
+
+
+// ---------- V62.27 USER ROLE SELECTOR ----------
+function v6227RoleMiddleware(req,res,next){
+  try{
+    if(typeof requireAdminSoftV6226 === 'function') return requireAdminSoftV6226(req,res,next);
+  }catch(e){}
+  return requireAdmin(req,res,next);
+}
+function v6227AdminCount(){
+  try{return db.prepare("SELECT COUNT(*) AS c FROM users WHERE role='admin' AND COALESCE(active,1)!=0").get().c||0;}catch(e){return 0;}
+}
+app.get('/api/v6227/users/:id/role', v6227RoleMiddleware, (req,res)=>{
+  try{
+    const id=Number(req.params.id);
+    const user=db.prepare("SELECT id,first_name,last_name,email,role,active FROM users WHERE id=?").get(id);
+    if(!user)return res.status(404).json({ok:false,error:'Usuario no encontrado'});
+    res.json({ok:true,user,role:user.role||'operario',admin_count:v6227AdminCount()});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/v6227/users/:id/role', v6227RoleMiddleware, (req,res)=>{
+  try{
+    const id=Number(req.params.id);
+    const role=String((req.body||{}).role||'operario').trim().toLowerCase();
+    if(!['admin','operario'].includes(role))return res.status(400).json({ok:false,error:'Rol no válido'});
+    const user=db.prepare("SELECT * FROM users WHERE id=?").get(id);
+    if(!user)return res.status(404).json({ok:false,error:'Usuario no encontrado'});
+    if(user.role==='admin' && role!=='admin' && v6227AdminCount()<=1){
+      return res.status(400).json({ok:false,error:'No puedes quitar el último administrador del sistema'});
+    }
+    db.prepare("UPDATE users SET role=? WHERE id=?").run(role,id);
+    res.json({ok:true,id,role});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+
+
+// ---------- V62.28 CALENDAR MONTH HEADER + TECH PERSISTENCE FINAL ----------
+function v6228EnsureTechTable(){
+  try{
+    db.exec(`CREATE TABLE IF NOT EXISTS event_technicians_v6228 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      role_id INTEGER DEFAULT NULL,
+      role_name TEXT DEFAULT '',
+      is_team_lead INTEGER DEFAULT 0,
+      planned_start TEXT DEFAULT '',
+      planned_end TEXT DEFAULT '',
+      hourly_rate REAL DEFAULT 0,
+      notes TEXT DEFAULT '',
+      stable_event_key TEXT DEFAULT '',
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(event_id,user_id,role_name)
+    );`);
+  }catch(e){}
+}
+function v6228EventKey(eventId){
+  try{
+    const e=db.prepare("SELECT * FROM events WHERE id=?").get(eventId)||{};
+    const google=e.google_event_id||e.google_id||e.gcal_id||'';
+    if(google)return 'google:'+google;
+    const date=String(e.event_date||e.date||'').slice(0,10);
+    const name=String(e.name||e.title||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
+    return 'event:'+date+':'+name;
+  }catch(err){return 'local:'+eventId;}
+}
+function v6228NormalizeTechs(rows){
+  rows=Array.isArray(rows)?rows:[];
+  return rows.map(r=>({
+    user_id:Number(r.user_id||r.operator_id||r.worker_id||0),
+    role_id:r.role_id?Number(r.role_id):null,
+    role_name:String(r.role_name||r.service_role||r.operator_role_name||r.role||r.resolved_role||'').trim(),
+    is_team_lead:Number(r.is_team_lead||r.team_lead||r.lead||0),
+    planned_start:String(r.planned_start||r.start_time||r.start||'').trim(),
+    planned_end:String(r.planned_end||r.end_time||r.end||'').trim(),
+    hourly_rate:Number(r.hourly_rate||r.rate||r.price||0),
+    notes:String(r.notes||'')
+  })).filter(x=>x.user_id);
+}
+function v6228SaveTechs(eventId, rows){
+  v6228EnsureTechTable();
+  const techs=v6228NormalizeTechs(rows);
+  const key=v6228EventKey(eventId);
+  const tx=db.transaction(()=>{
+    db.prepare("DELETE FROM event_technicians_v6228 WHERE event_id=?").run(eventId);
+    const stmt=db.prepare(`INSERT INTO event_technicians_v6228 (event_id,user_id,role_id,role_name,is_team_lead,planned_start,planned_end,hourly_rate,notes,stable_event_key,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`);
+    for(const t of techs) stmt.run(eventId,t.user_id,t.role_id,t.role_name,t.is_team_lead,t.planned_start,t.planned_end,t.hourly_rate,t.notes,key);
+  });
+  tx();
+  try{
+    if(typeof v6219SaveAssignmentsHard==='function')v6219SaveAssignmentsHard(eventId, techs.map(t=>Object.assign({},t,{service_role:t.role_name})));
+  }catch(e){}
+  return techs.length;
+}
+function v6228GetTechs(eventId){
+  v6228EnsureTechTable();
+  try{
+    let rows=db.prepare(`SELECT t.*, u.first_name,u.last_name,u.nickname,u.email,u.phone,
+      COALESCE(r.role,r.name,t.role_name) AS resolved_role
+      FROM event_technicians_v6228 t
+      LEFT JOIN users u ON u.id=t.user_id
+      LEFT JOIN rates r ON r.id=t.role_id
+      WHERE t.event_id=?
+      ORDER BY t.is_team_lead DESC,u.first_name,u.last_name`).all(eventId);
+    if(rows.length)return rows;
+    // fallback por clave estable si Google regeneró ID local
+    const key=v6228EventKey(eventId);
+    rows=db.prepare(`SELECT t.*, u.first_name,u.last_name,u.nickname,u.email,u.phone,
+      COALESCE(r.role,r.name,t.role_name) AS resolved_role
+      FROM event_technicians_v6228 t
+      LEFT JOIN users u ON u.id=t.user_id
+      LEFT JOIN rates r ON r.id=t.role_id
+      WHERE t.stable_event_key=?
+      ORDER BY t.is_team_lead DESC,u.first_name,u.last_name`).all(key);
+    if(rows.length){
+      // reasignar al nuevo ID local
+      const techs=rows.map(r=>Object.assign({},r,{event_id:eventId}));
+      v6228SaveTechs(eventId, techs);
+      return v6228GetTechs(eventId);
+    }
+    return [];
+  }catch(e){return [];}
+}
+app.post('/api/v6228/events/:id/technicians-save', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
+  try{
+    const eventId=Number(req.params.id);
+    if(!eventId)return res.status(400).json({ok:false,error:'ID evento inválido'});
+    if(!db.prepare("SELECT id FROM events WHERE id=?").get(eventId))return res.status(404).json({ok:false,error:'Evento no encontrado'});
+    const count=v6228SaveTechs(eventId,(req.body||{}).technicians||(req.body||{}).assignments||[]);
+    res.json({ok:true,event_id:eventId,count,technicians:v6228GetTechs(eventId)});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.get('/api/v6228/events/:id/technicians', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
+  try{
+    const eventId=Number(req.params.id);
+    res.json({ok:true,event_id:eventId,technicians:v6228GetTechs(eventId)});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads'), { maxAge: 0 }));
