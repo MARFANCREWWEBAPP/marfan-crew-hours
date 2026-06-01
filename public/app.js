@@ -9825,270 +9825,14 @@ async function checkAutoRestoreV6216(){
 }
 
 
-// ---------- V62.17 CALENDAR AUTO SYNC + FULL EVENT DATA PERSISTENCE FRONTEND ----------
-async function v6217Fetch(path, opts={}){
-  const headers={'Content-Type':'application/json','Accept':'application/json'};
-  try{ let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||''; if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;} }catch(e){}
-  const r=await fetch(new URL(path,window.location.origin).toString(),{method:opts.method||'GET',headers:{...headers,...(opts.headers||{})},body:opts.body,credentials:'include',cache:'no-store'});
-  const text=await r.text(); if(text.trim().startsWith('<')) throw new Error('La API ha devuelto HTML.');
-  let data={}; try{data=text?JSON.parse(text):{}}catch(e){data={ok:false,error:text}}
-  if(!r.ok || data.ok===false) throw new Error(data.error||text||'HTTP '+r.status); return data;
-}
-async function v6217CalendarAutoSyncRestore(){
-  const now=Date.now(); if(window.__v6217LastAutoSync && now-window.__v6217LastAutoSync<60000) return; window.__v6217LastAutoSync=now;
-  try{ if(typeof v534Toast==='function') v534Toast('Sincronizando calendario y restaurando datos...');
-    const r=await v6217Fetch('/api/v6217/calendar-auto-sync-restore',{method:'POST'});
-    if(typeof showCalendarV582==='function') await showCalendarV582();
-    if(typeof v534Toast==='function') v534Toast('Calendario actualizado. Datos restaurados: '+(r.restored||0));
-  }catch(e){ console.warn('[V62.17] auto sync restore error', e.message); }
-}
-function patchEventSaveV6217(){
-  const form=document.getElementById('v612EventForm')||document.getElementById('v61EventForm')||document.getElementById('v60EditForm');
-  if(!form || form.__v6217Patched) return; form.__v6217Patched=true;
-  const id=Number(window.__lastEditingEventIdV6217||window.__lastEditingEventIdV6215||window.__lastEditingEventIdV6213||0);
-  form.onsubmit=async ev=>{
-    ev.preventDefault();
-    const event=Object.fromEntries(new FormData(ev.target));
-    const assignments=typeof v612CollectAssignments==='function'?v612CollectAssignments():[];
-    const possibleId=Number(event.id||event.event_id||id||window.__lastEditingEventIdV6217||0);
-    try{ const saved=await v6217Fetch('/api/v6217/event-form-save-full'+(possibleId?'?id='+encodeURIComponent(possibleId):''),{method:'POST',body:JSON.stringify({event,assignments})});
-      if(typeof v534Toast==='function') v534Toast(saved.google&&saved.google.ok?'Evento guardado y sincronizado':'Evento guardado con datos completos');
-      try{closeWizard()}catch(e){const root=document.getElementById('modalRoot'); if(root) root.innerHTML='';}
-      if(typeof showCalendarV582==='function') await showCalendarV582(); else if(typeof viewCalendar==='function') await viewCalendar();
-    }catch(err){ alert('Error guardando evento: '+err.message); }
-  };
-}
-if(typeof openV612EventForm==='function' && !openV612EventForm.__v6217Wrapped){
-  const old=openV612EventForm;
-  openV612EventForm=async function(id=0){ window.__lastEditingEventIdV6217=Number(id||0); if(Number(id)){try{await v6217Fetch('/api/v6217/event-full/'+Number(id));}catch(e){}}
-    const r=await old.apply(this,arguments); setTimeout(patchEventSaveV6217,100); setTimeout(patchEventSaveV6217,500); return r; };
-  openV612EventForm.__v6217Wrapped=true; window.openV612EventForm=openV612EventForm; window.openEditEventV60=openV612EventForm; window.editEventV582=openV612EventForm; window.editEventV587=openV612EventForm; window.editEventV593=openV612EventForm; window.editCalendarEventV58=openV612EventForm; window.editCalendarEventV576=openV612EventForm;
-}
-if(typeof viewCalendar==='function' && !viewCalendar.__v6217Wrapped){ const old=viewCalendar; viewCalendar=async function(){const r=await old.apply(this,arguments); setTimeout(v6217CalendarAutoSyncRestore,600); return r;}; viewCalendar.__v6217Wrapped=true; window.viewCalendar=viewCalendar; }
-if(typeof showCalendarV582==='function' && !showCalendarV582.__v6217Wrapped){ const old=showCalendarV582; showCalendarV582=async function(){const r=await old.apply(this,arguments); setTimeout(patchEventSaveV6217,300); return r;}; showCalendarV582.__v6217Wrapped=true; window.showCalendarV582=showCalendarV582; }
-setInterval(patchEventSaveV6217,1000);
+
+// [V62.34] Bloque anterior de calendario/autosync desactivado para estabilizar la app.
 
 
-// ---------- V62.18 HEADER SYNC + CALENDAR DATA REAL FIX FRONTEND ----------
-function v6218TitleFromLabel(label){
-  const map = {
-    'Dashboard':'Dashboard',
-    'Calendario de Eventos':'Calendario de Eventos',
-    'Control Diario':'Control Diario',
-    'GPS Live':'GPS Live',
-    'Clientes':'Clientes',
-    'Operarios':'Operarios',
-    'Documentación':'Documentación',
-    'Tarifas':'Tarifas',
-    'Albaranes Evento':'Albaranes Evento',
-    'Finanzas Pro':'Finanzas Pro',
-    'Informes PDF':'Informes PDF',
-    'Vista Operario':'Vista Operario',
-    'Contraseñas':'Contraseñas',
-    'Ajustes ERP':'Ajustes ERP'
-  };
-  return map[label] || label || '';
-}
-function v6218SetPageTitle(label){
-  const title = v6218TitleFromLabel(label);
-  if(!title) return;
-  window.__v6218CurrentPageTitle = title;
-  const candidates = [...document.querySelectorAll('h1,h2,.page-title,.content-title,.main-title,.top-title,.header-title')];
-  const visible = candidates.find(el => el.offsetParent !== null && !el.closest('.modal,.modal-back,.sidebar,aside,nav'));
-  if(visible) visible.textContent = title;
-}
-document.addEventListener('click', ev=>{
-  const btn = ev.target.closest && ev.target.closest('.v624-menu-btn,.v623-menu-btn,.v622-menu-btn,.v621-menu-btn,.v620-menu-item,aside button,nav button,.sidebar button,aside a,nav a,.sidebar a');
-  if(!btn) return;
-  const t = (btn.textContent||'').trim();
-  if(t) setTimeout(()=>v6218SetPageTitle(t), 60);
-}, true);
-
-async function v6218Fetch(path, opts={}){
-  const headers={'Content-Type':'application/json','Accept':'application/json'};
-  try{ let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||''; if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;} }catch(e){}
-  const r=await fetch(new URL(path,window.location.origin).toString(),{method:opts.method||'GET',headers:{...headers,...(opts.headers||{})},body:opts.body,credentials:'include',cache:'no-store'});
-  const text=await r.text(); if(text.trim().startsWith('<')) throw new Error('La API ha devuelto HTML.');
-  let data={}; try{data=text?JSON.parse(text):{}}catch(e){data={ok:false,error:text}}
-  if(!r.ok||data.ok===false) throw new Error(data.error||text||'HTTP '+r.status); return data;
-}
-function v6218FillAssignments(assignments){
-  if(!assignments || !assignments.length || typeof v612AddAssignment !== 'function') return;
-  const box = document.getElementById('v612Assignments');
-  if(box) box.innerHTML = '';
-  const users = window.__v612Users || [];
-  const roles = window.__v612Roles || [];
-  assignments.forEach(a => v612AddAssignment(users, roles, a));
-}
-async function v6218OpenEventPreload(id){
-  if(!id) return null;
-  try{ return await v6218Fetch('/api/v6218/event-open-real/'+Number(id)); }catch(e){ return null; }
-}
-function patchEventSaveV6218(){
-  const form=document.getElementById('v612EventForm')||document.getElementById('v61EventForm')||document.getElementById('v60EditForm');
-  if(!form || form.__v6218Patched) return;
-  form.__v6218Patched=true;
-  const id=Number(window.__lastEditingEventIdV6218||window.__lastEditingEventIdV6217||window.__lastEditingEventIdV6215||window.__lastEditingEventIdV6213||0);
-  form.onsubmit=async ev=>{
-    ev.preventDefault();
-    const event=Object.fromEntries(new FormData(ev.target));
-    const assignments=typeof v612CollectAssignments==='function'?v612CollectAssignments():[];
-    const possibleId=Number(event.id||event.event_id||id||0);
-    try{
-      await v6218Fetch('/api/v6218/event-save-real'+(possibleId?'?id='+encodeURIComponent(possibleId):''),{method:'POST',body:JSON.stringify({event,assignments})});
-      if(typeof v534Toast==='function') v534Toast('Evento guardado con localización, operarios y roles');
-      try{closeWizard()}catch(e){const root=document.getElementById('modalRoot'); if(root) root.innerHTML='';}
-      if(typeof showCalendarV582==='function') await showCalendarV582(); else if(typeof viewCalendar==='function') await viewCalendar();
-    }catch(err){ alert('Error guardando evento: '+err.message); }
-  };
-}
-if(typeof openV612EventForm==='function' && !openV612EventForm.__v6218Wrapped){
-  const oldOpenV6218 = openV612EventForm;
-  openV612EventForm = async function(id=0){
-    window.__lastEditingEventIdV6218=Number(id||0);
-    const preload = Number(id) ? await v6218OpenEventPreload(id) : null;
-    const r = await oldOpenV6218.apply(this, arguments);
-    setTimeout(()=>{
-      if(preload && preload.assignments) v6218FillAssignments(preload.assignments);
-      patchEventSaveV6218();
-    }, 300);
-    setTimeout(patchEventSaveV6218, 700);
-    return r;
-  };
-  openV612EventForm.__v6218Wrapped=true;
-  window.openV612EventForm=openV612EventForm; window.openEditEventV60=openV612EventForm; window.editEventV582=openV612EventForm; window.editEventV587=openV612EventForm; window.editEventV593=openV612EventForm; window.editCalendarEventV58=openV612EventForm; window.editCalendarEventV576=openV612EventForm;
-}
-async function v6218CalendarRestore(){
-  try{ const r=await v6218Fetch('/api/v6218/calendar-restore-now',{method:'POST'}); if(typeof v534Toast==='function') v534Toast('Datos calendario restaurados: '+(r.restored||0)); }catch(e){ console.warn(e.message); }
-}
-if(typeof viewCalendar==='function' && !viewCalendar.__v6218Wrapped){
-  const oldVC=viewCalendar;
-  viewCalendar=async function(){ const r=await oldVC.apply(this,arguments); v6218SetPageTitle('Calendario de Eventos'); setTimeout(v6218CalendarRestore,400); return r; };
-  viewCalendar.__v6218Wrapped=true; window.viewCalendar=viewCalendar;
-}
-if(typeof showCalendarV582==='function' && !showCalendarV582.__v6218Wrapped){
-  const oldSC=showCalendarV582;
-  showCalendarV582=async function(){ const r=await oldSC.apply(this,arguments); setTimeout(patchEventSaveV6218,300); return r; };
-  showCalendarV582.__v6218Wrapped=true; window.showCalendarV582=showCalendarV582;
-}
-setInterval(patchEventSaveV6218,1000);
+// [V62.34] Bloque anterior de calendario/autosync desactivado para estabilizar la app.
 
 
-// ---------- V62.19 EVENT OPERATORS ROLES HARD SAVE FRONTEND ----------
-function v6219AssignmentRows(){
-  return [...document.querySelectorAll('#v612Assignments .v612-assignment,.v612-assignment,#v61Assignments .v61-assignment,.v61-assignment,[data-assignment-row]')];
-}
-function v6219CollectAssignmentsHard(){
-  const rows = v6219AssignmentRows();
-  return rows.map(row=>{
-    const get = names => {
-      for(const n of names){
-        const el = row.querySelector(`[name="${n}"],[data-field="${n}"]`);
-        if(el) return el.type === 'checkbox' ? (el.checked ? 1 : 0) : el.value;
-      }
-      return '';
-    };
-    const roleSel = row.querySelector('[name="role_id"],[data-field="role_id"]');
-    const roleOpt = roleSel && roleSel.options ? roleSel.options[roleSel.selectedIndex] : null;
-    const serviceRole = get(['service_role','role_name','operator_role_name']) || (roleOpt ? (roleOpt.dataset.name || roleOpt.textContent || '') : '');
-    return {
-      user_id: Number(get(['user_id','operator_id','worker_id']) || 0),
-      role_id: get(['role_id']) ? Number(get(['role_id'])) : null,
-      service_role: String(serviceRole || '').trim(),
-      shift_type: get(['shift_type','shift']) || 'D',
-      planned_start: get(['planned_start','start_time','start']) || '',
-      planned_end: get(['planned_end','end_time','end']) || '',
-      hourly_rate: Number(get(['hourly_rate','rate','price']) || (roleOpt ? roleOpt.dataset.day || roleOpt.dataset.rate || 0 : 0) || 0),
-      is_team_lead: Number(get(['is_team_lead','team_lead','lead']) || 0),
-      status: 'asignado'
-    };
-  }).filter(a=>a.user_id);
-}
-async function v6219Fetch(path, opts={}){
-  const headers={'Content-Type':'application/json','Accept':'application/json'};
-  try{ let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||''; if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;} }catch(e){}
-  const r=await fetch(new URL(path,window.location.origin).toString(),{method:opts.method||'GET',headers:{...headers,...(opts.headers||{})},body:opts.body,credentials:'include',cache:'no-store'});
-  const text=await r.text(); if(text.trim().startsWith('<')) throw new Error('La API ha devuelto HTML.');
-  let data={}; try{data=text?JSON.parse(text):{}}catch(e){data={ok:false,error:text}}
-  if(!r.ok||data.ok===false) throw new Error(data.error||text||'HTTP '+r.status); return data;
-}
-async function v6219SaveAssignmentsHard(eventId){
-  const assignments = v6219CollectAssignmentsHard();
-  if(!eventId) return {ok:false,count:assignments.length};
-  return await v6219Fetch('/api/v6219/events/'+Number(eventId)+'/assignments-hard-save', {
-    method:'POST',
-    body:JSON.stringify({assignments})
-  });
-}
-async function v6219LoadAssignmentsIntoForm(eventId){
-  if(!eventId || typeof v612AddAssignment !== 'function') return;
-  try{
-    const data = await v6219Fetch('/api/v6219/events/'+Number(eventId)+'/assignments-full');
-    const assignments = data.assignments || [];
-    if(!assignments.length) return;
-    const box = document.getElementById('v612Assignments');
-    if(box) box.innerHTML = '';
-    const users = window.__v612Users || [];
-    const roles = window.__v612Roles || [];
-    assignments.forEach(a=>{
-      v612AddAssignment(users, roles, {
-        user_id: a.user_id,
-        role_id: a.role_id,
-        service_role: a.service_role || a.resolved_role || '',
-        shift_type: a.shift_type || 'D',
-        planned_start: a.planned_start || '',
-        planned_end: a.planned_end || '',
-        hourly_rate: a.hourly_rate || 0,
-        is_team_lead: a.is_team_lead || 0,
-        status: a.status || 'asignado'
-      });
-    });
-  }catch(e){ console.warn('[V62.19] load assignments', e.message); }
-}
-function patchEventSaveV6219(){
-  const form=document.getElementById('v612EventForm')||document.getElementById('v61EventForm')||document.getElementById('v60EditForm');
-  if(!form || form.__v6219Patched) return;
-  form.__v6219Patched = true;
-  const previousSubmit = form.onsubmit;
-  form.onsubmit = async ev=>{
-    ev.preventDefault();
-    const eventId = Number(window.__lastEditingEventIdV6218 || window.__lastEditingEventIdV6217 || window.__lastEditingEventIdV6215 || window.__lastEditingEventIdV6213 || 0);
-    const event = Object.fromEntries(new FormData(form));
-    const assignments = v6219CollectAssignmentsHard();
-    try{
-      // Guardado completo de evento si existe la ruta V62.18
-      const possibleId = Number(event.id || event.event_id || eventId || 0);
-      let saved = null;
-      if(possibleId){
-        saved = await v6219Fetch('/api/v6218/event-save-real?id='+encodeURIComponent(possibleId), {method:'POST', body:JSON.stringify({event, assignments})});
-        await v6219SaveAssignmentsHard(possibleId);
-      }else{
-        saved = await v6219Fetch('/api/v6218/event-save-real', {method:'POST', body:JSON.stringify({event, assignments})});
-        if(saved && saved.event_id) await v6219SaveAssignmentsHard(saved.event_id);
-      }
-      if(typeof v534Toast === 'function') v534Toast('Evento guardado con operarios y roles');
-      try{ closeWizard(); }catch(e){ const root=document.getElementById('modalRoot'); if(root) root.innerHTML=''; }
-      if(typeof showCalendarV582 === 'function') await showCalendarV582(); else if(typeof viewCalendar === 'function') await viewCalendar();
-    }catch(err){
-      alert('Error guardando evento: '+err.message);
-    }
-  };
-}
-if(typeof openV612EventForm === 'function' && !openV612EventForm.__v6219Wrapped){
-  const oldOpen = openV612EventForm;
-  openV612EventForm = async function(id=0){
-    window.__lastEditingEventIdV6219 = Number(id||0);
-    const r = await oldOpen.apply(this, arguments);
-    setTimeout(()=>v6219LoadAssignmentsIntoForm(id), 450);
-    setTimeout(patchEventSaveV6219, 500);
-    setTimeout(patchEventSaveV6219, 1000);
-    return r;
-  };
-  openV612EventForm.__v6219Wrapped = true;
-  window.openV612EventForm=openV612EventForm; window.openEditEventV60=openV612EventForm; window.editEventV582=openV612EventForm; window.editEventV587=openV612EventForm; window.editEventV593=openV612EventForm; window.editCalendarEventV58=openV612EventForm; window.editCalendarEventV576=openV612EventForm;
-}
-setInterval(patchEventSaveV6219, 1000);
-
+// [V62.34] Bloque anterior de calendario/autosync desactivado para estabilizar la app.
 
 // ---------- V62.20 PASSWORDS EASY EDIT FRONTEND ----------
 function v6220Esc(v){if(typeof escV582==='function')return escV582(v);if(typeof esc==='function')return esc(v);return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));}
@@ -10206,59 +9950,8 @@ if(typeof viewPasswordsV6220 === 'function' && !viewPasswordsV6220.__v6222Wrappe
 }
 
 
-// ---------- V62.23 USERS PERSISTENCE + CALENDAR AUTOLOAD FRONTEND ----------
-async function v6223Fetch(path, opts={}){
-  const headers={'Content-Type':'application/json','Accept':'application/json'};
-  try{
-    let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||'';
-    if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;}
-  }catch(e){}
-  const r=await fetch(new URL(path,window.location.origin).toString(),{method:opts.method||'GET',headers:{...headers,...(opts.headers||{})},body:opts.body,credentials:'include',cache:'no-store'});
-  const text=await r.text();
-  if(text.trim().startsWith('<'))throw new Error('La API ha devuelto HTML.');
-  let data={};try{data=text?JSON.parse(text):{}}catch(e){data={ok:false,error:text}}
-  if(!r.ok||data.ok===false)throw new Error(data.error||text||'HTTP '+r.status);
-  return data;
-}
-async function v6223BackupUsersNow(){
-  try{ await v6223Fetch('/api/v6223/users-backup-now',{method:'POST'}); }catch(e){ console.warn('[V62.23] users backup', e.message); }
-}
-async function v6223CalendarAutoLoad(){
-  try{
-    if(typeof v534Toast==='function') v534Toast('Cargando calendario automáticamente...');
-    await v6223Fetch('/api/v6223/calendar-autoload-now',{method:'POST'});
-    // si hay función manual de Google en frontend, pulsarla/call
-    const btn = [...document.querySelectorAll('button,a')].find(b => (b.textContent||'').toLowerCase().includes('sincron') && (b.textContent||'').toLowerCase().includes('google'));
-    if(btn){ try{ btn.click(); }catch(e){} }
-    setTimeout(async()=>{ try{ if(typeof showCalendarV582==='function') await showCalendarV582(); }catch(e){} }, 1200);
-  }catch(e){ console.warn('[V62.23] calendar autoload', e.message); }
-}
-// Backup usuarios después de entrar en operarios/usuarios y tras editar admin
-if(typeof viewUsers==='function' && !viewUsers.__v6223Wrapped){
-  const old=viewUsers;
-  viewUsers=async function(){ const r=await old.apply(this,arguments); setTimeout(v6223BackupUsersNow,800); return r; };
-  viewUsers.__v6223Wrapped=true; window.viewUsers=viewUsers;
-}
-if(typeof viewOperators==='function' && !viewOperators.__v6223Wrapped){
-  const old=viewOperators;
-  viewOperators=async function(){ const r=await old.apply(this,arguments); setTimeout(v6223BackupUsersNow,800); return r; };
-  viewOperators.__v6223Wrapped=true; window.viewOperators=viewOperators;
-}
-// Auto cargar calendario al abrir menú calendario
-if(typeof viewCalendar==='function' && !viewCalendar.__v6223Wrapped){
-  const old=viewCalendar;
-  viewCalendar=async function(){ const r=await old.apply(this,arguments); setTimeout(v6223CalendarAutoLoad,600); return r; };
-  viewCalendar.__v6223Wrapped=true; window.viewCalendar=viewCalendar;
-}
-document.addEventListener('click', ev=>{
-  const el=ev.target.closest&&ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn,.v622-menu-btn');
-  if(!el)return;
-  const t=(el.textContent||'').toLowerCase();
-  if(t.includes('calendario')) setTimeout(v6223CalendarAutoLoad,900);
-}, true);
-// backup periódico suave de usuarios al iniciar
-setTimeout(v6223BackupUsersNow, 2500);
 
+// [V62.34] Bloque anterior de calendario/autosync desactivado para estabilizar la app.
 
 // ---------- V62.24 PASSWORD EDIT ISOLATION FIX ----------
 // Evita que los botones Editar del menú Contraseñas llamen al editor de eventos.
@@ -10464,17 +10157,16 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
 }
 
 
-// ---------- V62.33 EMERGENCY RESTORE MENU + ORIGINAL CALENDAR ----------
-(function(){
-  function isCalendarPageV6233(){
-    const text = (document.body.textContent || '').toLowerCase();
-    const heads = [...document.querySelectorAll('h1,h2,.page-title,.content-title')]
-      .map(x => (x.textContent || '').toLowerCase()).join(' ');
-    return heads.includes('calendario') || text.includes('calendario de eventos') || text.includes('vista mensual');
-  }
 
-  function cleanupCalendarPatchesV6233(){
-    // Eliminar solo elementos creados por los parches fallidos.
+// [V62.34] Bloque anterior de calendario/autosync desactivado para estabilizar la app.
+
+
+
+// ---------- V62.34 STOP CALENDAR AUTOSYNC POPUP RESTORE ----------
+(function(){
+  window.__MARFAN_DISABLE_CALENDAR_AUTOSYNC__ = true;
+
+  function cleanupBadCalendarBlocksV6234(){
     const badSelectors = [
       '#v6225CalNav',
       '#v6228CalendarToolbar',
@@ -10487,7 +10179,8 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
       '.v6228-calendar-toolbar',
       '.v6230-calendar-controls',
       '.v6230-calendar-grid',
-      '.v6231-native-calbar'
+      '.v6231-native-calbar',
+      '.v6229-event-card'
     ];
     document.querySelectorAll(badSelectors.join(',')).forEach(el => el.remove());
 
@@ -10503,60 +10196,91 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
         id.includes('v6230calendarreal') ||
         cls.includes('v6230-calendar') ||
         cls.includes('v6229-event-card');
-
-      if (bad) el.remove();
+      if(bad) el.remove();
     });
   }
 
-  function ensureMenuVisibleV6233(){
-    // No modifica el menú; solo evita que quede oculto por overlays o estilos fallidos.
-    document.querySelectorAll('aside,.sidebar,nav').forEach(el => {
-      el.style.display = '';
-      el.style.visibility = '';
-      el.style.opacity = '';
-      el.style.pointerEvents = '';
-    });
-  }
-
-  function silentCloseSyncPopupV6233(){
-    document.querySelectorAll('.modal,.modal-back,#modalRoot').forEach(el => {
+  function closeSyncPopupsV6234(){
+    document.querySelectorAll('.modal,.modal-back,#modalRoot,[role="dialog"]').forEach(el => {
       const txt = (el.textContent || '').toLowerCase();
-      if (txt.includes('sincronización completada') || txt.includes('sincronizacion completada') || txt.includes('sincronizando')) {
-        el.innerHTML = '';
-        if (el.classList && (el.classList.contains('modal') || el.classList.contains('modal-back'))) el.remove();
+      if(
+        txt.includes('sincronización completada') ||
+        txt.includes('sincronizacion completada') ||
+        txt.includes('sincronizando') ||
+        txt.includes('calendario entero') ||
+        txt.includes('eventos leídos') ||
+        txt.includes('eventos leidos')
+      ){
+        if(el.id === 'modalRoot') el.innerHTML = '';
+        else el.remove();
       }
     });
   }
 
-  if (typeof viewCalendar === 'function' && !viewCalendar.__v6233Wrapped) {
-    const oldViewCalendarV6233 = viewCalendar;
+  function ensureSidebarV6234(){
+    document.querySelectorAll('aside,.sidebar,nav').forEach(el => {
+      el.style.display = '';
+      el.style.visibility = 'visible';
+      el.style.opacity = '1';
+      el.style.pointerEvents = 'auto';
+      el.style.transform = '';
+    });
+  }
+
+  const nativeAlertV6234 = window.alert;
+  window.alert = function(msg){
+    const t = String(msg || '').toLowerCase();
+    if(t.includes('sincron') || t.includes('calendario entero') || t.includes('eventos leídos') || t.includes('eventos leidos')){
+      return;
+    }
+    return nativeAlertV6234.call(window, msg);
+  };
+
+  document.addEventListener('click', function(ev){
+    const el = ev.target.closest && ev.target.closest('button,a');
+    if(!el) return;
+    const t = (el.textContent || '').toLowerCase();
+
+    // Bloquea solo clicks sintéticos antiguos sobre sincronizar Google.
+    if(t.includes('sincron') && t.includes('google') && ev.isTrusted === false){
+      ev.preventDefault();
+      ev.stopPropagation();
+      ev.stopImmediatePropagation();
+      return false;
+    }
+  }, true);
+
+  if(typeof viewCalendar === 'function' && !viewCalendar.__v6234Wrapped){
+    const oldViewCalendarV6234 = viewCalendar;
     viewCalendar = async function(){
-      const r = await oldViewCalendarV6233.apply(this, arguments);
-      setTimeout(cleanupCalendarPatchesV6233, 100);
-      setTimeout(silentCloseSyncPopupV6233, 500);
-      setTimeout(ensureMenuVisibleV6233, 700);
+      const r = await oldViewCalendarV6234.apply(this, arguments);
+      setTimeout(cleanupBadCalendarBlocksV6234, 100);
+      setTimeout(closeSyncPopupsV6234, 250);
+      setTimeout(ensureSidebarV6234, 350);
+      setTimeout(cleanupBadCalendarBlocksV6234, 900);
+      setTimeout(closeSyncPopupsV6234, 1100);
       return r;
     };
-    viewCalendar.__v6233Wrapped = true;
+    viewCalendar.__v6234Wrapped = true;
     window.viewCalendar = viewCalendar;
   }
 
   document.addEventListener('click', ev => {
     const el = ev.target.closest && ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn,.v622-menu-btn');
-    if (!el) return;
+    if(!el) return;
     const t = (el.textContent || '').toLowerCase();
-    if (t.includes('calendario')) {
-      setTimeout(cleanupCalendarPatchesV6233, 200);
-      setTimeout(silentCloseSyncPopupV6233, 800);
-      setTimeout(ensureMenuVisibleV6233, 900);
+    if(t.includes('calendario')){
+      setTimeout(cleanupBadCalendarBlocksV6234, 100);
+      setTimeout(closeSyncPopupsV6234, 300);
+      setTimeout(ensureSidebarV6234, 500);
+      setTimeout(cleanupBadCalendarBlocksV6234, 1000);
+      setTimeout(closeSyncPopupsV6234, 1300);
     }
   }, true);
 
   setInterval(() => {
-    ensureMenuVisibleV6233();
-    if (isCalendarPageV6233()) {
-      cleanupCalendarPatchesV6233();
-      silentCloseSyncPopupV6233();
-    }
-  }, 1500);
+    ensureSidebarV6234();
+    closeSyncPopupsV6234();
+    cleanupBadCalendarBlocksV6234();
+  }, 1000);
 })();

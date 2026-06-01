@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.33.0",
-  "description": "V62.33 Emergency Restore Menu Original Calendar",
+  "version": "62.34.0",
+  "description": "V62.34 Stop Calendar AutoSync Popup Restore",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

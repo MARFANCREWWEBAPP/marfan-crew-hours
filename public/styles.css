@@ -2190,3 +2190,26 @@ aside,.sidebar,nav{
   visibility:visible!important;
   opacity:1!important;
 }
+
+/* ---------- V62.34 STOP CALENDAR AUTOSYNC POPUP RESTORE ---------- */
+#v6225CalNav,
+#v6228CalendarToolbar,
+#v6229CalendarToolbar,
+#v6229MonthEvents,
+#v6230CalendarReal,
+#v6231NativeCalbar,
+#v6232NativeControls,
+.v6225-cal-nav,
+.v6228-calendar-toolbar,
+.v6230-calendar-controls,
+.v6230-calendar-grid,
+.v6231-native-calbar,
+.v6229-event-card{
+  display:none!important;
+}
+
+aside,.sidebar,nav{
+  visibility:visible!important;
+  opacity:1!important;
+  pointer-events:auto!important;
+}
