@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.20.0",
-  "description": "V62.20 Passwords Easy Edit",
+  "version": "62.23.0",
+  "description": "V62.23 Users Persistence Calendar AutoLoad Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

@@ -606,7 +606,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version:'62.20.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version:'62.23.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -2880,7 +2880,7 @@ app.get('/api/v6216-auto-restore-status', requireAdmin, (req,res)=>{
   try{
     res.json({
       ok:true,
-      version:'62.20.0',
+      version:'62.23.0',
       status:global.V6216_RESTORE_STATUS || null,
       db_path:v6216DbPath(),
       data_dir:v6216DataDir(),
@@ -3339,6 +3339,346 @@ app.delete('/api/v6220/passwords/:id', requireAdmin, (req,res)=>{
   catch(e){res.status(500).json({ok:false,error:e.message});}
 });
 setTimeout(()=>{try{v6220EnsurePasswordsTable()}catch(e){}},1200);
+
+
+// ---------- V62.21 MAKE ADMIN FUNCTION ----------
+function v6221AdminCount(){
+  try{return db.prepare("SELECT COUNT(*) AS c FROM users WHERE role='admin' AND COALESCE(active,1)!=0").get().c||0;}catch(e){return 0;}
+}
+app.get('/api/v6221/users/:id/admin-role', requireAdmin, (req,res)=>{
+  try{
+    const user=db.prepare("SELECT id,first_name,last_name,email,role,active FROM users WHERE id=?").get(Number(req.params.id));
+    if(!user)return res.status(404).json({ok:false,error:'Usuario no encontrado'});
+    res.json({ok:true,user,is_admin:user.role==='admin'?1:0,admin_count:v6221AdminCount()});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/v6221/users/:id/admin-role', requireAdmin, (req,res)=>{
+  try{
+    const id=Number(req.params.id);
+    const user=db.prepare("SELECT * FROM users WHERE id=?").get(id);
+    if(!user)return res.status(404).json({ok:false,error:'Usuario no encontrado'});
+    const makeAdmin=Number((req.body||{}).is_admin||0)===1;
+    if(!makeAdmin && user.role==='admin' && v6221AdminCount()<=1)return res.status(400).json({ok:false,error:'No puedes quitar el último administrador del sistema'});
+    const role=makeAdmin?'admin':'operario';
+    db.prepare("UPDATE users SET role=? WHERE id=?").run(role,id);
+    res.json({ok:true,id,role,is_admin:makeAdmin?1:0});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+
+
+// ---------- V62.22 PASSWORDS RESTORE ADMIN FIX ----------
+function v6222TableExists(name){
+  try{
+    return !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name);
+  }catch(e){ return false; }
+}
+function v6222Cols(table){
+  try{ return db.prepare(`PRAGMA table_info("${table}")`).all().map(c=>c.name); }catch(e){ return []; }
+}
+function v6222Get(row, cols, names){
+  for(const n of names){
+    if(cols.includes(n) && row[n] !== undefined && row[n] !== null && String(row[n]).trim() !== '') return row[n];
+  }
+  return '';
+}
+function v6222EnsurePasswordsTable(){
+  if(typeof v6220EnsurePasswordsTable === 'function') v6220EnsurePasswordsTable();
+  else {
+    db.exec(`CREATE TABLE IF NOT EXISTS password_vault (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      service TEXT DEFAULT '',
+      category TEXT DEFAULT '',
+      username TEXT DEFAULT '',
+      password TEXT DEFAULT '',
+      url TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      active INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );`);
+  }
+}
+function v6222UpsertPassword(item){
+  v6222EnsurePasswordsTable();
+  const title = String(item.title || '').trim();
+  const username = String(item.username || '').trim();
+  const service = String(item.service || '').trim();
+  if(!title && !username) return false;
+
+  const exists = db.prepare(`
+    SELECT id FROM password_vault 
+    WHERE lower(COALESCE(title,''))=lower(?) 
+      AND lower(COALESCE(username,''))=lower(?)
+      AND lower(COALESCE(service,''))=lower(?)
+    LIMIT 1
+  `).get(title, username, service);
+
+  if(exists){
+    db.prepare(`UPDATE password_vault SET 
+      title=?, service=?, category=?, username=?, password=?, url=?, notes=?, active=1, updated_at=CURRENT_TIMESTAMP
+      WHERE id=?`)
+      .run(title, service, item.category || '', username, item.password || '', item.url || '', item.notes || '', exists.id);
+    return true;
+  }
+
+  db.prepare(`INSERT INTO password_vault (title,service,category,username,password,url,notes,active,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+    .run(title || username, service, item.category || '', username, item.password || '', item.url || '', item.notes || '', 1);
+  return true;
+}
+function v6222MigrateOldPasswords(){
+  v6222EnsurePasswordsTable();
+
+  const candidates = [
+    'passwords',
+    'password_items',
+    'vault',
+    'password_vault_old',
+    'accesses',
+    'credentials',
+    'erp_passwords',
+    'system_passwords',
+    'saved_passwords',
+    'login_credentials'
+  ];
+
+  let migrated = 0;
+  const allTables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(x=>x.name);
+
+  for(const table of allTables){
+    const t = String(table || '').toLowerCase();
+    const looksPasswordTable = candidates.includes(t) || (t.includes('password') && t !== 'password_vault') || t.includes('credential') || t.includes('vault');
+    if(!looksPasswordTable || t === 'password_vault') continue;
+
+    const cols = v6222Cols(table);
+    if(!cols.length) continue;
+
+    let rows = [];
+    try{ rows = db.prepare(`SELECT * FROM "${table}"`).all(); }catch(e){ continue; }
+
+    for(const row of rows){
+      const item = {
+        title: v6222Get(row, cols, ['title','name','nombre','access_name','label','service','platform','plataforma']),
+        service: v6222Get(row, cols, ['service','platform','plataforma','app','sistema']),
+        category: v6222Get(row, cols, ['category','categoria','type','tipo']),
+        username: v6222Get(row, cols, ['username','user','usuario','email','login','account']),
+        password: v6222Get(row, cols, ['password','pass','contraseña','contrasena','pwd','secret']),
+        url: v6222Get(row, cols, ['url','link','web','website']),
+        notes: v6222Get(row, cols, ['notes','notas','description','descripcion','observations','observaciones'])
+      };
+      if(v6222UpsertPassword(item)) migrated++;
+    }
+  }
+
+  // También migrar usuarios del sistema como accesos internos si no estaban.
+  try{
+    const users = db.prepare(`SELECT * FROM users WHERE COALESCE(active,1)!=0 ORDER BY role, first_name, last_name`).all();
+    const cols = v6222Cols('users');
+    for(const u of users){
+      const email = v6222Get(u, cols, ['email','username','user']);
+      if(!email) continue;
+      const pass = v6222Get(u, cols, ['password','plain_password','password_plain']);
+      const title = `Usuario ERP - ${[u.first_name,u.last_name].filter(Boolean).join(' ') || email}`;
+      const item = {
+        title,
+        service: 'ERP Marfan Crew',
+        category: u.role === 'admin' ? 'Administradores' : 'Usuarios ERP',
+        username: email,
+        password: pass || '',
+        url: '',
+        notes: `Rol: ${u.role || 'operario'}`
+      };
+      v6222UpsertPassword(item);
+    }
+  }catch(e){}
+
+  console.log('[V62.22] Passwords migrated/restored:', migrated);
+  return migrated;
+}
+app.post('/api/v6222/passwords-restore', requireAdmin, (req,res)=>{
+  try{
+    const migrated = v6222MigrateOldPasswords();
+    const rows = db.prepare(`SELECT * FROM password_vault WHERE COALESCE(active,1)!=0 ORDER BY category COLLATE NOCASE, title COLLATE NOCASE`).all();
+    res.json({ok:true,migrated,total:rows.length,rows});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+app.get('/api/v6222/passwords-restore-status', requireAdmin, (req,res)=>{
+  try{
+    v6222EnsurePasswordsTable();
+    const total = db.prepare(`SELECT COUNT(*) AS c FROM password_vault WHERE COALESCE(active,1)!=0`).get().c || 0;
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(x=>x.name);
+    res.json({ok:true,total,tables});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+// Restaurar automáticamente al arrancar.
+setTimeout(()=>{ try{ v6222MigrateOldPasswords(); }catch(e){ console.error('[V62.22] restore passwords error', e.message); } }, 1700);
+
+
+// ---------- V62.23 USERS PERSISTENCE + CALENDAR AUTOLOAD FIX ----------
+function v6223PathLib(){ return (typeof path_v627 !== 'undefined') ? path_v627 : require('path'); }
+function v6223FsLib(){ return (typeof fs_v627 !== 'undefined') ? fs_v627 : require('fs'); }
+function v6223DataDir(){
+  return global.DATA_DIR_V627 || process.env.DATA_DIR || process.env.PERSISTENT_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || '/data';
+}
+function v6223BackupDir(){
+  const p = v6223PathLib();
+  const f = v6223FsLib();
+  const dir = p.join(v6223DataDir(), 'backups');
+  try{ f.mkdirSync(dir, {recursive:true}); }catch(e){}
+  return dir;
+}
+function v6223JsonDir(){
+  const p = v6223PathLib();
+  const f = v6223FsLib();
+  const dir = p.join(v6223DataDir(), 'json-backups');
+  try{ f.mkdirSync(dir, {recursive:true}); }catch(e){}
+  return dir;
+}
+function v6223KeepLastFiles(dir, prefix, max){
+  const p = v6223PathLib();
+  const f = v6223FsLib();
+  try{
+    const files = f.readdirSync(dir)
+      .filter(x => x.startsWith(prefix))
+      .map(x => ({name:x, path:p.join(dir,x), t:f.statSync(p.join(dir,x)).mtimeMs}))
+      .sort((a,b)=>b.t-a.t);
+    files.slice(max).forEach(x => { try{ f.unlinkSync(x.path); }catch(e){} });
+  }catch(e){}
+}
+function v6223ExportUsersJson(){
+  const p = v6223PathLib();
+  const f = v6223FsLib();
+  try{
+    const users = db.prepare('SELECT * FROM users ORDER BY id').all();
+    const stamp = new Date().toISOString().replace(/[:.]/g,'-');
+    const out = p.join(v6223JsonDir(), `users-${stamp}.json`);
+    f.writeFileSync(out, JSON.stringify({version:'62.23.0', created_at:new Date().toISOString(), users}, null, 2));
+    v6223KeepLastFiles(v6223JsonDir(), 'users-', 10);
+    return {ok:true,path:out,count:users.length};
+  }catch(e){ return {ok:false,error:e.message}; }
+}
+function v6223LatestUsersJson(){
+  const p = v6223PathLib();
+  const f = v6223FsLib();
+  try{
+    const files = f.readdirSync(v6223JsonDir())
+      .filter(x => x.startsWith('users-') && x.endsWith('.json'))
+      .map(x => ({name:x, path:p.join(v6223JsonDir(),x), t:f.statSync(p.join(v6223JsonDir(),x)).mtimeMs}))
+      .sort((a,b)=>b.t-a.t);
+    return files[0] || null;
+  }catch(e){ return null; }
+}
+function v6223RestoreUsersJsonIfNeeded(){
+  const f = v6223FsLib();
+  try{
+    const count = db.prepare("SELECT COUNT(*) AS c FROM users").get().c || 0;
+    if(count > 1) return {ok:true, restored:false, reason:'users_exist', count};
+
+    const latest = v6223LatestUsersJson();
+    if(!latest) return {ok:true, restored:false, reason:'no_users_backup'};
+
+    const data = JSON.parse(f.readFileSync(latest.path, 'utf8'));
+    const users = data.users || [];
+    if(!users.length) return {ok:true, restored:false, reason:'empty_backup'};
+
+    const cols = db.prepare('PRAGMA table_info(users)').all().map(c=>c.name);
+    const insertable = cols.filter(c => c !== 'id');
+    const stmt = db.prepare(`INSERT INTO users (${insertable.map(c=>`"${c}"`).join(',')}) VALUES (${insertable.map(()=>'?').join(',')})`);
+    const existingEmails = new Set(db.prepare('SELECT lower(email) AS e FROM users WHERE email IS NOT NULL').all().map(x=>x.e).filter(Boolean));
+
+    let restored = 0;
+    const tx = db.transaction(() => {
+      for(const u of users){
+        if(u.email && existingEmails.has(String(u.email).toLowerCase())) continue;
+        const values = insertable.map(c => u[c] !== undefined ? u[c] : null);
+        stmt.run(...values);
+        restored++;
+      }
+    });
+    tx();
+    return {ok:true, restored:true, restored_count:restored, from:latest.path};
+  }catch(e){ return {ok:false,error:e.message}; }
+}
+function v6223EnsureNoDemoOverwrite(){
+  try{
+    // desactiva demos residuales si quedan identificables
+    db.prepare(`DELETE FROM users WHERE role!='admin' AND (
+      lower(email) LIKE 'demo.%' OR lower(email) LIKE '%@demo.com' OR lower(email) LIKE '%.demo@%'
+    )`).run();
+  }catch(e){}
+}
+function v6223CalendarRestoreAndAutoSync(){
+  const result = {restore:0, sync:{ok:false, skipped:true}};
+  try{
+    if(typeof v6218RestoreAll === 'function') result.restore = v6218RestoreAll();
+    else if(typeof v6217RestoreAllFullEvents === 'function') result.restore = v6217RestoreAllFullEvents();
+    else if(typeof v6216RestoreEventExtrasOnBoot === 'function') result.restore = v6216RestoreEventExtrasOnBoot();
+  }catch(e){ result.restore_error = e.message; }
+
+  // Intentar funciones internas de sync si están en scope global o local.
+  try{
+    const candidates = [
+      'v589SyncGoogleCalendar','v586SyncGoogleCalendar','v574SyncGoogleCalendar',
+      'syncGoogleCalendar','syncGoogleEvents','syncGoogleCalendarNow',
+      'forceGoogleSync','manualGoogleSync'
+    ];
+    for(const fn of candidates){
+      try{
+        if(typeof global[fn] === 'function'){
+          // No await aquí: este helper también se usa en arranque.
+          const out = global[fn]();
+          result.sync = {ok:true, called:fn};
+          break;
+        }
+      }catch(e){ result.sync = {ok:false, called:fn, error:e.message}; }
+    }
+  }catch(e){ result.sync_error = e.message; }
+  return result;
+}
+app.post('/api/v6223/users-backup-now', requireAdmin, (req,res)=>{
+  const result = v6223ExportUsersJson();
+  res.json(result);
+});
+app.post('/api/v6223/users-restore-now', requireAdmin, (req,res)=>{
+  const result = v6223RestoreUsersJsonIfNeeded();
+  res.json(result);
+});
+app.post('/api/v6223/calendar-autoload-now', requireAdmin, async (req,res)=>{
+  try{
+    let result = {restore:0, sync:{ok:false, skipped:true}};
+
+    // Primero llamar a endpoints o funciones disponibles de restauración/sync
+    try{
+      if(typeof v6218RestoreAll === 'function') result.restore = v6218RestoreAll();
+      else if(typeof v6217RestoreAllFullEvents === 'function') result.restore = v6217RestoreAllFullEvents();
+    }catch(e){ result.restore_error = e.message; }
+
+    // Llamar ruta de sync conocida si existe como función local no siempre posible; devolver restauración al menos.
+    res.json({ok:true, ...result});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+app.get('/api/v6223-persistence-status', requireAdmin, (req,res)=>{
+  try{
+    const users = db.prepare('SELECT COUNT(*) AS c FROM users').get().c || 0;
+    let events = 0;
+    try{ events = db.prepare('SELECT COUNT(*) AS c FROM events').get().c || 0; }catch(e){}
+    let snapshots = 0;
+    try{ snapshots = db.prepare("SELECT COUNT(*) AS c FROM event_snapshots_v6218").get().c || 0; }catch(e){}
+    res.json({
+      ok:true,
+      version:'62.23.0',
+      data_dir:v6223DataDir(),
+      users,
+      events,
+      snapshots,
+      latest_users_backup:v6223LatestUsersJson()
+    });
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+// Arranque automático: usuarios + calendario
+setTimeout(()=>{ try{ v6223EnsureNoDemoOverwrite(); v6223RestoreUsersJsonIfNeeded(); v6223ExportUsersJson(); }catch(e){ console.error('[V62.23] users persistence', e.message); } }, 1800);
+setTimeout(()=>{ try{ v6223CalendarRestoreAndAutoSync(); }catch(e){ console.error('[V62.23] calendar autoload', e.message); } }, 2600);
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads'), { maxAge: 0 }));

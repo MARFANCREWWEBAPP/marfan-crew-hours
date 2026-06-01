@@ -10116,3 +10116,145 @@ async function openPasswordEditV6220(id=0){
 async function deletePasswordV6220(id){if(!confirm('¿Borrar este acceso?'))return;try{await v6220Fetch('/api/v6220/passwords/'+id,{method:'DELETE'});await loadPasswordsV6220();}catch(e){alert('Error borrando: '+e.message)}}
 window.viewPasswords=viewPasswordsV6220; window.viewContrasenas=viewPasswordsV6220;
 document.addEventListener('click',ev=>{const btn=ev.target.closest&&ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn');if(!btn)return;const t=(btn.textContent||'').toLowerCase();if(t.includes('contraseña')||t.includes('contrasena')||t.includes('password'))setTimeout(viewPasswordsV6220,80);},true);
+
+
+// ---------- V62.21 MAKE ADMIN FUNCTION FRONTEND ----------
+async function v6221Fetch(path,opts={}){
+  const headers={'Content-Type':'application/json','Accept':'application/json'};
+  try{let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||'';if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;}}catch(e){}
+  const r=await fetch(new URL(path,window.location.origin).toString(),{method:opts.method||'GET',headers:{...headers,...(opts.headers||{})},body:opts.body,credentials:'include',cache:'no-store'});
+  const text=await r.text();if(text.trim().startsWith('<'))throw new Error('La API ha devuelto HTML.');
+  let data={};try{data=text?JSON.parse(text):{}}catch(e){data={ok:false,error:text}}
+  if(!r.ok||data.ok===false)throw new Error(data.error||text||'HTTP '+r.status);return data;
+}
+async function v6221SaveAdminRole(id){
+  const cb=document.getElementById('operatorIsAdminV6221'); if(!cb)return;
+  await v6221Fetch('/api/v6221/users/'+Number(id)+'/admin-role',{method:'POST',body:JSON.stringify({is_admin:cb.checked?1:0})});
+}
+async function v6221EnhanceOperatorAdmin(id){
+  const form=document.getElementById('operatorEditFormV6210'); if(!form||form.__v6221AdminEnhanced)return;
+  form.__v6221AdminEnhanced=true;
+  let data;try{data=await v6221Fetch('/api/v6221/users/'+Number(id)+'/admin-role')}catch(e){return}
+  const laboral=[...form.querySelectorAll('.v6210-section')].find(s=>(s.textContent||'').toLowerCase().includes('datos laborales'))||form.querySelector('.v6210-section');
+  if(laboral && !document.getElementById('operatorIsAdminV6221')){
+    const box=document.createElement('div'); box.className='v6221-admin-box';
+    box.innerHTML=`<label><input type="checkbox" id="operatorIsAdminV6221" name="is_admin" value="1" ${Number(data.is_admin||0)===1?'checked':''}> Hacer administrador del sistema</label><span class="v6221-admin-warning">El administrador puede entrar al ERP y modificar datos sensibles.</span>`;
+    laboral.appendChild(box);
+  }
+  const previous=form.onsubmit;
+  form.onsubmit=async ev=>{
+    ev.preventDefault();
+    try{
+      const fd=new FormData(form); const payload=Object.fromEntries(fd);
+      payload.epis_delivered=form.epis_delivered&&form.epis_delivered.checked?1:0;
+      payload.has_prl=form.has_prl&&form.has_prl.checked?1:0;
+      payload.is_team_lead=form.is_team_lead&&form.is_team_lead.checked?1:0;
+      payload.team_lead=payload.is_team_lead;
+      if(typeof v6210Fetch==='function') await v6210Fetch('/api/v6210/operators/'+Number(id)+'/edit',{method:'POST',body:JSON.stringify(payload)});
+      if(typeof v6214UploadOperatorPhoto==='function') await v6214UploadOperatorPhoto(id);
+      if(typeof v6214UploadOperatorDocs==='function') await v6214UploadOperatorDocs(id);
+      await v6221SaveAdminRole(id);
+      if(typeof v534Toast==='function')v534Toast('Operario actualizado correctamente');
+      try{closeWizard()}catch(e){const root=document.getElementById('modalRoot');if(root)root.innerHTML='';}
+      if(typeof viewUsers==='function')viewUsers();else if(typeof viewOperators==='function')viewOperators();
+    }catch(e){alert('Error guardando operario: '+e.message);}
+  };
+}
+if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6221Wrapped){
+  const old=openOperatorEditV6210;
+  openOperatorEditV6210=async function(id){const r=await old.apply(this,arguments);setTimeout(()=>v6221EnhanceOperatorAdmin(id),350);setTimeout(()=>v6221EnhanceOperatorAdmin(id),900);return r;};
+  openOperatorEditV6210.__v6221Wrapped=true; window.openOperatorEditV6210=openOperatorEditV6210;
+}
+
+
+// ---------- V62.22 PASSWORDS RESTORE ADMIN FIX FRONTEND ----------
+async function restorePasswordsV6222(){
+  try{
+    const r = await v6220Fetch('/api/v6222/passwords-restore', {method:'POST'});
+    if(typeof v534Toast === 'function') v534Toast('Contraseñas restauradas: ' + (r.total || 0));
+    if(typeof loadPasswordsV6220 === 'function') await loadPasswordsV6220();
+    return r;
+  }catch(e){
+    alert('Error restaurando contraseñas: ' + e.message);
+  }
+}
+if(typeof viewPasswordsV6220 === 'function' && !viewPasswordsV6220.__v6222Wrapped){
+  const oldViewPasswordsV6222 = viewPasswordsV6220;
+  viewPasswordsV6220 = async function(){
+    const r = await oldViewPasswordsV6222.apply(this, arguments);
+    try{
+      const status = await v6220Fetch('/api/v6222/passwords-restore-status');
+      if(!status.total){
+        await restorePasswordsV6222();
+      }
+      const toolbar = document.querySelector('.v6220-toolbar > div:last-child');
+      if(toolbar && !document.getElementById('restorePasswordsBtnV6222')){
+        const btn = document.createElement('button');
+        btn.id = 'restorePasswordsBtnV6222';
+        btn.className = 'secondary';
+        btn.textContent = 'Restaurar accesos antiguos';
+        btn.onclick = restorePasswordsV6222;
+        toolbar.appendChild(btn);
+      }
+    }catch(e){}
+    return r;
+  };
+  viewPasswordsV6220.__v6222Wrapped = true;
+  window.viewPasswordsV6220 = viewPasswordsV6220;
+  window.viewPasswords = viewPasswordsV6220;
+  window.viewContrasenas = viewPasswordsV6220;
+}
+
+
+// ---------- V62.23 USERS PERSISTENCE + CALENDAR AUTOLOAD FRONTEND ----------
+async function v6223Fetch(path, opts={}){
+  const headers={'Content-Type':'application/json','Accept':'application/json'};
+  try{
+    let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||'';
+    if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;}
+  }catch(e){}
+  const r=await fetch(new URL(path,window.location.origin).toString(),{method:opts.method||'GET',headers:{...headers,...(opts.headers||{})},body:opts.body,credentials:'include',cache:'no-store'});
+  const text=await r.text();
+  if(text.trim().startsWith('<'))throw new Error('La API ha devuelto HTML.');
+  let data={};try{data=text?JSON.parse(text):{}}catch(e){data={ok:false,error:text}}
+  if(!r.ok||data.ok===false)throw new Error(data.error||text||'HTTP '+r.status);
+  return data;
+}
+async function v6223BackupUsersNow(){
+  try{ await v6223Fetch('/api/v6223/users-backup-now',{method:'POST'}); }catch(e){ console.warn('[V62.23] users backup', e.message); }
+}
+async function v6223CalendarAutoLoad(){
+  try{
+    if(typeof v534Toast==='function') v534Toast('Cargando calendario automáticamente...');
+    await v6223Fetch('/api/v6223/calendar-autoload-now',{method:'POST'});
+    // si hay función manual de Google en frontend, pulsarla/call
+    const btn = [...document.querySelectorAll('button,a')].find(b => (b.textContent||'').toLowerCase().includes('sincron') && (b.textContent||'').toLowerCase().includes('google'));
+    if(btn){ try{ btn.click(); }catch(e){} }
+    setTimeout(async()=>{ try{ if(typeof showCalendarV582==='function') await showCalendarV582(); }catch(e){} }, 1200);
+  }catch(e){ console.warn('[V62.23] calendar autoload', e.message); }
+}
+// Backup usuarios después de entrar en operarios/usuarios y tras editar admin
+if(typeof viewUsers==='function' && !viewUsers.__v6223Wrapped){
+  const old=viewUsers;
+  viewUsers=async function(){ const r=await old.apply(this,arguments); setTimeout(v6223BackupUsersNow,800); return r; };
+  viewUsers.__v6223Wrapped=true; window.viewUsers=viewUsers;
+}
+if(typeof viewOperators==='function' && !viewOperators.__v6223Wrapped){
+  const old=viewOperators;
+  viewOperators=async function(){ const r=await old.apply(this,arguments); setTimeout(v6223BackupUsersNow,800); return r; };
+  viewOperators.__v6223Wrapped=true; window.viewOperators=viewOperators;
+}
+// Auto cargar calendario al abrir menú calendario
+if(typeof viewCalendar==='function' && !viewCalendar.__v6223Wrapped){
+  const old=viewCalendar;
+  viewCalendar=async function(){ const r=await old.apply(this,arguments); setTimeout(v6223CalendarAutoLoad,600); return r; };
+  viewCalendar.__v6223Wrapped=true; window.viewCalendar=viewCalendar;
+}
+document.addEventListener('click', ev=>{
+  const el=ev.target.closest&&ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn,.v622-menu-btn');
+  if(!el)return;
+  const t=(el.textContent||'').toLowerCase();
+  if(t.includes('calendario')) setTimeout(v6223CalendarAutoLoad,900);
+}, true);
+// backup periódico suave de usuarios al iniciar
+setTimeout(v6223BackupUsersNow, 2500);
