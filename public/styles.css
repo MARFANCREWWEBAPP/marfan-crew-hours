@@ -2169,45 +2169,7 @@ nav a.active:not(.v626-active),
 .v6227-role-box select{margin-top:8px;width:100%}
 .v6227-role-help{display:block;font-size:12px;margin-top:6px;color:#0369a1;font-weight:700}
 
-/* ---------- V62.33 EMERGENCY RESTORE ---------- */
-/* Oculta únicamente capas de calendario creadas por parches fallidos. */
-#v6225CalNav,
-#v6228CalendarToolbar,
-#v6229CalendarToolbar,
-#v6229MonthEvents,
-#v6230CalendarReal,
-#v6231NativeCalbar,
-#v6232NativeControls,
-.v6225-cal-nav,
-.v6228-calendar-toolbar,
-.v6230-calendar-controls,
-.v6230-calendar-grid,
-.v6231-native-calbar,
-.v6229-event-card{
-  display:none!important;
-}
-aside,.sidebar,nav{
-  visibility:visible!important;
-  opacity:1!important;
-}
-
-/* ---------- V62.34 STOP CALENDAR AUTOSYNC POPUP RESTORE ---------- */
-#v6225CalNav,
-#v6228CalendarToolbar,
-#v6229CalendarToolbar,
-#v6229MonthEvents,
-#v6230CalendarReal,
-#v6231NativeCalbar,
-#v6232NativeControls,
-.v6225-cal-nav,
-.v6228-calendar-toolbar,
-.v6230-calendar-controls,
-.v6230-calendar-grid,
-.v6231-native-calbar,
-.v6229-event-card{
-  display:none!important;
-}
-
+/* ---------- V62.35 SAFE CALENDAR RESTORE ---------- */
 aside,.sidebar,nav{
   visibility:visible!important;
   opacity:1!important;

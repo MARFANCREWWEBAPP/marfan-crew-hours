@@ -1,10 +1,13 @@
-# V62.34 Stop Calendar AutoSync Popup Restore
+# V62.35 Safe Calendar Restore
+
+Base: V62.27 estable.
+
+Esta versión NO parchea visualmente el calendario.
 
 Objetivo:
-- Estabilizar Calendario.
-- Desactivar todos los autosync/autoload visuales acumulados.
-- No pulsar automáticamente Sync Google.
-- No mostrar popup de sincronización.
-- Mantener calendario original y menú lateral.
-
-La sincronización Google queda manual para evitar que rompa la vista al entrar.
+- Recuperar pantalla blanca al entrar en Calendario.
+- Mantener el calendario original sin capas nuevas.
+- Desactivar autosync/autoload problemáticos.
+- Mantener Google Sync manual.
+- Mantener menú lateral visible.
+- Mantener Contraseñas, roles admin/operario y módulos existentes.
