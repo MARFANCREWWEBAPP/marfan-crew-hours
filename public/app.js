@@ -10535,3 +10535,38 @@ setTimeout(v6223BackupUsersNow, 2500);
     }
   }, 2500);
 })();
+
+
+// ---------- V62.26 ADMIN AUTH REPAIR + PASSWORD ACCESS FIX FRONTEND ----------
+async function v6226Fetch(path,opts={}){
+  const headers={'Content-Type':'application/json','Accept':'application/json'};
+  try{let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||localStorage.getItem('adminToken')||'';if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;}}catch(e){}
+  const r=await fetch(new URL(path,window.location.origin).toString(),{method:opts.method||'GET',headers:{...headers,...(opts.headers||{})},body:opts.body,credentials:'include',cache:'no-store'});
+  const text=await r.text();if(text.trim().startsWith('<'))throw new Error('La API ha devuelto HTML.');
+  let data={};try{data=text?JSON.parse(text):{}}catch(e){data={ok:false,error:text}}
+  if(!r.ok||data.ok===false)throw new Error(data.error||text||'HTTP '+r.status);return data;
+}
+async function loadPasswordsV6226(){
+  const box=document.getElementById('v6220List');if(!box)return;let rows=[];
+  try{rows=(await v6226Fetch('/api/v6226/passwords')).rows||[];}catch(e){box.innerHTML='<p class="muted">Error cargando: '+v6220Esc(e.message)+'</p>';return;}
+  const q=(document.getElementById('v6220Search')?.value||'').toLowerCase();
+  if(q)rows=rows.filter(r=>[r.title,r.service,r.category,r.username,r.url,r.notes].join(' ').toLowerCase().includes(q));
+  box.innerHTML=rows.length?`<div class="v6220-grid">${rows.map(r=>`<div class="v6220-card"><h3>${v6220Esc(r.title)}</h3><div class="v6220-meta">${v6220Esc(r.category||'Sin categoría')} · ${v6220Esc(r.service||'')}</div><div class="v6220-row"><span>Usuario</span><code>${v6220Esc(r.username||'')}</code></div><div class="v6220-row"><span>Contraseña</span><code id="pass-${r.id}" data-pass="${v6220Esc(r.password||'')}">${v6220Esc(v6220Masked(r.password))}</code></div>${r.url?`<div class="v6220-row"><span>URL</span><a href="${v6220Esc(r.url)}" target="_blank">Abrir</a></div>`:''}${r.notes?`<p class="muted">${v6220Esc(r.notes)}</p>`:''}<div class="v6220-actions"><button class="v6220-edit v6224-password-edit-isolated" data-password-id="${r.id}" onclick="event.preventDefault();event.stopPropagation();openPasswordEditV6226(${r.id});return false;">Editar</button><button class="v6220-copy" onclick="v6220Copy('${String(r.username||'').replace(/'/g,"\\'")}')">Copiar usuario</button><button class="v6220-copy" onclick="v6220Copy(document.getElementById('pass-${r.id}').dataset.pass)">Copiar contraseña</button><button class="secondary" onclick="togglePasswordV6220(${r.id})">Mostrar/Ocultar</button><button class="danger" onclick="deletePasswordV6226(${r.id})">Borrar</button></div></div>`).join('')}</div>`:'<p class="muted">No hay accesos guardados todavía.</p>';
+}
+async function openPasswordEditV6226(id=0){
+  let r={title:'',service:'',category:'',username:'',password:'',url:'',notes:'',active:1};
+  if(id){try{r=(await v6226Fetch('/api/v6226/passwords/'+id)).row}catch(e){return alert('Error abriendo acceso: '+e.message)}}
+  const root=document.getElementById('modalRoot')||document.body;
+  root.innerHTML=`<div class="modal-back"><div class="modal v6220-modal"><div class="modal-head"><div><h2>${id?'Editar acceso':'Añadir acceso'}</h2><p class="muted">Edita usuarios y contraseñas fácilmente.</p></div><button class="secondary" onclick="closeWizard()">Cerrar</button></div><form id="passwordFormV6226"><div class="v6220-form-grid"><input class="field span-6" name="title" value="${v6220Esc(r.title||'')}" placeholder="Nombre del acceso" required><input class="field span-3" name="service" value="${v6220Esc(r.service||'')}" placeholder="Servicio"><input class="field span-3" name="category" value="${v6220Esc(r.category||'')}" placeholder="Categoría"><input class="field span-6" name="username" value="${v6220Esc(r.username||'')}" placeholder="Usuario / email"><div class="span-6" style="display:flex;gap:8px"><input class="field" style="flex:1" id="v6226PasswordInput" type="password" name="password" value="${v6220Esc(r.password||'')}" placeholder="Contraseña"><button type="button" class="secondary" onclick="const i=document.getElementById('v6226PasswordInput');i.type=i.type==='password'?'text':'password'">Ver</button></div><input class="field span-12" name="url" value="${v6220Esc(r.url||'')}" placeholder="URL / enlace"><textarea class="field span-12" name="notes" placeholder="Notas">${v6220Esc(r.notes||'')}</textarea><select class="field span-3" name="active"><option value="1" ${Number(r.active??1)===1?'selected':''}>Activo</option><option value="0" ${Number(r.active??1)===0?'selected':''}>Inactivo</option></select></div><div class="actions"><button class="v6220-primary" type="submit">Guardar</button><button class="secondary" type="button" onclick="closeWizard()">Cancelar</button></div></form></div></div>`;
+  document.getElementById('passwordFormV6226').onsubmit=async ev=>{ev.preventDefault();const payload=Object.fromEntries(new FormData(ev.target));try{await v6226Fetch('/api/v6226/passwords'+(id?'/'+id:''),{method:'POST',body:JSON.stringify(payload)});if(typeof v534Toast==='function')v534Toast('Acceso guardado');try{closeWizard()}catch(e){root.innerHTML=''}await viewPasswordsV6226();}catch(e){alert('Error guardando acceso: '+e.message)}};
+}
+async function deletePasswordV6226(id){if(!confirm('¿Borrar este acceso?'))return;try{await v6226Fetch('/api/v6226/passwords/'+id,{method:'DELETE'});await loadPasswordsV6226();}catch(e){alert('Error borrando: '+e.message)}}
+async function viewPasswordsV6226(){
+  if(typeof v6218SetPageTitle==='function')v6218SetPageTitle('Contraseñas');
+  const root=document.getElementById('content')||document.querySelector('#main')||document.getElementById('app');if(!root)return;
+  root.innerHTML=`<div class="page"><div class="v6220-toolbar"><div><h1>Contraseñas</h1><p class="muted">Usuarios, contraseñas y accesos internos editables.</p></div><div style="display:flex;gap:10px;align-items:center"><input id="v6220Search" class="field v6220-search" placeholder="Buscar acceso, usuario, categoría..."><button class="secondary" onclick="v6226Fetch('/api/v6226-admin-repair-now',{method:'POST'}).then(()=>alert('Admin revisado correctamente')).catch(e=>alert(e.message))">Reparar admin</button><button class="v6220-primary" onclick="openPasswordEditV6226()">+ Añadir acceso</button></div></div><div id="v6220List"><p class="muted">Cargando contraseñas...</p></div></div>`;
+  await loadPasswordsV6226();document.getElementById('v6220Search').addEventListener('input',loadPasswordsV6226);
+}
+window.loadPasswordsV6220=loadPasswordsV6226;window.openPasswordEditV6220=openPasswordEditV6226;window.deletePasswordV6220=deletePasswordV6226;window.viewPasswordsV6220=viewPasswordsV6226;window.viewPasswords=viewPasswordsV6226;window.viewContrasenas=viewPasswordsV6226;
+document.addEventListener('click',ev=>{const btn=ev.target.closest&&ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn,.v622-menu-btn');if(!btn)return;const t=(btn.textContent||'').toLowerCase();if(t.includes('contraseña')||t.includes('contrasena')||t.includes('password')){ev.stopPropagation();setTimeout(viewPasswordsV6226,80);}},true);
+setTimeout(()=>{v6226Fetch('/api/v6226-admin-repair-status').catch(()=>{});},2000);
