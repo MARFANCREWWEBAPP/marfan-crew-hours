@@ -2217,3 +2217,19 @@ nav a.active:not(.v626-active),
 .v6231-native-calbar .dark{background:#111;color:#fff}
 .v6231-native-calbar .light{background:#f3f4f6;color:#111}
 .v6231-native-calbar .syncok{background:#ecfdf5;color:#166534;border:1px solid #bbf7d0;border-radius:999px;padding:7px 10px;font-weight:850}
+
+/* ---------- V62.32 CALENDAR HARD RESET ORIGINAL ONLY ---------- */
+#v6225CalNav,
+#v6228CalendarToolbar,
+#v6229CalendarToolbar,
+#v6229MonthEvents,
+#v6230CalendarReal,
+#v6231NativeCalbar,
+.v6225-cal-nav,
+.v6228-calendar-toolbar,
+.v6230-calendar-controls,
+.v6230-calendar-grid,
+.v6231-native-calbar,
+.v6229-event-card{
+  display:none!important;
+}

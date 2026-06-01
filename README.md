@@ -1,3 +1,10 @@
-# V62.31 Restore Original Calendar + Native Month Navigation
+# V62.32 Calendar Hard Reset Original Only
 
-Base V62.28. Quita vistas inventadas, conserva calendario original, añade barra nativa de mes, sync silenciosa y carga eventos del mes.
+Parte de V62.31, pero desactiva todos los bloques frontend de calendario V62.25-V62.31 que estaban creando vistas duplicadas.
+
+Objetivo:
+- No crear calendario nuevo.
+- No crear lista de eventos nueva.
+- Mantener calendario original.
+- Añadir únicamente controles simples sobre el calendario original.
+- Sync silenciosa sin popup.
