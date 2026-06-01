@@ -606,7 +606,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version:'62.24.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version:'62.25.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -2880,7 +2880,7 @@ app.get('/api/v6216-auto-restore-status', requireAdmin, (req,res)=>{
   try{
     res.json({
       ok:true,
-      version:'62.24.0',
+      version:'62.25.0',
       status:global.V6216_RESTORE_STATUS || null,
       db_path:v6216DbPath(),
       data_dir:v6216DataDir(),
@@ -3553,7 +3553,7 @@ function v6223ExportUsersJson(){
     const users = db.prepare('SELECT * FROM users ORDER BY id').all();
     const stamp = new Date().toISOString().replace(/[:.]/g,'-');
     const out = p.join(v6223JsonDir(), `users-${stamp}.json`);
-    f.writeFileSync(out, JSON.stringify({version:'62.24.0', created_at:new Date().toISOString(), users}, null, 2));
+    f.writeFileSync(out, JSON.stringify({version:'62.25.0', created_at:new Date().toISOString(), users}, null, 2));
     v6223KeepLastFiles(v6223JsonDir(), 'users-', 10);
     return {ok:true,path:out,count:users.length};
   }catch(e){ return {ok:false,error:e.message}; }
@@ -3667,7 +3667,7 @@ app.get('/api/v6223-persistence-status', requireAdmin, (req,res)=>{
     try{ snapshots = db.prepare("SELECT COUNT(*) AS c FROM event_snapshots_v6218").get().c || 0; }catch(e){}
     res.json({
       ok:true,
-      version:'62.24.0',
+      version:'62.25.0',
       data_dir:v6223DataDir(),
       users,
       events,
@@ -3679,6 +3679,25 @@ app.get('/api/v6223-persistence-status', requireAdmin, (req,res)=>{
 // Arranque automático: usuarios + calendario
 setTimeout(()=>{ try{ v6223EnsureNoDemoOverwrite(); v6223RestoreUsersJsonIfNeeded(); v6223ExportUsersJson(); }catch(e){ console.error('[V62.23] users persistence', e.message); } }, 1800);
 setTimeout(()=>{ try{ v6223CalendarRestoreAndAutoSync(); }catch(e){ console.error('[V62.23] calendar autoload', e.message); } }, 2600);
+
+
+// ---------- V62.25 CALENDAR SILENT SYNC MONTH NAVIGATION API ----------
+app.post('/api/v6225/calendar-silent-autoload', async (req,res)=>{
+  try{
+    if(typeof v6213AdminSoft === 'function' && !v6213AdminSoft(req)) return res.status(403).json({ok:false,error:'Solo administrador'});
+
+    let restored = 0;
+    try{
+      if(typeof v6218RestoreAll === 'function') restored = v6218RestoreAll();
+      else if(typeof v6217RestoreAllFullEvents === 'function') restored = v6217RestoreAllFullEvents();
+    }catch(e){}
+
+    // No devuelve/abre ventana. Solo estado JSON silencioso.
+    res.json({ok:true, silent:true, restored});
+  }catch(e){
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads'), { maxAge: 0 }));

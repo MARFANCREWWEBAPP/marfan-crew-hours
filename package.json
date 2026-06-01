@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.24.0",
-  "description": "V62.24 Password Edit Isolation Fix",
+  "version": "62.25.0",
+  "description": "V62.25 Calendar Silent Sync Month Navigation",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
