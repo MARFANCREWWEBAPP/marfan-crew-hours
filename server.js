@@ -606,7 +606,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version:'62.19.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version:'62.20.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -2880,7 +2880,7 @@ app.get('/api/v6216-auto-restore-status', requireAdmin, (req,res)=>{
   try{
     res.json({
       ok:true,
-      version:'62.19.0',
+      version:'62.20.0',
       status:global.V6216_RESTORE_STATUS || null,
       db_path:v6216DbPath(),
       data_dir:v6216DataDir(),
@@ -3296,6 +3296,49 @@ app.get('/api/v6219/events/:id/assignments-full', requireAdmin, (req,res)=>{
     res.json({ok:true,event_id:eventId,assignments:v6219GetAssignmentsFull(eventId)});
   }catch(e){ res.status(500).json({ok:false,error:e.message}); }
 });
+
+
+// ---------- V62.20 PASSWORDS EASY EDIT ----------
+function v6220EnsurePasswordsTable(){
+  db.exec(`CREATE TABLE IF NOT EXISTS password_vault (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    service TEXT DEFAULT '',
+    category TEXT DEFAULT '',
+    username TEXT DEFAULT '',
+    password TEXT DEFAULT '',
+    url TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );`);
+}
+function v6220Payload(b){
+  b=b||{};
+  return {title:String(b.title||'').trim(),service:String(b.service||'').trim(),category:String(b.category||'').trim(),username:String(b.username||'').trim(),password:String(b.password||'').trim(),url:String(b.url||'').trim(),notes:String(b.notes||'').trim(),active:Number(b.active??1)};
+}
+app.get('/api/v6220/passwords', requireAdmin, (req,res)=>{
+  try{v6220EnsurePasswordsTable(); res.json({ok:true,rows:db.prepare("SELECT * FROM password_vault WHERE COALESCE(active,1)!=0 ORDER BY category COLLATE NOCASE,title COLLATE NOCASE").all()});}
+  catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.get('/api/v6220/passwords/:id', requireAdmin, (req,res)=>{
+  try{v6220EnsurePasswordsTable(); const row=db.prepare("SELECT * FROM password_vault WHERE id=?").get(Number(req.params.id)); if(!row)return res.status(404).json({ok:false,error:'Acceso no encontrado'}); res.json({ok:true,row});}
+  catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/v6220/passwords', requireAdmin, (req,res)=>{
+  try{v6220EnsurePasswordsTable(); const p=v6220Payload(req.body); if(!p.title)return res.status(400).json({ok:false,error:'El nombre del acceso es obligatorio'}); const info=db.prepare("INSERT INTO password_vault (title,service,category,username,password,url,notes,active,updated_at) VALUES (?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").run(p.title,p.service,p.category,p.username,p.password,p.url,p.notes,p.active); res.json({ok:true,id:info.lastInsertRowid});}
+  catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/v6220/passwords/:id', requireAdmin, (req,res)=>{
+  try{v6220EnsurePasswordsTable(); const id=Number(req.params.id); if(!db.prepare("SELECT id FROM password_vault WHERE id=?").get(id))return res.status(404).json({ok:false,error:'Acceso no encontrado'}); const p=v6220Payload(req.body); if(!p.title)return res.status(400).json({ok:false,error:'El nombre del acceso es obligatorio'}); db.prepare("UPDATE password_vault SET title=?,service=?,category=?,username=?,password=?,url=?,notes=?,active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(p.title,p.service,p.category,p.username,p.password,p.url,p.notes,p.active,id); res.json({ok:true,id});}
+  catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.delete('/api/v6220/passwords/:id', requireAdmin, (req,res)=>{
+  try{v6220EnsurePasswordsTable(); db.prepare("UPDATE password_vault SET active=0,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(Number(req.params.id)); res.json({ok:true});}
+  catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+setTimeout(()=>{try{v6220EnsurePasswordsTable()}catch(e){}},1200);
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads'), { maxAge: 0 }));

@@ -1,3 +1,3 @@
-# V62.19 Event Operators Roles Hard Save
+# V62.20 Passwords Easy Edit
 
-Corrige guardado/carga de operarios asignados, roles y jefe de equipo en eventos.
+Menú Contraseñas editable: añadir, editar, borrar, mostrar/ocultar y copiar usuarios/contraseñas.
