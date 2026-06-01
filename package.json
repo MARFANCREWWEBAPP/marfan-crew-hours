@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.39.0",
-  "description": "V62.39 Real Event Save Hook",
+  "version": "62.40.0",
+  "description": "V62.40 Calendar Month UX",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

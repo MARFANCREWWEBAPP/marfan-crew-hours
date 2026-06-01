@@ -10562,3 +10562,110 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
   setInterval(v6239PatchEventForm,1000);
   setTimeout(()=>v6239Fetch('/api/v6239/restore-all-full',{method:'POST'}).catch(()=>{}),2500);
 })();
+
+
+// ---------- V62.40 CALENDAR MONTH UX FRONTEND ----------
+(function(){
+  function v6240IsCalendarPage(){
+    const heads = [...document.querySelectorAll('h1,h2,.page-title,.content-title')]
+      .map(x => (x.textContent || '').toLowerCase()).join(' ');
+    const body = (document.body.textContent || '').toLowerCase();
+    return heads.includes('calendario') || body.includes('calendario eventos') || body.includes('calendario de eventos');
+  }
+
+  function v6240CurrentDate(){
+    try{
+      if(state && state.calendarMonth) return parseLocalDate(state.calendarMonth);
+    }catch(e){}
+    return new Date();
+  }
+
+  function v6240MonthValue(d){
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  }
+
+  function v6240Title(d){
+    return d.toLocaleDateString('es-ES', {month:'long', year:'numeric'}).toUpperCase();
+  }
+
+  function v6240FindCalendarActions(){
+    return [...document.querySelectorAll('.actions')].find(a=>{
+      const t = (a.textContent || '').toLowerCase();
+      return t.includes('mes anterior') && t.includes('mes siguiente');
+    });
+  }
+
+  function v6240Install(){
+    if(!v6240IsCalendarPage()) return;
+
+    const actions = v6240FindCalendarActions();
+    if(!actions) return;
+
+    const current = v6240CurrentDate();
+
+    let ux = document.getElementById('v6240CalendarMonthUx');
+    if(!ux){
+      ux = document.createElement('div');
+      ux.id = 'v6240CalendarMonthUx';
+      ux.className = 'v6240-calendar-month-ux';
+      ux.innerHTML = `
+        <div id="v6240CalendarMonthTitle" class="v6240-calendar-month-title"></div>
+        <span class="v6240-calendar-month-help">Ir directamente a:</span>
+        <input id="v6240CalendarMonthPicker" class="v6240-calendar-month-picker" type="month">
+      `;
+
+      const card = actions.closest('.card') || document.getElementById('content');
+      if(card){
+        const top = card.querySelector('.top');
+        if(top && top.nextSibling) card.insertBefore(ux, top.nextSibling);
+        else card.insertBefore(ux, actions);
+      }else{
+        actions.parentNode.insertBefore(ux, actions);
+      }
+
+      const picker = document.getElementById('v6240CalendarMonthPicker');
+      picker.addEventListener('change', async ()=>{
+        if(!picker.value) return;
+        try{
+          state.calendarMonth = picker.value + '-01';
+          await viewCalendar();
+        }catch(e){
+          alert('Error cambiando de mes: ' + e.message);
+        }
+      });
+    }
+
+    const title = document.getElementById('v6240CalendarMonthTitle');
+    const picker = document.getElementById('v6240CalendarMonthPicker');
+
+    if(title) title.textContent = v6240Title(current);
+    if(picker && picker.value !== v6240MonthValue(current)) picker.value = v6240MonthValue(current);
+  }
+
+  if(typeof viewCalendar === 'function' && !viewCalendar.__v6240Wrapped){
+    const oldViewCalendarV6240 = viewCalendar;
+    viewCalendar = async function(){
+      const r = await oldViewCalendarV6240.apply(this, arguments);
+      setTimeout(v6240Install, 80);
+      setTimeout(v6240Install, 350);
+      return r;
+    };
+    viewCalendar.__v6240Wrapped = true;
+    window.viewCalendar = viewCalendar;
+  }
+
+  document.addEventListener('click', ev=>{
+    const el = ev.target.closest && ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn,.v622-menu-btn');
+    if(!el) return;
+
+    const t = (el.textContent || '').toLowerCase();
+    if(t.includes('calendario') || t.includes('mes anterior') || t.includes('mes siguiente') || t === 'hoy'){
+      setTimeout(v6240Install, 180);
+      setTimeout(v6240Install, 600);
+    }
+  }, true);
+
+  setInterval(()=>{
+    if(v6240IsCalendarPage()) v6240Install();
+  }, 3000);
+})();
