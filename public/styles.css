@@ -2176,42 +2176,9 @@ aside,.sidebar,nav{
   pointer-events:auto!important;
 }
 
-/* ---------- V62.36 CALENDAR MONTH NAVIGATION SAFE ---------- */
-.v6236-cal-nav-safe{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  flex-wrap:wrap;
-  background:#fff;
-  border:1px solid #e5e7eb;
-  border-radius:16px;
-  padding:12px 14px;
-  margin:12px 0 16px;
-}
-.v6236-cal-title-safe{
-  font-size:22px;
-  font-weight:1000;
-  color:#111;
-  text-transform:capitalize;
-  margin-right:auto;
-}
-.v6236-cal-nav-safe button{
-  border:0;
-  border-radius:12px;
-  padding:10px 14px;
-  font-weight:950;
-  cursor:pointer;
-}
-.v6236-cal-nav-safe .dark{background:#111;color:#fff}
-.v6236-cal-nav-safe .light{background:#f3f4f6;color:#111}
-.v6236-hidden-by-month{display:none!important;}
-.v6236-event-chip{
-  background:#1d4ed8;
-  color:#fff;
-  border-radius:9px;
-  padding:5px 7px;
-  margin:3px 0;
-  font-weight:900;
-  font-size:12px;
-  cursor:pointer;
+/* ---------- V62.37 CALENDAR CLEAN STABLE ---------- */
+aside,.sidebar,nav{
+  visibility:visible!important;
+  opacity:1!important;
+  pointer-events:auto!important;
 }
