@@ -606,7 +606,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version:'62.32.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version: '62.33.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -2880,7 +2880,7 @@ app.get('/api/v6216-auto-restore-status', requireAdmin, (req,res)=>{
   try{
     res.json({
       ok:true,
-      version:'62.32.0',
+      version: '62.33.0',
       status:global.V6216_RESTORE_STATUS || null,
       db_path:v6216DbPath(),
       data_dir:v6216DataDir(),
@@ -3553,7 +3553,7 @@ function v6223ExportUsersJson(){
     const users = db.prepare('SELECT * FROM users ORDER BY id').all();
     const stamp = new Date().toISOString().replace(/[:.]/g,'-');
     const out = p.join(v6223JsonDir(), `users-${stamp}.json`);
-    f.writeFileSync(out, JSON.stringify({version:'62.32.0', created_at:new Date().toISOString(), users}, null, 2));
+    f.writeFileSync(out, JSON.stringify({version: '62.33.0', created_at:new Date().toISOString(), users}, null, 2));
     v6223KeepLastFiles(v6223JsonDir(), 'users-', 10);
     return {ok:true,path:out,count:users.length};
   }catch(e){ return {ok:false,error:e.message}; }
@@ -3667,7 +3667,7 @@ app.get('/api/v6223-persistence-status', requireAdmin, (req,res)=>{
     try{ snapshots = db.prepare("SELECT COUNT(*) AS c FROM event_snapshots_v6218").get().c || 0; }catch(e){}
     res.json({
       ok:true,
-      version:'62.32.0',
+      version: '62.33.0',
       data_dir:v6223DataDir(),
       users,
       events,
@@ -3797,162 +3797,6 @@ app.post('/api/v6227/users/:id/role', v6227RoleMiddleware, (req,res)=>{
     }
     db.prepare("UPDATE users SET role=? WHERE id=?").run(role,id);
     res.json({ok:true,id,role});
-  }catch(e){res.status(500).json({ok:false,error:e.message});}
-});
-
-
-// ---------- V62.28 CALENDAR MONTH HEADER + TECH PERSISTENCE FINAL ----------
-function v6228EnsureTechTable(){
-  try{
-    db.exec(`CREATE TABLE IF NOT EXISTS event_technicians_v6228 (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      event_id INTEGER NOT NULL,
-      user_id INTEGER NOT NULL,
-      role_id INTEGER DEFAULT NULL,
-      role_name TEXT DEFAULT '',
-      is_team_lead INTEGER DEFAULT 0,
-      planned_start TEXT DEFAULT '',
-      planned_end TEXT DEFAULT '',
-      hourly_rate REAL DEFAULT 0,
-      notes TEXT DEFAULT '',
-      stable_event_key TEXT DEFAULT '',
-      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(event_id,user_id,role_name)
-    );`);
-  }catch(e){}
-}
-function v6228EventKey(eventId){
-  try{
-    const e=db.prepare("SELECT * FROM events WHERE id=?").get(eventId)||{};
-    const google=e.google_event_id||e.google_id||e.gcal_id||'';
-    if(google)return 'google:'+google;
-    const date=String(e.event_date||e.date||'').slice(0,10);
-    const name=String(e.name||e.title||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
-    return 'event:'+date+':'+name;
-  }catch(err){return 'local:'+eventId;}
-}
-function v6228NormalizeTechs(rows){
-  rows=Array.isArray(rows)?rows:[];
-  return rows.map(r=>({
-    user_id:Number(r.user_id||r.operator_id||r.worker_id||0),
-    role_id:r.role_id?Number(r.role_id):null,
-    role_name:String(r.role_name||r.service_role||r.operator_role_name||r.role||r.resolved_role||'').trim(),
-    is_team_lead:Number(r.is_team_lead||r.team_lead||r.lead||0),
-    planned_start:String(r.planned_start||r.start_time||r.start||'').trim(),
-    planned_end:String(r.planned_end||r.end_time||r.end||'').trim(),
-    hourly_rate:Number(r.hourly_rate||r.rate||r.price||0),
-    notes:String(r.notes||'')
-  })).filter(x=>x.user_id);
-}
-function v6228SaveTechs(eventId, rows){
-  v6228EnsureTechTable();
-  const techs=v6228NormalizeTechs(rows);
-  const key=v6228EventKey(eventId);
-  const tx=db.transaction(()=>{
-    db.prepare("DELETE FROM event_technicians_v6228 WHERE event_id=?").run(eventId);
-    const stmt=db.prepare(`INSERT INTO event_technicians_v6228 (event_id,user_id,role_id,role_name,is_team_lead,planned_start,planned_end,hourly_rate,notes,stable_event_key,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`);
-    for(const t of techs) stmt.run(eventId,t.user_id,t.role_id,t.role_name,t.is_team_lead,t.planned_start,t.planned_end,t.hourly_rate,t.notes,key);
-  });
-  tx();
-  try{
-    if(typeof v6219SaveAssignmentsHard==='function')v6219SaveAssignmentsHard(eventId, techs.map(t=>Object.assign({},t,{service_role:t.role_name})));
-  }catch(e){}
-  return techs.length;
-}
-function v6228GetTechs(eventId){
-  v6228EnsureTechTable();
-  try{
-    let rows=db.prepare(`SELECT t.*, u.first_name,u.last_name,u.nickname,u.email,u.phone,
-      COALESCE(r.role,r.name,t.role_name) AS resolved_role
-      FROM event_technicians_v6228 t
-      LEFT JOIN users u ON u.id=t.user_id
-      LEFT JOIN rates r ON r.id=t.role_id
-      WHERE t.event_id=?
-      ORDER BY t.is_team_lead DESC,u.first_name,u.last_name`).all(eventId);
-    if(rows.length)return rows;
-    // fallback por clave estable si Google regeneró ID local
-    const key=v6228EventKey(eventId);
-    rows=db.prepare(`SELECT t.*, u.first_name,u.last_name,u.nickname,u.email,u.phone,
-      COALESCE(r.role,r.name,t.role_name) AS resolved_role
-      FROM event_technicians_v6228 t
-      LEFT JOIN users u ON u.id=t.user_id
-      LEFT JOIN rates r ON r.id=t.role_id
-      WHERE t.stable_event_key=?
-      ORDER BY t.is_team_lead DESC,u.first_name,u.last_name`).all(key);
-    if(rows.length){
-      // reasignar al nuevo ID local
-      const techs=rows.map(r=>Object.assign({},r,{event_id:eventId}));
-      v6228SaveTechs(eventId, techs);
-      return v6228GetTechs(eventId);
-    }
-    return [];
-  }catch(e){return [];}
-}
-app.post('/api/v6228/events/:id/technicians-save', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
-  try{
-    const eventId=Number(req.params.id);
-    if(!eventId)return res.status(400).json({ok:false,error:'ID evento inválido'});
-    if(!db.prepare("SELECT id FROM events WHERE id=?").get(eventId))return res.status(404).json({ok:false,error:'Evento no encontrado'});
-    const count=v6228SaveTechs(eventId,(req.body||{}).technicians||(req.body||{}).assignments||[]);
-    res.json({ok:true,event_id:eventId,count,technicians:v6228GetTechs(eventId)});
-  }catch(e){res.status(500).json({ok:false,error:e.message});}
-});
-app.get('/api/v6228/events/:id/technicians', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
-  try{
-    const eventId=Number(req.params.id);
-    res.json({ok:true,event_id:eventId,technicians:v6228GetTechs(eventId)});
-  }catch(e){res.status(500).json({ok:false,error:e.message});}
-});
-
-
-// ---------- V62.31 RESTORE ORIGINAL CALENDAR + NATIVE MONTH NAV ----------
-function v6231DateRange(year, month){
-  const start = new Date(year, month, 1).toISOString().slice(0,10);
-  const end = new Date(year, month + 1, 1).toISOString().slice(0,10);
-  return {start,end};
-}
-app.get('/api/v6231/calendar-events-month', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
-  try{
-    const year = Number(req.query.year);
-    const month = Number(req.query.month);
-    if(!Number.isFinite(year) || !Number.isFinite(month)) return res.status(400).json({ok:false,error:'Mes/año inválido'});
-    const {start,end} = v6231DateRange(year,month);
-
-    let rows = [];
-    try{
-      rows = db.prepare(`
-        SELECT * FROM events
-        WHERE date(COALESCE(event_date,date,start_date,start,'')) >= date(?)
-          AND date(COALESCE(event_date,date,start_date,start,'')) < date(?)
-        ORDER BY COALESCE(event_date,date,start_date,start,''), COALESCE(start_time,'')
-      `).all(start,end);
-    }catch(e){
-      rows = db.prepare('SELECT * FROM events ORDER BY id DESC').all().filter(ev=>{
-        const d=String(ev.event_date||ev.date||ev.start_date||ev.start||'').slice(0,10);
-        return d>=start && d<end;
-      });
-    }
-
-    try{
-      rows.forEach(r=>{
-        try{ if(typeof v6218ApplySnapshot==='function') v6218ApplySnapshot(r.id); }catch(e){}
-      });
-      rows = rows.map(r=>db.prepare('SELECT * FROM events WHERE id=?').get(r.id)||r);
-    }catch(e){}
-
-    res.json({ok:true,year,month,start,end,events:rows});
-  }catch(e){res.status(500).json({ok:false,error:e.message});}
-});
-app.post('/api/v6231/calendar-silent-sync', async (req,res)=>{
-  try{
-    if(typeof v6213AdminSoft === 'function' && !v6213AdminSoft(req)) return res.status(403).json({ok:false,error:'Solo administrador'});
-    let restored = 0;
-    try{
-      if(typeof v6218RestoreAll === 'function') restored = v6218RestoreAll();
-      else if(typeof v6217RestoreAllFullEvents === 'function') restored = v6217RestoreAllFullEvents();
-    }catch(e){}
-    res.json({ok:true,silent:true,restored});
   }catch(e){res.status(500).json({ok:false,error:e.message});}
 });
 
@@ -8967,7 +8811,7 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Marfan Crew Hours V53.3 Backup Center Calendar listening on port ${PORT}`);
+  console.log(`Marfan Crew Hours V62.33 Emergency Restore Menu Original Calendar listening on port ${PORT}`);
 });
 
 

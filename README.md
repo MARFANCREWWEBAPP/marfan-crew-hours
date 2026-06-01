@@ -1,10 +1,13 @@
-# V62.32 Calendar Hard Reset Original Only
+# V62.33 Emergency Restore Menu + Original Calendar
 
-Parte de V62.31, pero desactiva todos los bloques frontend de calendario V62.25-V62.31 que estaban creando vistas duplicadas.
+Base: V62.27 estable.
 
 Objetivo:
-- No crear calendario nuevo.
-- No crear lista de eventos nueva.
-- Mantener calendario original.
-- Añadir únicamente controles simples sobre el calendario original.
-- Sync silenciosa sin popup.
+- Recuperar menú lateral.
+- Recuperar calendario original.
+- Desactivar parches visuales de calendario V62.25-V62.32.
+- No crear vistas nuevas.
+- No tocar clientes, operarios, contraseñas, roles ni login.
+- Cerrar popup de sincronización si aparece.
+
+Esta versión es de rescate/estabilización.

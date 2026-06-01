@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.32.0",
-  "description": "V62.32 Calendar Hard Reset Original Only",
+  "version": "62.33.0",
+  "description": "V62.33 Emergency Restore Menu Original Calendar",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

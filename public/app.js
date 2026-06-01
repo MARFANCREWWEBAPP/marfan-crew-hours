@@ -10370,7 +10370,7 @@ setTimeout(v6223BackupUsersNow, 2500);
 
 
 
-// [V62.32] Bloque de calendario anterior desactivado para evitar vistas duplicadas.
+// [V62.33] Calendario parcheado anterior desactivado. Se mantiene calendario original.
 
 // ---------- V62.26 ADMIN AUTH REPAIR + PASSWORD ACCESS FIX FRONTEND ----------
 async function v6226Fetch(path,opts={}){
@@ -10464,44 +10464,38 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
 }
 
 
-
-// [V62.32] Bloque de calendario anterior desactivado para evitar vistas duplicadas.
-
-
-// [V62.32] Bloque de calendario anterior desactivado para evitar vistas duplicadas.
-
-
-
-// ---------- V62.32 CALENDAR HARD RESET ORIGINAL ONLY FRONTEND ----------
+// ---------- V62.33 EMERGENCY RESTORE MENU + ORIGINAL CALENDAR ----------
 (function(){
-  function v6232IsCalendarPage(){
-    const txt = (document.body.textContent || '').toLowerCase();
-    const heads = [...document.querySelectorAll('h1,h2,.page-title,.content-title')].map(x=>(x.textContent||'').toLowerCase()).join(' ');
-    return heads.includes('calendario') || txt.includes('calendario de eventos') || txt.includes('vista mensual');
+  function isCalendarPageV6233(){
+    const text = (document.body.textContent || '').toLowerCase();
+    const heads = [...document.querySelectorAll('h1,h2,.page-title,.content-title')]
+      .map(x => (x.textContent || '').toLowerCase()).join(' ');
+    return heads.includes('calendario') || text.includes('calendario de eventos') || text.includes('vista mensual');
   }
 
-  function v6232CleanInjectedCalendarLayers(){
-    // Borra SOLO las capas/parches añadidos por versiones anteriores, no el calendario original.
-    const selectors = [
+  function cleanupCalendarPatchesV6233(){
+    // Eliminar solo elementos creados por los parches fallidos.
+    const badSelectors = [
       '#v6225CalNav',
       '#v6228CalendarToolbar',
       '#v6229CalendarToolbar',
       '#v6229MonthEvents',
       '#v6230CalendarReal',
       '#v6231NativeCalbar',
+      '#v6232NativeControls',
       '.v6225-cal-nav',
       '.v6228-calendar-toolbar',
       '.v6230-calendar-controls',
       '.v6230-calendar-grid',
       '.v6231-native-calbar'
     ];
-    document.querySelectorAll(selectors.join(',')).forEach(el=>el.remove());
+    document.querySelectorAll(badSelectors.join(',')).forEach(el => el.remove());
 
-    [...document.querySelectorAll('section,article,div')].forEach(el=>{
+    [...document.querySelectorAll('section,article,div')].forEach(el => {
       const txt = (el.textContent || '').toLowerCase();
-      const id = String(el.id || '').toLowerCase();
       const cls = String(el.className || '').toLowerCase();
-      const isBad =
+      const id = String(el.id || '').toLowerCase();
+      const bad =
         txt.includes('calendario eventos · v58.3') ||
         txt.includes('abrir calendario v58.2') ||
         txt.includes('vista con google sync restaurado') ||
@@ -10510,195 +10504,59 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
         cls.includes('v6230-calendar') ||
         cls.includes('v6229-event-card');
 
-      if(isBad) el.remove();
+      if (bad) el.remove();
     });
   }
 
-  function v6232MonthDate(){
-    if(!window.__v6232Month) window.__v6232Month = new Date();
-    return window.__v6232Month;
+  function ensureMenuVisibleV6233(){
+    // No modifica el menú; solo evita que quede oculto por overlays o estilos fallidos.
+    document.querySelectorAll('aside,.sidebar,nav').forEach(el => {
+      el.style.display = '';
+      el.style.visibility = '';
+      el.style.opacity = '';
+      el.style.pointerEvents = '';
+    });
   }
 
-  function v6232MonthTitle(){
-    return v6232MonthDate().toLocaleDateString('es-ES', {month:'long', year:'numeric'});
-  }
-
-  function v6232FindOriginalCalendarHeader(){
-    const candidates = [...document.querySelectorAll('h1,h2,h3,.page-title,.content-title')];
-    return candidates.find(el => (el.textContent||'').toLowerCase().includes('calendario')) || candidates[0] || null;
-  }
-
-  function v6232InstallSimpleNativeControls(){
-    if(!v6232IsCalendarPage()) return;
-    v6232CleanInjectedCalendarLayers();
-
-    if(document.getElementById('v6232NativeControls')) {
-      const t = document.getElementById('v6232MonthTitle');
-      if(t) t.textContent = v6232MonthTitle();
-      return;
-    }
-
-    const header = v6232FindOriginalCalendarHeader();
-    const parent = header && header.parentNode ? header.parentNode : (document.getElementById('content') || document.querySelector('#main') || document.body);
-
-    const bar = document.createElement('div');
-    bar.id = 'v6232NativeControls';
-    bar.style.cssText = 'display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0 16px;padding:12px 14px;background:#fff;border:1px solid #e5e7eb;border-radius:16px;';
-    bar.innerHTML = `
-      <div id="v6232MonthTitle" style="font-size:22px;font-weight:1000;text-transform:capitalize;margin-right:auto;color:#111">${v6232MonthTitle()}</div>
-      <button type="button" id="v6232PrevMonth" style="border:0;border-radius:12px;padding:10px 14px;font-weight:950;background:#f3f4f6;color:#111;cursor:pointer">← Mes anterior</button>
-      <button type="button" id="v6232Today" style="border:0;border-radius:12px;padding:10px 14px;font-weight:950;background:#111;color:#fff;cursor:pointer">Hoy</button>
-      <button type="button" id="v6232NextMonth" style="border:0;border-radius:12px;padding:10px 14px;font-weight:950;background:#f3f4f6;color:#111;cursor:pointer">Mes siguiente →</button>
-      <span style="background:#ecfdf5;color:#166534;border:1px solid #bbf7d0;border-radius:999px;padding:7px 10px;font-weight:850">Sync silenciosa</span>
-    `;
-
-    if(header && header.nextSibling) parent.insertBefore(bar, header.nextSibling);
-    else parent.prepend(bar);
-
-    document.getElementById('v6232PrevMonth').onclick = () => window.v6232MoveMonth(-1);
-    document.getElementById('v6232Today').onclick = () => window.v6232Today();
-    document.getElementById('v6232NextMonth').onclick = () => window.v6232MoveMonth(1);
-  }
-
-  function v6232TrySetOriginalCalendarMonth(){
-    const d = v6232MonthDate();
-    const year = d.getFullYear();
-    const month = d.getMonth();
-
-    // 1) Si el calendario original tiene variable global conocida, actualizarla.
-    window.currentCalendarDate = d;
-    window.currentMonth = month;
-    window.currentYear = year;
-    window.calendarCurrentDate = d;
-
-    // 2) Si existen funciones originales de render, llamarlas sin crear vista nueva.
-    const candidates = [
-      'renderCalendar',
-      'renderMonthCalendar',
-      'drawCalendar',
-      'loadCalendar',
-      'loadEvents',
-      'showCalendarV582'
-    ];
-
-    for(const fn of candidates){
-      try{
-        if(typeof window[fn] === 'function'){
-          window[fn](year, month);
-          break;
-        }
-      }catch(e){}
-    }
-
-    const title = document.getElementById('v6232MonthTitle');
-    if(title) title.textContent = v6232MonthTitle();
-  }
-
-  window.v6232MoveMonth = function(offset){
-    const d = new Date(v6232MonthDate());
-    d.setMonth(d.getMonth() + offset);
-    window.__v6232Month = d;
-    window.__v6228Month = d;
-    window.__v6229Month = d;
-    v6232InstallSimpleNativeControls();
-    v6232TrySetOriginalCalendarMonth();
-    setTimeout(v6232CleanInjectedCalendarLayers, 300);
-  };
-
-  window.v6232Today = function(){
-    const d = new Date();
-    window.__v6232Month = d;
-    window.__v6228Month = d;
-    window.__v6229Month = d;
-    v6232InstallSimpleNativeControls();
-    v6232TrySetOriginalCalendarMonth();
-    setTimeout(v6232CleanInjectedCalendarLayers, 300);
-  };
-
-  // Anular funciones anteriores para que no creen vistas nuevas.
-  window.v6228MoveMonth = window.v6232MoveMonth;
-  window.v6228Today = window.v6232Today;
-  window.v6229MoveMonth = window.v6232MoveMonth;
-  window.v6229Today = window.v6232Today;
-  window.v6230MoveMonth = window.v6232MoveMonth;
-  window.v6230Today = window.v6232Today;
-  window.v6231MoveMonth = window.v6232MoveMonth;
-  window.v6231Today = window.v6232Today;
-
-  async function v6232SilentSync(){
-    if(!v6232IsCalendarPage()) return;
-    const now = Date.now();
-    if(window.__v6232LastSync && now - window.__v6232LastSync < 45000) return;
-    window.__v6232LastSync = now;
-
-    const oldAlert = window.alert;
-    try{
-      window.alert = function(msg){
-        if(String(msg||'').toLowerCase().includes('sincron')) return;
-        return oldAlert.call(window, msg);
-      };
-
-      // Pulsar botón original si existe, en modo silencioso.
-      const syncBtn = [...document.querySelectorAll('button,a')].find(b=>{
-        const t=(b.textContent||'').toLowerCase();
-        return t.includes('sincron') && t.includes('google');
-      });
-      if(syncBtn) {
-        try{ syncBtn.click(); }catch(e){}
+  function silentCloseSyncPopupV6233(){
+    document.querySelectorAll('.modal,.modal-back,#modalRoot').forEach(el => {
+      const txt = (el.textContent || '').toLowerCase();
+      if (txt.includes('sincronización completada') || txt.includes('sincronizacion completada') || txt.includes('sincronizando')) {
+        el.innerHTML = '';
+        if (el.classList && (el.classList.contains('modal') || el.classList.contains('modal-back'))) el.remove();
       }
-
-      setTimeout(()=>{
-        document.querySelectorAll('.modal,.modal-back,#modalRoot').forEach(m=>{
-          if((m.textContent||'').toLowerCase().includes('sincron')) m.innerHTML = '';
-        });
-      }, 700);
-
-    } finally {
-      setTimeout(()=>{ window.alert = oldAlert; }, 1200);
-    }
+    });
   }
 
-  if(typeof viewCalendar === 'function' && !viewCalendar.__v6232Wrapped){
-    const old = viewCalendar;
+  if (typeof viewCalendar === 'function' && !viewCalendar.__v6233Wrapped) {
+    const oldViewCalendarV6233 = viewCalendar;
     viewCalendar = async function(){
-      const r = await old.apply(this, arguments);
-      setTimeout(v6232CleanInjectedCalendarLayers, 100);
-      setTimeout(v6232InstallSimpleNativeControls, 250);
-      setTimeout(v6232SilentSync, 500);
-      setTimeout(v6232CleanInjectedCalendarLayers, 1000);
+      const r = await oldViewCalendarV6233.apply(this, arguments);
+      setTimeout(cleanupCalendarPatchesV6233, 100);
+      setTimeout(silentCloseSyncPopupV6233, 500);
+      setTimeout(ensureMenuVisibleV6233, 700);
       return r;
     };
-    viewCalendar.__v6232Wrapped = true;
+    viewCalendar.__v6233Wrapped = true;
     window.viewCalendar = viewCalendar;
   }
 
-  if(typeof showCalendarV582 === 'function' && !showCalendarV582.__v6232Wrapped){
-    const old = showCalendarV582;
-    showCalendarV582 = async function(){
-      const r = await old.apply(this, arguments);
-      setTimeout(v6232CleanInjectedCalendarLayers, 100);
-      setTimeout(v6232InstallSimpleNativeControls, 250);
-      return r;
-    };
-    showCalendarV582.__v6232Wrapped = true;
-    window.showCalendarV582 = showCalendarV582;
-  }
-
-  document.addEventListener('click', ev=>{
+  document.addEventListener('click', ev => {
     const el = ev.target.closest && ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn,.v622-menu-btn');
-    if(!el) return;
-    const t=(el.textContent||'').toLowerCase();
-    if(t.includes('calendario')){
-      setTimeout(v6232CleanInjectedCalendarLayers, 100);
-      setTimeout(v6232InstallSimpleNativeControls, 400);
-      setTimeout(v6232SilentSync, 700);
+    if (!el) return;
+    const t = (el.textContent || '').toLowerCase();
+    if (t.includes('calendario')) {
+      setTimeout(cleanupCalendarPatchesV6233, 200);
+      setTimeout(silentCloseSyncPopupV6233, 800);
+      setTimeout(ensureMenuVisibleV6233, 900);
     }
   }, true);
 
-  setInterval(()=>{
-    if(v6232IsCalendarPage()){
-      v6232CleanInjectedCalendarLayers();
-      v6232InstallSimpleNativeControls();
+  setInterval(() => {
+    ensureMenuVisibleV6233();
+    if (isCalendarPageV6233()) {
+      cleanupCalendarPatchesV6233();
+      silentCloseSyncPopupV6233();
     }
   }, 1500);
 })();
