@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.35.0",
-  "description": "V62.35 Safe Calendar Restore",
+  "version": "62.36.0",
+  "description": "V62.36 Calendar Month Navigation Safe",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
