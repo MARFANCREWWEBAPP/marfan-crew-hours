@@ -606,7 +606,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version: '62.37.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version: '62.38.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -2880,7 +2880,7 @@ app.get('/api/v6216-auto-restore-status', requireAdmin, (req,res)=>{
   try{
     res.json({
       ok:true,
-      version: '62.37.0',
+      version: '62.38.0',
       status:global.V6216_RESTORE_STATUS || null,
       db_path:v6216DbPath(),
       data_dir:v6216DataDir(),
@@ -3553,7 +3553,7 @@ function v6223ExportUsersJson(){
     const users = db.prepare('SELECT * FROM users ORDER BY id').all();
     const stamp = new Date().toISOString().replace(/[:.]/g,'-');
     const out = p.join(v6223JsonDir(), `users-${stamp}.json`);
-    f.writeFileSync(out, JSON.stringify({version: '62.37.0', created_at:new Date().toISOString(), users}, null, 2));
+    f.writeFileSync(out, JSON.stringify({version: '62.38.0', created_at:new Date().toISOString(), users}, null, 2));
     v6223KeepLastFiles(v6223JsonDir(), 'users-', 10);
     return {ok:true,path:out,count:users.length};
   }catch(e){ return {ok:false,error:e.message}; }
@@ -3667,7 +3667,7 @@ app.get('/api/v6223-persistence-status', requireAdmin, (req,res)=>{
     try{ snapshots = db.prepare("SELECT COUNT(*) AS c FROM event_snapshots_v6218").get().c || 0; }catch(e){}
     res.json({
       ok:true,
-      version: '62.37.0',
+      version: '62.38.0',
       data_dir:v6223DataDir(),
       users,
       events,
@@ -3799,6 +3799,257 @@ app.post('/api/v6227/users/:id/role', v6227RoleMiddleware, (req,res)=>{
     res.json({ok:true,id,role});
   }catch(e){res.status(500).json({ok:false,error:e.message});}
 });
+
+
+// ---------- V62.38 CALENDAR ENTERPRISE PERSISTENCE ----------
+function v6238Norm(v){
+  return String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
+}
+function v6238Date(v){ return String(v || '').slice(0,10); }
+function v6238Ensure(){
+  try{
+    db.exec(`CREATE TABLE IF NOT EXISTS event_enterprise_snapshots_v6238 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id INTEGER DEFAULT NULL,
+      google_event_id TEXT DEFAULT '',
+      stable_key TEXT UNIQUE NOT NULL,
+      event_date TEXT DEFAULT '',
+      event_name TEXT DEFAULT '',
+      payload_json TEXT DEFAULT '{}',
+      assignments_json TEXT DEFAULT '[]',
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );`);
+  }catch(e){}
+  try{ if(typeof v612EnsureEventColumns === 'function') v612EnsureEventColumns(); }catch(e){}
+  try{ if(typeof v612EnsureAssignmentsColumns === 'function') v612EnsureAssignmentsColumns(); }catch(e){}
+  try{ if(typeof v6219EnsureAssignmentsHard === 'function') v6219EnsureAssignmentsHard(); }catch(e){}
+}
+function v6238GoogleIdForEvent(eventId){
+  try{
+    const row = db.prepare('SELECT google_event_id FROM google_event_links WHERE event_id=? ORDER BY id DESC LIMIT 1').get(eventId);
+    return row && row.google_event_id ? String(row.google_event_id) : '';
+  }catch(e){ return ''; }
+}
+function v6238StableKeyForEvent(ev){
+  if(!ev) return '';
+  const googleId = ev.google_event_id || ev.google_id || ev.gcal_id || v6238GoogleIdForEvent(ev.id) || '';
+  if(googleId) return 'google:' + String(googleId);
+  const date = v6238Date(ev.event_date || ev.date || ev.start_date || ev.start || '');
+  const name = v6238Norm(ev.name || ev.title || ev.summary || '');
+  return 'event:' + date + ':' + name;
+}
+function v6238Event(eventId){
+  try{ return db.prepare('SELECT * FROM events WHERE id=?').get(eventId) || null; }catch(e){ return null; }
+}
+function v6238Assignments(eventId){
+  try{
+    return db.prepare(`
+      SELECT a.*, u.first_name,u.last_name,u.nickname,u.email,u.phone,
+             COALESCE(r.role,r.name,a.service_role) AS resolved_role
+      FROM assignments a
+      LEFT JOIN users u ON u.id=a.user_id
+      LEFT JOIN rates r ON r.id=a.role_id
+      WHERE a.event_id=?
+      ORDER BY COALESCE(a.is_team_lead,0) DESC,u.first_name,u.last_name
+    `).all(eventId) || [];
+  }catch(e){
+    try{ return db.prepare('SELECT * FROM assignments WHERE event_id=?').all(eventId) || []; }catch(_e){ return []; }
+  }
+}
+function v6238SaveSnapshot(eventId, payloadOverride, assignmentsOverride){
+  v6238Ensure();
+  const ev = Object.assign({}, v6238Event(eventId) || {}, payloadOverride || {});
+  if(!ev || !ev.id) return {ok:false, reason:'event_not_found'};
+  const assignments = Array.isArray(assignmentsOverride) ? assignmentsOverride : v6238Assignments(eventId);
+  const googleId = v6238GoogleIdForEvent(eventId);
+  const stableKey = v6238StableKeyForEvent(Object.assign({}, ev, {google_event_id:googleId}));
+  if(!stableKey || stableKey === 'event::') return {ok:false, reason:'empty_stable_key'};
+  db.prepare(`INSERT INTO event_enterprise_snapshots_v6238
+    (event_id, google_event_id, stable_key, event_date, event_name, payload_json, assignments_json, updated_at)
+    VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+    ON CONFLICT(stable_key) DO UPDATE SET
+      event_id=excluded.event_id,
+      google_event_id=excluded.google_event_id,
+      event_date=excluded.event_date,
+      event_name=excluded.event_name,
+      payload_json=excluded.payload_json,
+      assignments_json=excluded.assignments_json,
+      updated_at=CURRENT_TIMESTAMP`)
+    .run(eventId, googleId, stableKey, v6238Date(ev.event_date || ''), String(ev.name || ''), JSON.stringify(ev), JSON.stringify(assignments || []));
+  return {ok:true, event_id:eventId, stable_key:stableKey, assignments:(assignments||[]).length};
+}
+function v6238FindSnapshot(ev){
+  v6238Ensure();
+  const key = v6238StableKeyForEvent(ev);
+  if(key){
+    const row = db.prepare('SELECT * FROM event_enterprise_snapshots_v6238 WHERE stable_key=? ORDER BY updated_at DESC LIMIT 1').get(key);
+    if(row) return row;
+  }
+  const date = v6238Date(ev.event_date || ev.date || '');
+  const name = v6238Norm(ev.name || ev.title || '');
+  if(date && name){
+    const rows = db.prepare('SELECT * FROM event_enterprise_snapshots_v6238 WHERE event_date=? ORDER BY updated_at DESC').all(date);
+    const found = rows.find(r=>{
+      const rn = v6238Norm(r.event_name || '');
+      return rn === name || rn.includes(name) || name.includes(rn);
+    });
+    if(found) return found;
+  }
+  return null;
+}
+function v6238RestoreEvent(eventId){
+  v6238Ensure();
+  const ev = v6238Event(eventId);
+  if(!ev) return {ok:false, restored:false, reason:'event_not_found'};
+  const googleId = v6238GoogleIdForEvent(eventId);
+  const snap = v6238FindSnapshot(Object.assign({}, ev, {google_event_id:googleId}));
+  if(!snap) return {ok:true, restored:false, reason:'snapshot_not_found'};
+  let payload = {};
+  let assignments = [];
+  try{ payload = JSON.parse(snap.payload_json || '{}'); }catch(e){}
+  try{ assignments = JSON.parse(snap.assignments_json || '[]'); }catch(e){}
+  const cols = db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
+  const keys = Object.keys(payload || {}).filter(k=>cols.includes(k) && k !== 'id');
+  if(keys.length){
+    db.prepare(`UPDATE events SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>payload[k]), eventId);
+  }
+  if(assignments && assignments.length){
+    try{
+      if(typeof v6219SaveAssignmentsHard === 'function') v6219SaveAssignmentsHard(eventId, assignments.map(a=>Object.assign({},a,{event_id:eventId, service_role:a.service_role || a.role_name || a.resolved_role || ''})));
+      else if(typeof v612SaveAssignments === 'function') v612SaveAssignments(eventId, assignments.map(a=>Object.assign({},a,{event_id:eventId})));
+    }catch(e){}
+  }
+  try{ db.prepare('UPDATE event_enterprise_snapshots_v6238 SET event_id=?, google_event_id=? WHERE id=?').run(eventId, googleId, snap.id); }catch(e){}
+  return {ok:true, restored:true, snapshot_id:snap.id, assignments:assignments.length};
+}
+function v6238RestoreAll(){
+  v6238Ensure();
+  let restored = 0;
+  try{
+    const events = db.prepare('SELECT * FROM events').all();
+    for(const e of events){
+      try{ const r = v6238RestoreEvent(e.id); if(r.restored) restored++; }catch(_e){}
+    }
+  }catch(e){}
+  return restored;
+}
+function v6238AssignmentDescription(eventId){
+  const rows = v6238Assignments(eventId);
+  if(!rows.length) return '';
+  const leadRows = rows.filter(r=>Number(r.is_team_lead||0)===1);
+  const workerRows = rows;
+  const lines = [];
+  if(leadRows.length){
+    lines.push('JEFE DE EQUIPO:');
+    leadRows.forEach(r=>{
+      const name = [r.first_name,r.last_name].filter(Boolean).join(' ') || r.nickname || r.email || ('ID '+r.user_id);
+      lines.push('- ' + name + (r.resolved_role || r.service_role ? ' · ' + (r.resolved_role || r.service_role) : ''));
+    });
+    lines.push('');
+  }
+  lines.push('PERSONAL ASIGNADO:');
+  workerRows.forEach(r=>{
+    const name = [r.first_name,r.last_name].filter(Boolean).join(' ') || r.nickname || r.email || ('ID '+r.user_id);
+    lines.push('- ' + name + (r.resolved_role || r.service_role ? ' · ' + (r.resolved_role || r.service_role) : ''));
+  });
+  return lines.join('\n');
+}
+
+// Enriquecer descripción Google sin cambiar la vista ni el calendario.
+try{
+  if(typeof v614GoogleDescription === 'function' && !v614GoogleDescription.__v6238Wrapped){
+    const oldDescV6238 = v614GoogleDescription;
+    v614GoogleDescription = function(event){
+      let base = oldDescV6238(event) || '';
+      const extra = v6238AssignmentDescription(event.id);
+      const locationBlock = [
+        event.location ? ('LOCALIZACIÓN: ' + event.location) : '',
+        event.address ? ('DIRECCIÓN: ' + event.address) : '',
+        event.google_maps_link ? ('GOOGLE MAPS: ' + event.google_maps_link) : ''
+      ].filter(Boolean).join('\n');
+      const notesBlock = [
+        event.load_in_time ? ('MONTAJE: ' + event.load_in_time) : '',
+        event.load_out_time ? ('RECOGIDA: ' + event.load_out_time) : '',
+        event.access_notes ? ('ACCESOS: ' + event.access_notes) : '',
+        event.parking_notes ? ('PARKING: ' + event.parking_notes) : '',
+        event.crew_notes ? ('CREW: ' + event.crew_notes) : '',
+        event.production_notes ? ('PRODUCCIÓN: ' + event.production_notes) : ''
+      ].filter(Boolean).join('\n');
+      return [base, locationBlock, extra, notesBlock].filter(Boolean).join('\n\n');
+    };
+    v614GoogleDescription.__v6238Wrapped = true;
+  }
+}catch(e){}
+
+// Persistir después de guardar asignaciones.
+try{
+  if(typeof v612SaveAssignments === 'function' && !v612SaveAssignments.__v6238Wrapped){
+    const oldSaveAssignmentsV6238 = v612SaveAssignments;
+    v612SaveAssignments = function(eventId, assignments){
+      const out = oldSaveAssignmentsV6238(eventId, assignments);
+      try{ v6238SaveSnapshot(eventId, null, assignments); }catch(e){}
+      return out;
+    };
+    v612SaveAssignments.__v6238Wrapped = true;
+  }
+}catch(e){}
+
+// Persistir después de guardado fuerte de roles.
+try{
+  if(typeof v6219SaveAssignmentsHard === 'function' && !v6219SaveAssignmentsHard.__v6238Wrapped){
+    const oldHardV6238 = v6219SaveAssignmentsHard;
+    v6219SaveAssignmentsHard = function(eventId, rows){
+      const out = oldHardV6238(eventId, rows);
+      try{ v6238SaveSnapshot(eventId, null, rows); }catch(e){}
+      return out;
+    };
+    v6219SaveAssignmentsHard.__v6238Wrapped = true;
+  }
+}catch(e){}
+
+// Persistir después de empujar a Google.
+try{
+  if(typeof v614PushEventToGoogle === 'function' && !v614PushEventToGoogle.__v6238Wrapped){
+    const oldPushV6238 = v614PushEventToGoogle;
+    v614PushEventToGoogle = async function(eventId){
+      const out = await oldPushV6238(eventId);
+      try{ v6238SaveSnapshot(eventId); }catch(e){}
+      return out;
+    };
+    v614PushEventToGoogle.__v6238Wrapped = true;
+  }
+}catch(e){}
+
+app.post('/api/v6238/events/:id/persist-now', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
+  try{
+    const r = v6238SaveSnapshot(Number(req.params.id));
+    res.json(r);
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+app.post('/api/v6238/events/:id/restore-now', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
+  try{
+    const r = v6238RestoreEvent(Number(req.params.id));
+    res.json(r);
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+app.post('/api/v6238/restore-all', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
+  try{
+    const restored = v6238RestoreAll();
+    res.json({ok:true,restored});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+app.get('/api/v6238/persistence-status', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
+  try{
+    v6238Ensure();
+    const snapshots = db.prepare('SELECT COUNT(*) AS c FROM event_enterprise_snapshots_v6238').get().c || 0;
+    const events = db.prepare('SELECT COUNT(*) AS c FROM events').get().c || 0;
+    res.json({ok:true,version:'62.38.0',events,snapshots});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+
+// Restauración automática al arrancar versión nueva.
+setTimeout(()=>{ try{ console.log('[V62.38] enterprise snapshots restored:', v6238RestoreAll()); }catch(e){} }, 2600);
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads'), { maxAge: 0 }));
@@ -8811,7 +9062,7 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Marfan Crew Hours V62.37 Calendar Clean Stable listening on port ${PORT}`);
+  console.log(`Marfan Crew Hours V62.38 Calendar Enterprise Persistence listening on port ${PORT}`);
 });
 
 

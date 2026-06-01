@@ -1,15 +1,21 @@
-# V62.37 Calendar Clean Stable
+# V62.38 Calendar Enterprise Persistence
 
-Base: V62.35 estable.
+Base: V62.37 estable.
 
-Cambios:
-- Mantiene el calendario original de la app.
-- Mantiene los botones originales Mes anterior / Hoy / Mes siguiente.
-- No añade barras ni vistas nuevas.
-- No filtra eventos.
-- Desactiva restos de autosync/autoload automático que provocaban pantallas blancas o desaparición de eventos.
-- Google Sync queda manual.
-- No toca operarios, clientes, contraseñas, roles ni login.
+Añade:
+- Selector de mes seguro junto a los botones originales del calendario.
+- No cambia la vista del calendario.
+- No activa autosync automático.
+- Snapshot persistente completo de eventos.
+- Persistencia de técnicos, roles y jefe de equipo.
+- Restauración automática al arrancar nueva versión.
+- Restauración automática después de sincronizar Google manualmente.
+- Google Calendar recibe descripción enriquecida con localización, técnicos, roles, jefe de equipo y notas.
 
-Nota técnica:
-viewCalendar() original ya contiene la navegación mensual con state.calendarMonth.
+No toca:
+- menú
+- login
+- clientes
+- operarios
+- contraseñas
+- render visual del calendario

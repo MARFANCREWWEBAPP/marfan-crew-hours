@@ -2182,3 +2182,8 @@ aside,.sidebar,nav{
   opacity:1!important;
   pointer-events:auto!important;
 }
+
+/* ---------- V62.38 CALENDAR ENTERPRISE PERSISTENCE ---------- */
+#v6238MonthPicker{
+  min-width:160px;
+}

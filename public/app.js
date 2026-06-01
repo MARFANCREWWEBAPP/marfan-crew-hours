@@ -10321,3 +10321,129 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
     keepMenuVisibleV6237();
   }, 2500);
 })();
+
+
+// ---------- V62.38 CALENDAR ENTERPRISE PERSISTENCE FRONTEND ----------
+(function(){
+  async function v6238Api(path, opts={}){
+    const headers={'Content-Type':'application/json','Accept':'application/json'};
+    try{
+      let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||localStorage.getItem('adminToken')||'';
+      if(t){ headers.Authorization='Bearer '+t; headers['X-Admin-Token']=t; headers['X-Auth-Token']=t; }
+    }catch(e){}
+    const r=await fetch(path,{method:opts.method||'GET',headers:{...headers,...(opts.headers||{})},body:opts.body,credentials:'include',cache:'no-store'});
+    const text=await r.text();
+    if(text.trim().startsWith('<')) throw new Error('API HTML');
+    const j=text?JSON.parse(text):{};
+    if(!r.ok||j.ok===false) throw new Error(j.error||text||'HTTP '+r.status);
+    return j;
+  }
+
+  function v6238IsCalendar(){
+    const heads=[...document.querySelectorAll('h1,h2,.page-title,.content-title')].map(x=>(x.textContent||'').toLowerCase()).join(' ');
+    const body=(document.body.textContent||'').toLowerCase();
+    return heads.includes('calendario') || body.includes('calendario eventos') || body.includes('calendario de eventos');
+  }
+
+  function v6238InstallMonthPicker(){
+    if(!v6238IsCalendar()) return;
+    if(document.getElementById('v6238MonthPicker')) return;
+
+    const actions = [...document.querySelectorAll('.actions')].find(a=>{
+      const t=(a.textContent||'').toLowerCase();
+      return t.includes('mes anterior') && t.includes('mes siguiente');
+    });
+    if(!actions) return;
+
+    const input=document.createElement('input');
+    input.id='v6238MonthPicker';
+    input.type='month';
+    input.style.cssText='padding:10px;border:1px solid #d1d5db;border-radius:10px;font-weight:900;';
+    try{
+      const base = state.calendarMonth ? parseLocalDate(state.calendarMonth) : new Date();
+      input.value = `${base.getFullYear()}-${String(base.getMonth()+1).padStart(2,'0')}`;
+    }catch(e){
+      const d=new Date();
+      input.value = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    }
+    input.onchange=async ()=>{
+      if(!input.value) return;
+      state.calendarMonth = input.value + '-01';
+      await viewCalendar();
+    };
+    actions.appendChild(input);
+  }
+
+  async function v6238RestoreAfterGoogleSync(){
+    try{
+      await v6238Api('/api/v6238/restore-all',{method:'POST'});
+      if(typeof load === 'function') await load();
+      if(typeof viewCalendar === 'function') await viewCalendar();
+      if(typeof v534Toast === 'function') v534Toast('Eventos restaurados con técnicos y roles');
+    }catch(e){
+      console.warn('[V62.38] restore after sync', e.message);
+    }
+  }
+
+  // Cuando el usuario pulsa manualmente sincronizar/importar Google, restaurar snapshots al terminar.
+  if(typeof v55ImportGoogle === 'function' && !v55ImportGoogle.__v6238Wrapped){
+    const old = v55ImportGoogle;
+    v55ImportGoogle = async function(){
+      const r = await old.apply(this, arguments);
+      setTimeout(v6238RestoreAfterGoogleSync, 900);
+      return r;
+    };
+    v55ImportGoogle.__v6238Wrapped = true;
+    window.v55ImportGoogle = v55ImportGoogle;
+  }
+  if(typeof v55ExportAll === 'function' && !v55ExportAll.__v6238Wrapped){
+    const old = v55ExportAll;
+    v55ExportAll = async function(){
+      const r = await old.apply(this, arguments);
+      setTimeout(v6238RestoreAfterGoogleSync, 900);
+      return r;
+    };
+    v55ExportAll.__v6238Wrapped = true;
+    window.v55ExportAll = v55ExportAll;
+  }
+  if(typeof v55ExportOne === 'function' && !v55ExportOne.__v6238Wrapped){
+    const old = v55ExportOne;
+    v55ExportOne = async function(id){
+      const r = await old.apply(this, arguments);
+      try{ await v6238Api('/api/v6238/events/'+Number(id)+'/persist-now',{method:'POST'}); }catch(e){}
+      return r;
+    };
+    v55ExportOne.__v6238Wrapped = true;
+    window.v55ExportOne = v55ExportOne;
+  }
+
+  // No tocamos el render del calendario: solo añadimos selector de mes junto a botones existentes.
+  if(typeof viewCalendar === 'function' && !viewCalendar.__v6238Wrapped){
+    const oldView = viewCalendar;
+    viewCalendar = async function(){
+      const r = await oldView.apply(this, arguments);
+      setTimeout(v6238InstallMonthPicker, 200);
+      setTimeout(v6238InstallMonthPicker, 700);
+      return r;
+    };
+    viewCalendar.__v6238Wrapped = true;
+    window.viewCalendar = viewCalendar;
+  }
+
+  document.addEventListener('click', ev=>{
+    const el=ev.target.closest&&ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn,.v622-menu-btn');
+    if(!el) return;
+    const txt=(el.textContent||'').toLowerCase();
+
+    if(txt.includes('calendario')){
+      setTimeout(v6238InstallMonthPicker, 500);
+    }
+
+    if(txt.includes('sincron') && txt.includes('google') && ev.isTrusted){
+      setTimeout(v6238RestoreAfterGoogleSync, 2200);
+    }
+  }, true);
+
+  setTimeout(()=>{ v6238Api('/api/v6238/restore-all',{method:'POST'}).catch(()=>{}); }, 2500);
+  setInterval(v6238InstallMonthPicker, 3000);
+})();

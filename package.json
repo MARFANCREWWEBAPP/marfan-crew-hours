@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.37.0",
-  "description": "V62.37 Calendar Clean Stable",
+  "version": "62.38.0",
+  "description": "V62.38 Calendar Enterprise Persistence",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
