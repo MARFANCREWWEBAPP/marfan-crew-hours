@@ -10447,3 +10447,118 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
   setTimeout(()=>{ v6238Api('/api/v6238/restore-all',{method:'POST'}).catch(()=>{}); }, 2500);
   setInterval(v6238InstallMonthPicker, 3000);
 })();
+
+
+// ---------- V62.39 REAL EVENT SAVE HOOK FRONTEND ----------
+(function(){
+  async function v6239Fetch(path, opts={}){
+    const headers={'Content-Type':'application/json','Accept':'application/json'};
+    try{
+      let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||localStorage.getItem('adminToken')||'';
+      if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;}
+    }catch(e){}
+    const r=await fetch(path,{method:opts.method||'GET',headers:{...headers,...(opts.headers||{})},body:opts.body,credentials:'include',cache:'no-store'});
+    const text=await r.text();
+    if(text.trim().startsWith('<')) throw new Error('La API ha devuelto HTML.');
+    let data={}; try{data=text?JSON.parse(text):{}}catch(e){data={ok:false,error:text}}
+    if(!r.ok||data.ok===false) throw new Error(data.error||text||'HTTP '+r.status);
+    return data;
+  }
+
+  function v6239CollectAssignments(){
+    if(typeof v612CollectAssignments === 'function'){
+      try{return v612CollectAssignments();}catch(e){}
+    }
+    return [...document.querySelectorAll('#v612Assignments .v612-assignment,.v612-assignment,[data-assignment-row]')].map(row=>{
+      const get=(names)=>{for(const n of names){const el=row.querySelector(`[name="${n}"],[data-field="${n}"]`);if(el)return el.type==='checkbox'?(el.checked?1:0):el.value;}return '';};
+      const roleSel=row.querySelector('[name="role_id"],[data-field="role_id"]');
+      const opt=roleSel&&roleSel.options?roleSel.options[roleSel.selectedIndex]:null;
+      return {
+        user_id:Number(get(['user_id','operator_id','worker_id'])||0),
+        role_id:get(['role_id'])?Number(get(['role_id'])):null,
+        service_role:String(get(['service_role','role_name','operator_role_name']) || (opt?(opt.dataset.name||opt.textContent||''):'')).trim(),
+        shift_type:get(['shift_type','shift'])||'D',
+        planned_start:get(['planned_start','start_time','start'])||'',
+        planned_end:get(['planned_end','end_time','end'])||'',
+        hourly_rate:Number(get(['hourly_rate','rate','price']) || (opt?(opt.dataset.day||opt.dataset.rate||0):0) || 0),
+        is_team_lead:Number(get(['is_team_lead','team_lead','lead'])||0),
+        status:'asignado'
+      };
+    }).filter(x=>x.user_id);
+  }
+
+  function v6239PatchEventForm(){
+    const form=document.getElementById('v612EventForm')||document.getElementById('v61EventForm')||document.getElementById('v60EditForm');
+    if(!form || form.__v6239FinalPatched) return;
+    form.__v6239FinalPatched=true;
+
+    form.onsubmit=async ev=>{
+      ev.preventDefault();
+      const event=Object.fromEntries(new FormData(form));
+      const assignments=v6239CollectAssignments();
+
+      const id=Number(
+        event.id || event.event_id ||
+        window.__lastEditingEventIdV6219 ||
+        window.__lastEditingEventIdV6218 ||
+        window.__lastEditingEventIdV6217 ||
+        window.__lastEditingEventIdV6215 ||
+        window.__lastEditingEventIdV6213 ||
+        window.__lastEditingEventIdV6239 ||
+        0
+      );
+
+      try{
+        const saved=await v6239Fetch('/api/v6239/event-form-save-final' + (id ? '?id='+encodeURIComponent(id) : ''), {
+          method:'POST',
+          body:JSON.stringify({event, assignments})
+        });
+
+        if(typeof v534Toast==='function'){
+          v534Toast('Evento guardado con información completa');
+        }
+
+        try{ closeWizard(); }catch(e){ const root=document.getElementById('modalRoot'); if(root) root.innerHTML=''; }
+
+        if(typeof load==='function') await load();
+        if(typeof viewCalendar==='function') await viewCalendar();
+      }catch(e){
+        alert('Error guardando evento completo: '+e.message);
+      }
+    };
+  }
+
+  if(typeof openV612EventForm === 'function' && !openV612EventForm.__v6239Wrapped){
+    const oldOpen=openV612EventForm;
+    openV612EventForm=async function(id=0){
+      window.__lastEditingEventIdV6239=Number(id||0);
+      const r=await oldOpen.apply(this, arguments);
+      setTimeout(v6239PatchEventForm,100);
+      setTimeout(v6239PatchEventForm,500);
+      setTimeout(v6239PatchEventForm,1200);
+      return r;
+    };
+    openV612EventForm.__v6239Wrapped=true;
+    window.openV612EventForm=openV612EventForm;
+    window.openEditEventV60=openV612EventForm;
+    window.editEventV582=openV612EventForm;
+    window.editEventV587=openV612EventForm;
+    window.editEventV593=openV612EventForm;
+    window.editCalendarEventV58=openV612EventForm;
+    window.editCalendarEventV576=openV612EventForm;
+  }
+
+  // Restaurar información completa después de sincronización manual.
+  document.addEventListener('click',ev=>{
+    const el=ev.target.closest&&ev.target.closest('button,a');
+    if(!el)return;
+    const txt=(el.textContent||'').toLowerCase();
+    if(txt.includes('sincron') && txt.includes('google') && ev.isTrusted){
+      setTimeout(()=>v6239Fetch('/api/v6239/restore-all-full',{method:'POST'}).catch(()=>{}),1800);
+      setTimeout(async()=>{try{if(typeof load==='function')await load(); if(typeof viewCalendar==='function')await viewCalendar();}catch(e){}},2600);
+    }
+  },true);
+
+  setInterval(v6239PatchEventForm,1000);
+  setTimeout(()=>v6239Fetch('/api/v6239/restore-all-full',{method:'POST'}).catch(()=>{}),2500);
+})();

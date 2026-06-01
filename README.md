@@ -1,21 +1,11 @@
-# V62.38 Calendar Enterprise Persistence
+# V62.39 Real Event Save Hook
 
-Base: V62.37 estable.
+Corrige el guardado real de información de eventos.
 
-Añade:
-- Selector de mes seguro junto a los botones originales del calendario.
-- No cambia la vista del calendario.
-- No activa autosync automático.
-- Snapshot persistente completo de eventos.
-- Persistencia de técnicos, roles y jefe de equipo.
-- Restauración automática al arrancar nueva versión.
-- Restauración automática después de sincronizar Google manualmente.
-- Google Calendar recibe descripción enriquecida con localización, técnicos, roles, jefe de equipo y notas.
-
-No toca:
-- menú
-- login
-- clientes
-- operarios
-- contraseñas
-- render visual del calendario
+Cambios:
+- Nueva ruta definitiva /api/v6239/event-form-save-final.
+- Guarda evento + assignments + roles + jefe equipo en una tabla persistente propia.
+- Restaura datos completos al arrancar.
+- Restaura datos completos tras sincronización Google manual.
+- El frontend fuerza el formulario V46/V612 a guardar por la ruta final.
+- No toca la vista visual del calendario.
