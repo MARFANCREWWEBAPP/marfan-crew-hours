@@ -1,3 +1,3 @@
-# V62.30 Clean Real Calendar Only
+# V62.31 Restore Original Calendar + Native Month Navigation
 
-Elimina bloque negro duplicado y deja solo calendario mensual real con navegación integrada.
+Base V62.28. Quita vistas inventadas, conserva calendario original, añade barra nativa de mes, sync silenciosa y carga eventos del mes.

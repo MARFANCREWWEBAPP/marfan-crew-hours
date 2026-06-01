@@ -10768,322 +10768,204 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
 })();
 
 
-// ---------- V62.29 CALENDAR MONTH NAVIGATION REAL FIX FRONTEND ----------
+// ---------- V62.31 RESTORE ORIGINAL CALENDAR + NATIVE MONTH NAV FRONTEND ----------
 (function(){
-  function esc6229(v){
-    if(typeof escV582==='function') return escV582(v);
-    if(typeof esc==='function') return esc(v);
-    return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
-  }
-  function monthTitle6229(d){return d.toLocaleDateString('es-ES',{month:'long',year:'numeric'});}
-  function cur6229(){if(!window.__v6229Month) window.__v6229Month=new Date(); return window.__v6229Month;}
-  async function fetch6229(path){
-    const headers={'Accept':'application/json'};
-    try{let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||localStorage.getItem('adminToken')||''; if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;}}catch(e){}
-    const r=await fetch(path,{headers,credentials:'include',cache:'no-store'});
-    const text=await r.text(); if(text.trim().startsWith('<')) throw new Error('API HTML');
-    const j=text?JSON.parse(text):{};
-    if(!r.ok||j.ok===false) throw new Error(j.error||text||'HTTP '+r.status);
-    return j;
-  }
-  function ensureToolbar6229(){
-    const content=document.getElementById('content')||document.querySelector('#main')||document.querySelector('.content')||document.body;
-    if(!content) return;
-    let bar=document.getElementById('v6228CalendarToolbar')||document.getElementById('v6229CalendarToolbar');
-    if(!bar){
-      bar=document.createElement('div');
-      bar.id='v6229CalendarToolbar';
-      bar.className='v6228-calendar-toolbar';
-      bar.innerHTML=`<div id="v6228MonthTitle" class="v6228-month-title"></div>
-        <button class="light" type="button" onclick="window.v6229MoveMonth(-1)">← Mes anterior</button>
-        <button class="dark" type="button" onclick="window.v6229Today()">Hoy</button>
-        <button class="light" type="button" onclick="window.v6229MoveMonth(1)">Mes siguiente →</button>
-        <span id="v6228SyncStatus" class="ok">Vista mensual real</span>`;
-      const h=content.querySelector('h1,h2,.page-title,.content-title');
-      if(h&&h.parentNode)h.parentNode.insertBefore(bar,h.nextSibling);else content.prepend(bar);
-    }else{
-      // reescribir botones para que usen función real V62.29
-      const buttons=[...bar.querySelectorAll('button')];
-      if(buttons[0]) buttons[0].setAttribute('onclick','window.v6229MoveMonth(-1)');
-      if(buttons[1]) buttons[1].setAttribute('onclick','window.v6229Today()');
-      if(buttons[2]) buttons[2].setAttribute('onclick','window.v6229MoveMonth(1)');
-    }
-    const title=document.getElementById('v6228MonthTitle')||bar.querySelector('.v6228-month-title,.v6229-month-title');
-    if(title) title.textContent=monthTitle6229(cur6229());
-    let holder=document.getElementById('v6229MonthEvents');
-    if(!holder){
-      holder=document.createElement('div');
-      holder.id='v6229MonthEvents';
-      bar.insertAdjacentElement('afterend',holder);
-    }
-  }
-  function renderEvents6229(events){
-    ensureToolbar6229();
-    const holder=document.getElementById('v6229MonthEvents');
-    if(!holder) return;
-    if(!events.length){
-      holder.innerHTML='<div class="v6229-empty">No hay eventos en este mes.</div>';
-      return;
-    }
-    holder.innerHTML=events.map(ev=>{
-      const date=ev.event_date||ev.date||ev.start_date||'';
-      const time=[ev.start_time,ev.end_time].filter(Boolean).join(' - ');
-      const techs=(ev.technicians||[]).map(t=>`${t.first_name||''} ${t.last_name||''}${(t.role_name||t.resolved_role)?' · '+(t.role_name||t.resolved_role):''}`).filter(Boolean);
-      return `<div class="v6229-event-card" data-event-id="${Number(ev.id)}" onclick="if(typeof openV612EventForm==='function')openV612EventForm(${Number(ev.id)})">
-        <h3>${esc6229(ev.name||ev.title||'Evento')}</h3>
-        <div class="v6229-event-meta">${esc6229(date)} ${time? '· '+esc6229(time):''}</div>
-        ${(ev.location||ev.address)?`<div class="v6229-event-meta">${esc6229(ev.location||ev.address)}</div>`:''}
-        ${techs.length?`<div class="v6229-techs"><b>Técnicos:</b><br>${techs.map(esc6229).join('<br>')}</div>`:''}
-      </div>`;
-    }).join('');
-  }
-  async function loadMonth6229(){
-    ensureToolbar6229();
-    const d=cur6229();
-    const title=document.getElementById('v6228MonthTitle');
-    if(title) title.textContent=monthTitle6229(d);
-    const holder=document.getElementById('v6229MonthEvents');
-    if(holder) holder.innerHTML='<div class="v6229-empty">Cargando eventos...</div>';
-    try{
-      const j=await fetch6229(`/api/v6229/calendar-month-events?year=${d.getFullYear()}&month=${d.getMonth()}`);
-      renderEvents6229(j.events||[]);
-      const status=document.getElementById('v6228SyncStatus');
-      if(status) status.textContent='Mes cargado';
-    }catch(e){
-      if(holder) holder.innerHTML='<div class="v6229-empty">Error cargando mes: '+esc6229(e.message)+'</div>';
-    }
-  }
-  window.v6229MoveMonth=function(n){
-    const d=new Date(cur6229());
-    d.setMonth(d.getMonth()+n);
-    window.__v6229Month=d;
-    window.__v6228Month=d;
-    loadMonth6229();
-  };
-  window.v6229Today=function(){
-    const d=new Date();
-    window.__v6229Month=d;
-    window.__v6228Month=d;
-    loadMonth6229();
-  };
-  // Compatibilidad: sobreescribe botones viejos
-  window.v6228MoveMonth=window.v6229MoveMonth;
-  window.v6228Today=window.v6229Today;
-
-  if(typeof viewCalendar==='function' && !viewCalendar.__v6229Wrapped){
-    const old=viewCalendar;
-    viewCalendar=async function(){
-      const r=await old.apply(this,arguments);
-      setTimeout(loadMonth6229,500);
-      setTimeout(loadMonth6229,1400);
-      return r;
-    };
-    viewCalendar.__v6229Wrapped=true;
-    window.viewCalendar=viewCalendar;
-  }
-  if(typeof showCalendarV582==='function' && !showCalendarV582.__v6229Wrapped){
-    const old=showCalendarV582;
-    showCalendarV582=async function(){
-      const r=await old.apply(this,arguments);
-      setTimeout(loadMonth6229,500);
-      return r;
-    };
-    showCalendarV582.__v6229Wrapped=true;
-    window.showCalendarV582=showCalendarV582;
-  }
-  document.addEventListener('click',ev=>{
-    const el=ev.target.closest&&ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn,.v622-menu-btn');
-    if(!el)return;
-    const t=(el.textContent||'').toLowerCase();
-    if(t.includes('calendario')) setTimeout(loadMonth6229,900);
-  },true);
-  setInterval(()=>{
-    if((document.body.textContent||'').toLowerCase().includes('calendario') && document.getElementById('v6228MonthTitle')) ensureToolbar6229();
-  },2500);
-})();
-
-
-// ---------- V62.30 CLEAN REAL CALENDAR ONLY FRONTEND ----------
-(function(){
-  function esc6230(v){
+  function esc6231(v){
     if(typeof escV582==='function')return escV582(v);
     if(typeof esc==='function')return esc(v);
     return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
   }
-  function isCalendarPage6230(){
+  function cur6231(){ if(!window.__v6231Month) window.__v6231Month=new Date(); return window.__v6231Month; }
+  function title6231(d){ return d.toLocaleDateString('es-ES',{month:'long',year:'numeric'}); }
+  function isCal6231(){
     const h=[...document.querySelectorAll('h1,h2,.page-title,.content-title')].map(x=>(x.textContent||'').toLowerCase()).join(' ');
-    return h.includes('calendario') || (document.body.textContent||'').toLowerCase().includes('calendario de eventos');
+    const body=(document.body.textContent||'').toLowerCase();
+    return h.includes('calendario') || body.includes('calendario de eventos') || body.includes('vista mensual');
   }
-  function getRoot6230(){
-    return document.getElementById('content') || document.querySelector('#main') || document.querySelector('.content') || document.getElementById('app');
+  function root6231(){
+    return document.getElementById('content')||document.querySelector('#main')||document.querySelector('.content')||document.getElementById('app');
   }
-  function month6230(){ if(!window.__v6230Month) window.__v6230Month=new Date(); return window.__v6230Month; }
-  function title6230(d){ return d.toLocaleDateString('es-ES',{month:'long',year:'numeric'}); }
-  async function fetch6230(path){
-    const headers={'Accept':'application/json'};
+  function removeInjectedBad6231(){
+    document.querySelectorAll('#v6229MonthEvents,#v6229CalendarToolbar,#v6230CalendarReal,#v6230CalendarGrid,.v6230-calendar-controls,.v6229-event-card').forEach(x=>x.remove());
+    [...document.querySelectorAll('section,div,article')].forEach(el=>{
+      const txt=(el.textContent||'').toLowerCase();
+      if(txt.includes('calendario eventos · v58.3') || txt.includes('abrir calendario v58.2') || txt.includes('vista con google sync restaurado')){
+        el.remove();
+      }
+    });
+  }
+  async function fetch6231(path,opts={}){
+    const headers={'Content-Type':'application/json','Accept':'application/json'};
     try{
       let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||localStorage.getItem('adminToken')||'';
       if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;}
     }catch(e){}
-    const r=await fetch(path,{headers,credentials:'include',cache:'no-store'});
+    const r=await fetch(path,{method:opts.method||'GET',headers:{...headers,...(opts.headers||{})},body:opts.body,credentials:'include',cache:'no-store'});
     const text=await r.text();
     if(text.trim().startsWith('<')) throw new Error('API HTML');
     const j=text?JSON.parse(text):{};
     if(!r.ok||j.ok===false) throw new Error(j.error||text||'HTTP '+r.status);
     return j;
   }
-  function removeBadBlocks6230(){
-    // Quitar la vista negra duplicada y toolbars anteriores.
-    document.querySelectorAll('#v6228CalendarToolbar,#v6229CalendarToolbar,#v6229MonthEvents,.v6228-calendar-toolbar,.v6225-cal-nav').forEach(x=>x.remove());
-    [...document.querySelectorAll('section,div,article')].forEach(el=>{
-      const txt=(el.textContent||'').toLowerCase();
-      const cls=String(el.className||'').toLowerCase();
-      if(
-        (txt.includes('calendario eventos · v58.3') || txt.includes('abrir calendario v58.2')) ||
-        (txt.includes('vista con google sync restaurado') && txt.includes('mes anterior') && txt.includes('mes siguiente')) ||
-        (cls.includes('v58') && txt.includes('calendario'))
-      ){
-        el.remove();
-      }
-    });
+  function installBar6231(){
+    if(!isCal6231())return;
+    removeInjectedBad6231();
+    const root=root6231(); if(!root)return;
+    let bar=document.getElementById('v6231NativeCalbar');
+    if(!bar){
+      bar=document.createElement('div');
+      bar.id='v6231NativeCalbar';
+      bar.className='v6231-native-calbar';
+      bar.innerHTML=`<div id="v6231MonthTitle" class="v6231-month-title"></div>
+        <button class="light" type="button" onclick="window.v6231MoveMonth(-1)">← Mes anterior</button>
+        <button class="dark" type="button" onclick="window.v6231Today()">Hoy</button>
+        <button class="light" type="button" onclick="window.v6231MoveMonth(1)">Mes siguiente →</button>
+        <span id="v6231SyncStatus" class="syncok">Sync silenciosa</span>`;
+      const h=root.querySelector('h1,h2,.page-title,.content-title');
+      if(h&&h.parentNode) h.parentNode.insertBefore(bar,h.nextSibling);
+      else root.prepend(bar);
+    }
+    const title=document.getElementById('v6231MonthTitle');
+    if(title) title.textContent=title6231(cur6231());
   }
-  function buildSkeleton6230(){
-    const root=getRoot6230(); if(!root) return null;
-    removeBadBlocks6230();
-
-    let existing=document.getElementById('v6230CalendarReal');
-    if(existing) return existing;
-
-    // Dejar encabezado principal y borrar bloques duplicados antiguos del calendario si hace falta.
-    const container=document.createElement('div');
-    container.id='v6230CalendarReal';
-    container.innerHTML=`
-      <div class="v6230-calendar-controls">
-        <div id="v6230CalendarTitle" class="v6230-calendar-title"></div>
-        <button class="light" type="button" onclick="window.v6230MoveMonth(-1)">← Mes anterior</button>
-        <button class="dark" type="button" onclick="window.v6230Today()">Hoy</button>
-        <button class="light" type="button" onclick="window.v6230MoveMonth(1)">Mes siguiente →</button>
-      </div>
-      <div id="v6230CalendarGrid" class="v6230-calendar-grid"></div>
-    `;
-
-    const h=root.querySelector('h1,h2,.page-title,.content-title');
-    if(h && h.parentNode) h.parentNode.insertBefore(container,h.nextSibling);
-    else root.prepend(container);
-    return container;
+  function eventDate6231(ev){
+    return String(ev.event_date||ev.date||ev.start_date||ev.start||'').slice(0,10);
   }
-  function render6230(events){
-    const d=month6230();
-    const title=document.getElementById('v6230CalendarTitle');
-    if(title) title.textContent=title6230(d);
-
-    const grid=document.getElementById('v6230CalendarGrid');
-    if(!grid) return;
-
+  function patchOriginalCalendarDom6231(events){
+    // Mantener la vista original: solo limpiar/pintar eventos dentro de los días existentes.
+    installBar6231();
+    const d=cur6231();
     const y=d.getFullYear(), m=d.getMonth();
-    const first=new Date(y,m,1);
-    const last=new Date(y,m+1,0);
-    const days=last.getDate();
-    const startDow=(first.getDay()+6)%7; // lunes = 0
-
     const byDay={};
-    (events||[]).forEach(ev=>{
-      const ds=String(ev.event_date||ev.date||ev.start_date||ev.start||'').slice(0,10);
+    events.forEach(ev=>{
+      const ds=eventDate6231(ev);
       const day=Number(ds.slice(8,10));
       if(day) (byDay[day]||(byDay[day]=[])).push(ev);
     });
 
-    let html='';
-    for(let i=0;i<startDow;i++) html+='<div class="v6230-day" style="opacity:.35"></div>';
-    for(let day=1;day<=days;day++){
-      const evs=byDay[day]||[];
-      html+=`<div class="v6230-day"><div class="v6230-day-num">${day}</div>`;
-      html+=evs.map(ev=>{
-        const time=ev.start_time||'';
-        const name=ev.name||ev.title||'Evento';
-        return `<div class="v6230-event" onclick="if(typeof openV612EventForm==='function')openV612EventForm(${Number(ev.id)})">
-          ${esc6230(time)} ${esc6230(name)}
-          ${(ev.location||ev.address)?`<small>${esc6230(ev.location||ev.address)}</small>`:''}
-        </div>`;
-      }).join('');
-      html+='</div>';
+    // Buscar celdas reales del calendario original.
+    let cells=[...document.querySelectorAll('.calendar-day,.day-cell,.month-day,[data-day]')];
+    if(!cells.length){
+      // fallback: celdas grandes de vista mensual
+      const maybe=[...document.querySelectorAll('div')].filter(el=>{
+        const st=getComputedStyle(el);
+        const txt=(el.textContent||'').trim();
+        return el.offsetWidth>80 && el.offsetHeight>60 && /^\d{1,2}$/.test(txt.split(/\s+/)[0]||'');
+      });
+      cells=maybe;
     }
-    grid.innerHTML=html || '<div class="v6230-empty-note">No hay eventos en este mes.</div>';
-  }
-  async function load6230(){
-    if(!isCalendarPage6230()) return;
-    buildSkeleton6230();
-    const d=month6230();
-    const title=document.getElementById('v6230CalendarTitle');
-    if(title) title.textContent=title6230(d);
-    const grid=document.getElementById('v6230CalendarGrid');
-    if(grid) grid.innerHTML='<div class="v6230-empty-note">Cargando calendario...</div>';
-    try{
-      const j=await fetch6230(`/api/v6229/calendar-month-events?year=${d.getFullYear()}&month=${d.getMonth()}`);
-      render6230(j.events||[]);
-    }catch(e){
-      if(grid) grid.innerHTML='<div class="v6230-empty-note">Error cargando calendario: '+esc6230(e.message)+'</div>';
-    }
-  }
-  window.v6230MoveMonth=function(n){
-    const d=new Date(month6230());
-    d.setMonth(d.getMonth()+n);
-    window.__v6230Month=d;
-    window.__v6229Month=d;
-    window.__v6228Month=d;
-    load6230();
-  };
-  window.v6230Today=function(){
-    const d=new Date();
-    window.__v6230Month=d;
-    window.__v6229Month=d;
-    window.__v6228Month=d;
-    load6230();
-  };
-  // neutralizar funciones antiguas duplicadas para que no creen barras/listas.
-  window.v6229MoveMonth=window.v6230MoveMonth;
-  window.v6229Today=window.v6230Today;
-  window.v6228MoveMonth=window.v6230MoveMonth;
-  window.v6228Today=window.v6230Today;
 
-  if(typeof viewCalendar==='function' && !viewCalendar.__v6230Wrapped){
+    // Si no podemos detectar celdas, no inventamos otra vista.
+    if(!cells.length) return;
+
+    cells.forEach(cell=>{
+      const raw=(cell.getAttribute('data-day')||cell.textContent||'').trim();
+      const n=Number((raw.match(/^\d{1,2}/)||[])[0]||0);
+      if(!n) return;
+      // limpiar eventos nuestros previos
+      cell.querySelectorAll('.v6231-event-chip').forEach(x=>x.remove());
+      const evs=byDay[n]||[];
+      evs.forEach(ev=>{
+        const chip=document.createElement('div');
+        chip.className='v6231-event-chip';
+        chip.style.cssText='background:#1d4ed8;color:#fff;border-radius:9px;padding:6px 8px;margin:4px 0;font-weight:900;font-size:12px;cursor:pointer;';
+        chip.innerHTML=`${esc6231(ev.start_time||'')} ${esc6231(ev.name||ev.title||'Evento')}`;
+        chip.onclick=(e)=>{e.preventDefault();e.stopPropagation(); if(typeof openV612EventForm==='function') openV612EventForm(Number(ev.id));};
+        cell.appendChild(chip);
+      });
+    });
+  }
+  async function silentSync6231(){
+    const now=Date.now();
+    if(window.__v6231Syncing || (window.__v6231LastSync && now-window.__v6231LastSync<45000)) return;
+    window.__v6231Syncing=true; window.__v6231LastSync=now;
+    const oldAlert=window.alert;
+    try{
+      window.alert=function(msg){ if(String(msg||'').toLowerCase().includes('sincron')) return; return oldAlert.call(window,msg); };
+      await fetch6231('/api/v6231/calendar-silent-sync',{method:'POST'}).catch(()=>{});
+      const btn=[...document.querySelectorAll('button,a')].find(b=>{
+        const t=(b.textContent||'').toLowerCase();
+        return t.includes('sincron') && t.includes('google');
+      });
+      if(btn){ try{ btn.click(); }catch(e){} }
+      setTimeout(()=>document.querySelectorAll('.modal,.modal-back,#modalRoot').forEach(m=>{if((m.textContent||'').toLowerCase().includes('sincron'))m.innerHTML='';}),500);
+      const status=document.getElementById('v6231SyncStatus'); if(status)status.textContent='Sync automática OK';
+    }finally{
+      setTimeout(()=>{window.alert=oldAlert;window.__v6231Syncing=false;},900);
+    }
+  }
+  async function loadMonth6231(){
+    if(!isCal6231()) return;
+    installBar6231();
+    const d=cur6231();
+    const title=document.getElementById('v6231MonthTitle'); if(title)title.textContent=title6231(d);
+    try{
+      const j=await fetch6231(`/api/v6231/calendar-events-month?year=${d.getFullYear()}&month=${d.getMonth()}`);
+      patchOriginalCalendarDom6231(j.events||[]);
+    }catch(e){
+      console.warn('[V62.31] month load',e.message);
+    }
+  }
+  window.v6231MoveMonth=function(n){
+    const d=new Date(cur6231());
+    d.setMonth(d.getMonth()+n);
+    window.__v6231Month=d;
+    window.__v6228Month=d;
+    window.__v6229Month=d;
+    loadMonth6231();
+  };
+  window.v6231Today=function(){
+    const d=new Date();
+    window.__v6231Month=d;
+    window.__v6228Month=d;
+    window.__v6229Month=d;
+    loadMonth6231();
+  };
+  // Compatibilidad con botones anteriores
+  window.v6228MoveMonth=window.v6231MoveMonth;
+  window.v6228Today=window.v6231Today;
+  window.v6229MoveMonth=window.v6231MoveMonth;
+  window.v6229Today=window.v6231Today;
+
+  if(typeof viewCalendar==='function'&&!viewCalendar.__v6231Wrapped){
     const old=viewCalendar;
     viewCalendar=async function(){
       const r=await old.apply(this,arguments);
-      setTimeout(removeBadBlocks6230,100);
-      setTimeout(load6230,300);
-      setTimeout(removeBadBlocks6230,900);
-      setTimeout(load6230,1100);
+      setTimeout(removeInjectedBad6231,100);
+      setTimeout(installBar6231,200);
+      setTimeout(silentSync6231,350);
+      setTimeout(loadMonth6231,900);
+      setTimeout(loadMonth6231,1800);
       return r;
     };
-    viewCalendar.__v6230Wrapped=true;
-    window.viewCalendar=viewCalendar;
+    viewCalendar.__v6231Wrapped=true; window.viewCalendar=viewCalendar;
   }
-  if(typeof showCalendarV582==='function' && !showCalendarV582.__v6230Wrapped){
+  if(typeof showCalendarV582==='function'&&!showCalendarV582.__v6231Wrapped){
     const old=showCalendarV582;
     showCalendarV582=async function(){
       const r=await old.apply(this,arguments);
-      setTimeout(removeBadBlocks6230,100);
-      setTimeout(load6230,300);
+      setTimeout(removeInjectedBad6231,100);
+      setTimeout(installBar6231,200);
+      setTimeout(loadMonth6231,500);
       return r;
     };
-    showCalendarV582.__v6230Wrapped=true;
-    window.showCalendarV582=showCalendarV582;
+    showCalendarV582.__v6231Wrapped=true; window.showCalendarV582=showCalendarV582;
   }
   document.addEventListener('click',ev=>{
     const el=ev.target.closest&&ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn,.v622-menu-btn');
     if(!el)return;
     const t=(el.textContent||'').toLowerCase();
     if(t.includes('calendario')){
-      setTimeout(removeBadBlocks6230,300);
-      setTimeout(load6230,600);
-      setTimeout(removeBadBlocks6230,1300);
+      setTimeout(removeInjectedBad6231,200);
+      setTimeout(installBar6231,500);
+      setTimeout(silentSync6231,700);
+      setTimeout(loadMonth6231,1200);
     }
   },true);
   setInterval(()=>{
-    if(isCalendarPage6230()){
-      removeBadBlocks6230();
-      if(!document.getElementById('v6230CalendarReal')) load6230();
+    if(isCal6231()){
+      removeInjectedBad6231();
+      installBar6231();
     }
-  },1500);
+  },2000);
 })();

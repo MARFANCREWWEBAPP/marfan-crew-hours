@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.30.0",
-  "description": "V62.30 Clean Real Calendar Only",
+  "version": "62.31.0",
+  "description": "V62.31 Restore Original Calendar Native Month Navigation",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
