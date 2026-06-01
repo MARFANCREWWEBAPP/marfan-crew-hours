@@ -1,10 +1,17 @@
-# V62.23 Users Persistence + Calendar AutoLoad Fix
+# V62.24 Password Edit Isolation Fix
 
 Corrige:
-- Usuarios/operarios/admins se exportan automáticamente a /data/json-backups/users-*.json.
-- Si en una actualización falta la tabla/usuarios, se restauran automáticamente desde último JSON.
-- Hace backup automático de usuarios al iniciar y al entrar en Operarios.
-- Calendario intenta cargarse/restaurarse automáticamente al entrar y pulsa/lanza sincronización Google si existe botón.
+- En Contraseñas, al pulsar Editar se abría el formulario de evento y salía:
+  "Error abriendo formulario de evento: Evento no encontrado".
 
-Importante:
-Railway debe mantener volumen persistente /data.
+Solución:
+- Aísla los botones Editar del menú Contraseñas.
+- Bloquea la propagación hacia handlers globales de edición de eventos.
+- Fuerza que Editar abra openPasswordEditV6220(id).
+
+No toca:
+- Eventos
+- Calendario
+- Operarios
+- Usuarios/admins
+- Persistencia

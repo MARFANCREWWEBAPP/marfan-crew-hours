@@ -10258,3 +10258,112 @@ document.addEventListener('click', ev=>{
 }, true);
 // backup periódico suave de usuarios al iniciar
 setTimeout(v6223BackupUsersNow, 2500);
+
+
+// ---------- V62.24 PASSWORD EDIT ISOLATION FIX ----------
+// Evita que los botones Editar del menú Contraseñas llamen al editor de eventos.
+
+(function(){
+  function v6224IsPasswordsPage(){
+    const txt = (document.body.textContent || '').toLowerCase();
+    return !!document.querySelector('#v6220List,.v6220-grid,.v6220-card') || 
+      (txt.includes('contraseñas') && txt.includes('usuarios, contraseñas'));
+  }
+
+  function v6224PatchPasswordEditButtons(){
+    if(!v6224IsPasswordsPage()) return;
+
+    document.querySelectorAll('.v6220-card').forEach(card=>{
+      const editBtn = [...card.querySelectorAll('button,a')].find(b => (b.textContent || '').trim().toLowerCase() === 'editar');
+      if(!editBtn) return;
+
+      // Sacar ID del onclick original tipo openPasswordEditV6220(123)
+      let id = 0;
+      const html = editBtn.getAttribute('onclick') || '';
+      let m = html.match(/openPasswordEditV6220\((\d+)\)/);
+      if(m) id = Number(m[1]);
+
+      if(!id){
+        const pass = card.querySelector('[id^="pass-"]');
+        if(pass){
+          m = String(pass.id || '').match(/pass-(\d+)/);
+          if(m) id = Number(m[1]);
+        }
+      }
+
+      if(!id) return;
+
+      editBtn.removeAttribute('onclick');
+      editBtn.href = 'javascript:void(0)';
+      editBtn.dataset.passwordId = String(id);
+      editBtn.classList.add('v6224-password-edit-isolated');
+
+      editBtn.onclick = function(ev){
+        ev.preventDefault();
+        ev.stopPropagation();
+        ev.stopImmediatePropagation();
+        if(typeof openPasswordEditV6220 === 'function'){
+          openPasswordEditV6220(id);
+        }else{
+          alert('Editor de contraseñas no disponible');
+        }
+        return false;
+      };
+    });
+  }
+
+  // Captura antes que cualquier handler global de eventos.
+  document.addEventListener('click', function(ev){
+    const btn = ev.target.closest && ev.target.closest('.v6224-password-edit-isolated,.v6220-card button,.v6220-card a');
+    if(!btn || !v6224IsPasswordsPage()) return;
+
+    const txt = (btn.textContent || '').trim().toLowerCase();
+    const card = btn.closest('.v6220-card');
+
+    if(card && txt === 'editar'){
+      ev.preventDefault();
+      ev.stopPropagation();
+      ev.stopImmediatePropagation();
+
+      let id = Number(btn.dataset.passwordId || 0);
+      if(!id){
+        const pass = card.querySelector('[id^="pass-"]');
+        const m = pass && String(pass.id || '').match(/pass-(\d+)/);
+        if(m) id = Number(m[1]);
+      }
+
+      if(id && typeof openPasswordEditV6220 === 'function') openPasswordEditV6220(id);
+      else alert('No se ha podido identificar esta contraseña');
+      return false;
+    }
+  }, true);
+
+  // Reforzar después de cargar/listar contraseñas.
+  const oldLoadV6224 = typeof loadPasswordsV6220 === 'function' ? loadPasswordsV6220 : null;
+  if(oldLoadV6224 && !loadPasswordsV6220.__v6224Wrapped){
+    loadPasswordsV6220 = async function(){
+      const r = await oldLoadV6224.apply(this, arguments);
+      setTimeout(v6224PatchPasswordEditButtons, 50);
+      setTimeout(v6224PatchPasswordEditButtons, 250);
+      return r;
+    };
+    loadPasswordsV6220.__v6224Wrapped = true;
+    window.loadPasswordsV6220 = loadPasswordsV6220;
+  }
+
+  const oldViewV6224 = typeof viewPasswordsV6220 === 'function' ? viewPasswordsV6220 : null;
+  if(oldViewV6224 && !viewPasswordsV6220.__v6224Wrapped){
+    viewPasswordsV6220 = async function(){
+      const r = await oldViewV6224.apply(this, arguments);
+      setTimeout(v6224PatchPasswordEditButtons, 80);
+      setTimeout(v6224PatchPasswordEditButtons, 400);
+      return r;
+    };
+    viewPasswordsV6220.__v6224Wrapped = true;
+    window.viewPasswordsV6220 = viewPasswordsV6220;
+    window.viewPasswords = viewPasswordsV6220;
+    window.viewContrasenas = viewPasswordsV6220;
+  }
+
+  setInterval(v6224PatchPasswordEditButtons, 1000);
+})();
