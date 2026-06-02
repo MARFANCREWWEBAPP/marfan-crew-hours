@@ -1,3 +1,16 @@
-# V62.41 Real Event Edit Persistence
+# V62.42 Calendar Month Like Albaranes
 
-Persistencia real al editar eventos: localización, técnicos, roles y jefe de equipo. Restauración al abrir formulario, al arrancar y tras sincronización manual Google. No toca la vista del calendario.
+Base: V62.41 estable.
+
+Cambia solo la referencia visual de mes del Calendario:
+- Similar a Albaranes evento.
+- H2 con mes visible.
+- Selector month inline.
+- Mantiene botones originales Mes anterior / Hoy / Mes siguiente.
+
+No toca:
+- Persistencia de eventos.
+- Técnicos, roles ni jefe equipo.
+- Google Sync.
+- Login.
+- Menús.

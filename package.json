@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.41.0",
-  "description": "V62.41 Real Event Edit Persistence",
+  "version": "62.42.0",
+  "description": "V62.42 Calendar Month Like Albaranes",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

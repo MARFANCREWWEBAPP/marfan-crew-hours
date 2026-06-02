@@ -606,7 +606,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version: '62.41.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version: '62.42.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -2880,7 +2880,7 @@ app.get('/api/v6216-auto-restore-status', requireAdmin, (req,res)=>{
   try{
     res.json({
       ok:true,
-      version: '62.41.0',
+      version: '62.42.0',
       status:global.V6216_RESTORE_STATUS || null,
       db_path:v6216DbPath(),
       data_dir:v6216DataDir(),
@@ -3553,7 +3553,7 @@ function v6223ExportUsersJson(){
     const users = db.prepare('SELECT * FROM users ORDER BY id').all();
     const stamp = new Date().toISOString().replace(/[:.]/g,'-');
     const out = p.join(v6223JsonDir(), `users-${stamp}.json`);
-    f.writeFileSync(out, JSON.stringify({version: '62.41.0', created_at:new Date().toISOString(), users}, null, 2));
+    f.writeFileSync(out, JSON.stringify({version: '62.42.0', created_at:new Date().toISOString(), users}, null, 2));
     v6223KeepLastFiles(v6223JsonDir(), 'users-', 10);
     return {ok:true,path:out,count:users.length};
   }catch(e){ return {ok:false,error:e.message}; }
@@ -3667,7 +3667,7 @@ app.get('/api/v6223-persistence-status', requireAdmin, (req,res)=>{
     try{ snapshots = db.prepare("SELECT COUNT(*) AS c FROM event_snapshots_v6218").get().c || 0; }catch(e){}
     res.json({
       ok:true,
-      version: '62.41.0',
+      version: '62.42.0',
       data_dir:v6223DataDir(),
       users,
       events,
@@ -4044,7 +4044,7 @@ app.get('/api/v6238/persistence-status', (typeof requireAdminSoftV6226==='functi
     v6238Ensure();
     const snapshots = db.prepare('SELECT COUNT(*) AS c FROM event_enterprise_snapshots_v6238').get().c || 0;
     const events = db.prepare('SELECT COUNT(*) AS c FROM events').get().c || 0;
-    res.json({ok:true,version: '62.41.0',events,snapshots});
+    res.json({ok:true,version: '62.42.0',events,snapshots});
   }catch(e){ res.status(500).json({ok:false,error:e.message}); }
 });
 
@@ -9272,7 +9272,7 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Marfan Crew Hours V62.41 Real Event Edit Persistence listening on port ${PORT}`);
+  console.log(`Marfan Crew Hours V62.42 Calendar Month Like Albaranes listening on port ${PORT}`);
 });
 
 

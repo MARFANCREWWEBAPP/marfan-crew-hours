@@ -10564,66 +10564,88 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
 })();
 
 
-// ---------- V62.40 CALENDAR MONTH UX FRONTEND ----------
+
+// [V62.42] V62.40 Month UX desactivado. Se usa referencia tipo Albaranes.
+
+// ---------- V62.41 REAL EVENT EDIT PERSISTENCE FRONTEND ----------
 (function(){
-  function v6240IsCalendarPage(){
+  async function v6241Fetch(path,opts={}){const headers={'Content-Type':'application/json','Accept':'application/json'};try{let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||localStorage.getItem('adminToken')||'';if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;}}catch(e){}const r=await fetch(path,{method:opts.method||'GET',headers:{...headers,...(opts.headers||{})},body:opts.body,credentials:'include',cache:'no-store'});const text=await r.text();if(text.trim().startsWith('<'))throw new Error('La API ha devuelto HTML.');let data={};try{data=text?JSON.parse(text):{};}catch(e){data={ok:false,error:text};}if(!r.ok||data.ok===false)throw new Error(data.error||text||'HTTP '+r.status);return data;}
+  function v6241CollectAssignments(){const box=document.getElementById('v612Assignments');if(!box)return [];return [...box.querySelectorAll('.v612-assignment')].map(row=>{const qs=n=>row.querySelector(`[name="${n}"]`);const roleSel=qs('role_id');const opt=roleSel&&roleSel.options?roleSel.options[roleSel.selectedIndex]:null;return {user_id:Number((qs('user_id')||{}).value||0),role_id:(qs('role_id')||{}).value||'',service_role:(qs('service_role')||{}).value||(opt?(opt.dataset.name||opt.textContent||''):''),shift_type:(qs('shift_type')||{}).value||'D',planned_start:(qs('planned_start')||{}).value||'',planned_end:(qs('planned_end')||{}).value||'',hourly_rate:Number((qs('hourly_rate')||{}).value||(opt?(opt.dataset.day||opt.dataset.rate||0):0)||0),is_team_lead:qs('is_team_lead')&&qs('is_team_lead').checked?1:0,status:'asignado'};}).filter(x=>x.user_id);}
+  async function v6241LoadFullDataIntoForm(eventId){if(!eventId)return;try{const data=await v6241Fetch('/api/v6241/events/'+Number(eventId)+'/full-edit-data');const assignments=data.assignments||[];if(assignments.length&&typeof v612AddAssignment==='function'){const box=document.getElementById('v612Assignments');if(box)box.innerHTML='';const users=window.__v612Users||[];const roles=window.__v612Roles||[];assignments.forEach(a=>v612AddAssignment(users,roles,{user_id:a.user_id,role_id:a.role_id,service_role:a.service_role||a.resolved_role||'',shift_type:a.shift_type||'D',planned_start:a.planned_start||'',planned_end:a.planned_end||'',hourly_rate:a.hourly_rate||0,is_team_lead:a.is_team_lead||0,status:a.status||'asignado'}));}}catch(e){console.warn('[V62.41] load full edit data',e.message);}}
+  function v6241PatchForm(){const form=document.getElementById('v612EventForm')||document.getElementById('v61EventForm')||document.getElementById('v60EditForm');if(!form||form.__v6241Patched)return;form.__v6241Patched=true;form.onsubmit=async ev=>{ev.preventDefault();const event=Object.fromEntries(new FormData(form));const assignments=v6241CollectAssignments();const id=Number(event.id||event.event_id||window.__lastEditingEventIdV6241||window.__lastEditingEventIdV6239||window.__lastEditingEventIdV6219||window.__lastEditingEventIdV6218||window.__lastEditingEventIdV6217||window.__lastEditingEventIdV6215||window.__lastEditingEventIdV6213||0);try{await v6241Fetch('/api/v6241/event-save-final'+(id?'?id='+encodeURIComponent(id):''),{method:'POST',body:JSON.stringify({event,assignments})});if(typeof v534Toast==='function')v534Toast('Evento guardado y persistido');try{closeWizard();}catch(e){const root=document.getElementById('modalRoot');if(root)root.innerHTML='';}if(typeof load==='function')await load();if(typeof viewCalendar==='function')await viewCalendar();}catch(e){alert('Error guardando evento persistente: '+e.message);}};}
+  if(typeof openV612EventForm==='function'&&!openV612EventForm.__v6241Wrapped){const oldOpen=openV612EventForm;openV612EventForm=async function(id=0){window.__lastEditingEventIdV6241=Number(id||0);const r=await oldOpen.apply(this,arguments);setTimeout(()=>v6241LoadFullDataIntoForm(id),250);setTimeout(v6241PatchForm,350);setTimeout(()=>v6241LoadFullDataIntoForm(id),900);setTimeout(v6241PatchForm,1000);return r;};openV612EventForm.__v6241Wrapped=true;window.openV612EventForm=openV612EventForm;window.openEditEventV60=openV612EventForm;window.editEventV582=openV612EventForm;window.editEventV587=openV612EventForm;window.editEventV593=openV612EventForm;window.editCalendarEventV58=openV612EventForm;window.editCalendarEventV576=openV612EventForm;}
+  document.addEventListener('click',ev=>{const el=ev.target.closest&&ev.target.closest('button,a');if(!el)return;const txt=(el.textContent||'').toLowerCase();if(txt.includes('sincron')&&txt.includes('google')&&ev.isTrusted){setTimeout(()=>v6241Fetch('/api/v6241/restore-all',{method:'POST'}).catch(()=>{}),1600);setTimeout(async()=>{try{if(typeof load==='function')await load();if(typeof viewCalendar==='function')await viewCalendar();}catch(e){}},2600);}},true);
+  setInterval(v6241PatchForm,1000);setTimeout(()=>v6241Fetch('/api/v6241/restore-all',{method:'POST'}).catch(()=>{}),2500);
+})();
+
+
+// ---------- V62.42 CALENDAR MONTH LIKE ALBARANES FRONTEND ----------
+(function(){
+  function v6242IsCalendarPage(){
     const heads = [...document.querySelectorAll('h1,h2,.page-title,.content-title')]
       .map(x => (x.textContent || '').toLowerCase()).join(' ');
     const body = (document.body.textContent || '').toLowerCase();
     return heads.includes('calendario') || body.includes('calendario eventos') || body.includes('calendario de eventos');
   }
 
-  function v6240CurrentDate(){
+  function v6242CurrentDate(){
     try{
       if(state && state.calendarMonth) return parseLocalDate(state.calendarMonth);
     }catch(e){}
     return new Date();
   }
 
-  function v6240MonthValue(d){
+  function v6242MonthValue(d){
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
   }
 
-  function v6240Title(d){
-    return d.toLocaleDateString('es-ES', {month:'long', year:'numeric'}).toUpperCase();
+  function v6242Title(d){
+    return d.toLocaleDateString('es-ES', {month:'long', year:'numeric'});
   }
 
-  function v6240FindCalendarActions(){
-    return [...document.querySelectorAll('.actions')].find(a=>{
+  function v6242FindCalendarCard(){
+    const actions = [...document.querySelectorAll('.actions')].find(a=>{
       const t = (a.textContent || '').toLowerCase();
       return t.includes('mes anterior') && t.includes('mes siguiente');
     });
+    return actions ? actions.closest('.card') : null;
   }
 
-  function v6240Install(){
-    if(!v6240IsCalendarPage()) return;
+  function v6242Install(){
+    if(!v6242IsCalendarPage()) return;
 
-    const actions = v6240FindCalendarActions();
+    const card = v6242FindCalendarCard();
+    if(!card) return;
+
+    const actions = [...card.querySelectorAll('.actions')].find(a=>{
+      const t = (a.textContent || '').toLowerCase();
+      return t.includes('mes anterior') && t.includes('mes siguiente');
+    });
     if(!actions) return;
 
-    const current = v6240CurrentDate();
+    // Quitar referencia anterior de V62.40 si existiera
+    document.getElementById('v6240CalendarMonthUx')?.remove();
 
-    let ux = document.getElementById('v6240CalendarMonthUx');
-    if(!ux){
-      ux = document.createElement('div');
-      ux.id = 'v6240CalendarMonthUx';
-      ux.className = 'v6240-calendar-month-ux';
-      ux.innerHTML = `
-        <div id="v6240CalendarMonthTitle" class="v6240-calendar-month-title"></div>
-        <span class="v6240-calendar-month-help">Ir directamente a:</span>
-        <input id="v6240CalendarMonthPicker" class="v6240-calendar-month-picker" type="month">
+    const d = v6242CurrentDate();
+    let ref = document.getElementById('v6242CalendarMonthRef');
+
+    if(!ref){
+      ref = document.createElement('div');
+      ref.id = 'v6242CalendarMonthRef';
+      ref.className = 'v6242-calendar-month-ref';
+      ref.innerHTML = `
+        <h2 id="v6242CalendarMonthTitle"></h2>
+        <p class="muted">Selecciona el mes igual que en Albaranes evento:
+          <input id="v6242CalendarMonthPicker" class="v6242-month-select-inline" type="month">
+        </p>
       `;
 
-      const card = actions.closest('.card') || document.getElementById('content');
-      if(card){
-        const top = card.querySelector('.top');
-        if(top && top.nextSibling) card.insertBefore(ux, top.nextSibling);
-        else card.insertBefore(ux, actions);
-      }else{
-        actions.parentNode.insertBefore(ux, actions);
-      }
+      // Igual que Albaranes: h2 del mes justo encima del calendario, no una barra grande aparte.
+      const calendar = card.querySelector('.calendar');
+      if(calendar) card.insertBefore(ref, calendar);
+      else actions.insertAdjacentElement('afterend', ref);
 
-      const picker = document.getElementById('v6240CalendarMonthPicker');
+      const picker = document.getElementById('v6242CalendarMonthPicker');
       picker.addEventListener('change', async ()=>{
         if(!picker.value) return;
         try{
@@ -10635,49 +10657,46 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
       });
     }
 
-    const title = document.getElementById('v6240CalendarMonthTitle');
-    const picker = document.getElementById('v6240CalendarMonthPicker');
+    const title = document.getElementById('v6242CalendarMonthTitle');
+    const picker = document.getElementById('v6242CalendarMonthPicker');
 
-    if(title) title.textContent = v6240Title(current);
-    if(picker && picker.value !== v6240MonthValue(current)) picker.value = v6240MonthValue(current);
+    if(title) title.textContent = v6242Title(d);
+    if(picker && picker.value !== v6242MonthValue(d)) picker.value = v6242MonthValue(d);
+
+    // Ocultar el h3 antiguo del mes si está duplicando justo antes del calendario.
+    const calendar = card.querySelector('.calendar');
+    if(calendar){
+      const before = calendar.previousElementSibling;
+      if(before && before.tagName === 'H3' && before.id !== 'v6242CalendarMonthTitle'){
+        before.style.display = 'none';
+      }
+    }
   }
 
-  if(typeof viewCalendar === 'function' && !viewCalendar.__v6240Wrapped){
-    const oldViewCalendarV6240 = viewCalendar;
+  if(typeof viewCalendar === 'function' && !viewCalendar.__v6242Wrapped){
+    const oldViewCalendarV6242 = viewCalendar;
     viewCalendar = async function(){
-      const r = await oldViewCalendarV6240.apply(this, arguments);
-      setTimeout(v6240Install, 80);
-      setTimeout(v6240Install, 350);
+      const r = await oldViewCalendarV6242.apply(this, arguments);
+      setTimeout(v6242Install, 80);
+      setTimeout(v6242Install, 350);
       return r;
     };
-    viewCalendar.__v6240Wrapped = true;
+    viewCalendar.__v6242Wrapped = true;
     window.viewCalendar = viewCalendar;
   }
 
   document.addEventListener('click', ev=>{
     const el = ev.target.closest && ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn,.v622-menu-btn');
     if(!el) return;
-
     const t = (el.textContent || '').toLowerCase();
+
     if(t.includes('calendario') || t.includes('mes anterior') || t.includes('mes siguiente') || t === 'hoy'){
-      setTimeout(v6240Install, 180);
-      setTimeout(v6240Install, 600);
+      setTimeout(v6242Install, 180);
+      setTimeout(v6242Install, 600);
     }
   }, true);
 
   setInterval(()=>{
-    if(v6240IsCalendarPage()) v6240Install();
+    if(v6242IsCalendarPage()) v6242Install();
   }, 3000);
-})();
-
-
-// ---------- V62.41 REAL EVENT EDIT PERSISTENCE FRONTEND ----------
-(function(){
-  async function v6241Fetch(path,opts={}){const headers={'Content-Type':'application/json','Accept':'application/json'};try{let t=(typeof token!=='undefined'&&token)||window.token||localStorage.getItem('token')||localStorage.getItem('authToken')||localStorage.getItem('marfan_token')||sessionStorage.getItem('token')||localStorage.getItem('adminToken')||'';if(t){headers.Authorization='Bearer '+t;headers['X-Admin-Token']=t;headers['X-Auth-Token']=t;}}catch(e){}const r=await fetch(path,{method:opts.method||'GET',headers:{...headers,...(opts.headers||{})},body:opts.body,credentials:'include',cache:'no-store'});const text=await r.text();if(text.trim().startsWith('<'))throw new Error('La API ha devuelto HTML.');let data={};try{data=text?JSON.parse(text):{};}catch(e){data={ok:false,error:text};}if(!r.ok||data.ok===false)throw new Error(data.error||text||'HTTP '+r.status);return data;}
-  function v6241CollectAssignments(){const box=document.getElementById('v612Assignments');if(!box)return [];return [...box.querySelectorAll('.v612-assignment')].map(row=>{const qs=n=>row.querySelector(`[name="${n}"]`);const roleSel=qs('role_id');const opt=roleSel&&roleSel.options?roleSel.options[roleSel.selectedIndex]:null;return {user_id:Number((qs('user_id')||{}).value||0),role_id:(qs('role_id')||{}).value||'',service_role:(qs('service_role')||{}).value||(opt?(opt.dataset.name||opt.textContent||''):''),shift_type:(qs('shift_type')||{}).value||'D',planned_start:(qs('planned_start')||{}).value||'',planned_end:(qs('planned_end')||{}).value||'',hourly_rate:Number((qs('hourly_rate')||{}).value||(opt?(opt.dataset.day||opt.dataset.rate||0):0)||0),is_team_lead:qs('is_team_lead')&&qs('is_team_lead').checked?1:0,status:'asignado'};}).filter(x=>x.user_id);}
-  async function v6241LoadFullDataIntoForm(eventId){if(!eventId)return;try{const data=await v6241Fetch('/api/v6241/events/'+Number(eventId)+'/full-edit-data');const assignments=data.assignments||[];if(assignments.length&&typeof v612AddAssignment==='function'){const box=document.getElementById('v612Assignments');if(box)box.innerHTML='';const users=window.__v612Users||[];const roles=window.__v612Roles||[];assignments.forEach(a=>v612AddAssignment(users,roles,{user_id:a.user_id,role_id:a.role_id,service_role:a.service_role||a.resolved_role||'',shift_type:a.shift_type||'D',planned_start:a.planned_start||'',planned_end:a.planned_end||'',hourly_rate:a.hourly_rate||0,is_team_lead:a.is_team_lead||0,status:a.status||'asignado'}));}}catch(e){console.warn('[V62.41] load full edit data',e.message);}}
-  function v6241PatchForm(){const form=document.getElementById('v612EventForm')||document.getElementById('v61EventForm')||document.getElementById('v60EditForm');if(!form||form.__v6241Patched)return;form.__v6241Patched=true;form.onsubmit=async ev=>{ev.preventDefault();const event=Object.fromEntries(new FormData(form));const assignments=v6241CollectAssignments();const id=Number(event.id||event.event_id||window.__lastEditingEventIdV6241||window.__lastEditingEventIdV6239||window.__lastEditingEventIdV6219||window.__lastEditingEventIdV6218||window.__lastEditingEventIdV6217||window.__lastEditingEventIdV6215||window.__lastEditingEventIdV6213||0);try{await v6241Fetch('/api/v6241/event-save-final'+(id?'?id='+encodeURIComponent(id):''),{method:'POST',body:JSON.stringify({event,assignments})});if(typeof v534Toast==='function')v534Toast('Evento guardado y persistido');try{closeWizard();}catch(e){const root=document.getElementById('modalRoot');if(root)root.innerHTML='';}if(typeof load==='function')await load();if(typeof viewCalendar==='function')await viewCalendar();}catch(e){alert('Error guardando evento persistente: '+e.message);}};}
-  if(typeof openV612EventForm==='function'&&!openV612EventForm.__v6241Wrapped){const oldOpen=openV612EventForm;openV612EventForm=async function(id=0){window.__lastEditingEventIdV6241=Number(id||0);const r=await oldOpen.apply(this,arguments);setTimeout(()=>v6241LoadFullDataIntoForm(id),250);setTimeout(v6241PatchForm,350);setTimeout(()=>v6241LoadFullDataIntoForm(id),900);setTimeout(v6241PatchForm,1000);return r;};openV612EventForm.__v6241Wrapped=true;window.openV612EventForm=openV612EventForm;window.openEditEventV60=openV612EventForm;window.editEventV582=openV612EventForm;window.editEventV587=openV612EventForm;window.editEventV593=openV612EventForm;window.editCalendarEventV58=openV612EventForm;window.editCalendarEventV576=openV612EventForm;}
-  document.addEventListener('click',ev=>{const el=ev.target.closest&&ev.target.closest('button,a');if(!el)return;const txt=(el.textContent||'').toLowerCase();if(txt.includes('sincron')&&txt.includes('google')&&ev.isTrusted){setTimeout(()=>v6241Fetch('/api/v6241/restore-all',{method:'POST'}).catch(()=>{}),1600);setTimeout(async()=>{try{if(typeof load==='function')await load();if(typeof viewCalendar==='function')await viewCalendar();}catch(e){}},2600);}},true);
-  setInterval(v6241PatchForm,1000);setTimeout(()=>v6241Fetch('/api/v6241/restore-all',{method:'POST'}).catch(()=>{}),2500);
 })();
