@@ -10579,124 +10579,106 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
 })();
 
 
-// ---------- V62.42 CALENDAR MONTH LIKE ALBARANES FRONTEND ----------
-(function(){
-  function v6242IsCalendarPage(){
-    const heads = [...document.querySelectorAll('h1,h2,.page-title,.content-title')]
-      .map(x => (x.textContent || '').toLowerCase()).join(' ');
-    const body = (document.body.textContent || '').toLowerCase();
-    return heads.includes('calendario') || body.includes('calendario eventos') || body.includes('calendario de eventos');
-  }
 
-  function v6242CurrentDate(){
-    try{
-      if(state && state.calendarMonth) return parseLocalDate(state.calendarMonth);
-    }catch(e){}
+// [V62.43] UX de mes anterior desactivada. Vista calendario integrada como Albaranes.
+
+
+
+// ---------- V62.43 CALENDAR LIKE ALBARANES + REAL PERSISTENCE FRONTEND ----------
+(function(){
+  function v6243IsCal(){
+    const body=(document.body.textContent||'').toLowerCase();
+    const heads=[...document.querySelectorAll('h1,h2,.page-title,.content-title')].map(x=>(x.textContent||'').toLowerCase()).join(' ');
+    return heads.includes('calendario') || body.includes('calendario eventos');
+  }
+  function v6243Date(){
+    try{ if(state.calendarMonth) return parseLocalDate(state.calendarMonth); }catch(e){}
     return new Date();
   }
-
-  function v6242MonthValue(d){
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  function v6243Title(d){ return d.toLocaleDateString('es-ES',{month:'long',year:'numeric'}); }
+  function v6243MonthVal(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+  function v6243InstallMonth(){
+    if(!v6243IsCal()) return;
+    const content=document.getElementById('content'); if(!content)return;
+    const card=[...content.querySelectorAll('.card')].find(c=>(c.textContent||'').toLowerCase().includes('mes anterior') && c.querySelector('.calendar'));
+    if(!card)return;
+    const oldRef=document.getElementById('v6243CalMonthRef');
+    if(oldRef) oldRef.remove();
+    const d=v6243Date();
+    const ref=document.createElement('div');
+    ref.id='v6243CalMonthRef';
+    ref.className='top';
+    ref.style.margin='10px 0 14px';
+    ref.innerHTML=`<div><h2 style="margin:0;text-transform:capitalize">${v6243Title(d)}</h2><p class="muted">Selecciona el mes igual que en Albaranes evento</p></div><div class="actions"><input id="v6243MonthPicker" type="month" value="${v6243MonthVal(d)}" style="padding:10px;border:1px solid #d1d5db;border-radius:10px;font-weight:900"></div>`;
+    const calendar=card.querySelector('.calendar');
+    card.insertBefore(ref,calendar);
+    const oldH3=[...card.querySelectorAll('h3')].find(h=>h.nextElementSibling&&h.nextElementSibling.classList&&h.nextElementSibling.classList.contains('calendar'));
+    if(oldH3) oldH3.style.display='none';
+    document.getElementById('v6243MonthPicker').onchange=async e=>{ if(!e.target.value)return; state.calendarMonth=e.target.value+'-01'; await viewCalendar(); };
   }
-
-  function v6242Title(d){
-    return d.toLocaleDateString('es-ES', {month:'long', year:'numeric'});
+  async function v6243Api(path,opts={}){
+    const r=await fetch(path,{method:opts.method||'GET',headers:{'Content-Type':'application/json'},body:opts.body,credentials:'include',cache:'no-store'});
+    const text=await r.text(); let data={}; try{data=text?JSON.parse(text):{}}catch(e){data={ok:false,error:text}}
+    if(!r.ok||data.ok===false)throw new Error(data.error||text||'HTTP '+r.status); return data;
   }
-
-  function v6242FindCalendarCard(){
-    const actions = [...document.querySelectorAll('.actions')].find(a=>{
-      const t = (a.textContent || '').toLowerCase();
-      return t.includes('mes anterior') && t.includes('mes siguiente');
-    });
-    return actions ? actions.closest('.card') : null;
+  function v6243Assignments(){
+    const box=document.getElementById('v612Assignments'); if(!box)return [];
+    return [...box.querySelectorAll('.v612-assignment')].map(row=>{
+      const q=n=>row.querySelector(`[name="${n}"]`);
+      const roleSel=q('role_id'); const opt=roleSel&&roleSel.options?roleSel.options[roleSel.selectedIndex]:null;
+      return {
+        user_id:Number((q('user_id')||{}).value||0),
+        role_id:(q('role_id')||{}).value||'',
+        service_role:(q('service_role')||{}).value || (opt?(opt.dataset.name||opt.textContent||''):''),
+        planned_start:(q('planned_start')||{}).value||'',
+        planned_end:(q('planned_end')||{}).value||'',
+        shift_type:(q('shift_type')||{}).value||'D',
+        hourly_rate:Number((q('hourly_rate')||{}).value||0),
+        is_team_lead:q('is_team_lead')&&q('is_team_lead').checked?1:0,
+        status:'asignado'
+      };
+    }).filter(x=>x.user_id);
   }
-
-  function v6242Install(){
-    if(!v6242IsCalendarPage()) return;
-
-    const card = v6242FindCalendarCard();
-    if(!card) return;
-
-    const actions = [...card.querySelectorAll('.actions')].find(a=>{
-      const t = (a.textContent || '').toLowerCase();
-      return t.includes('mes anterior') && t.includes('mes siguiente');
-    });
-    if(!actions) return;
-
-    // Quitar referencia anterior de V62.40 si existiera
-    document.getElementById('v6240CalendarMonthUx')?.remove();
-
-    const d = v6242CurrentDate();
-    let ref = document.getElementById('v6242CalendarMonthRef');
-
-    if(!ref){
-      ref = document.createElement('div');
-      ref.id = 'v6242CalendarMonthRef';
-      ref.className = 'v6242-calendar-month-ref';
-      ref.innerHTML = `
-        <h2 id="v6242CalendarMonthTitle"></h2>
-        <p class="muted">Selecciona el mes igual que en Albaranes evento:
-          <input id="v6242CalendarMonthPicker" class="v6242-month-select-inline" type="month">
-        </p>
-      `;
-
-      // Igual que Albaranes: h2 del mes justo encima del calendario, no una barra grande aparte.
-      const calendar = card.querySelector('.calendar');
-      if(calendar) card.insertBefore(ref, calendar);
-      else actions.insertAdjacentElement('afterend', ref);
-
-      const picker = document.getElementById('v6242CalendarMonthPicker');
-      picker.addEventListener('change', async ()=>{
-        if(!picker.value) return;
-        try{
-          state.calendarMonth = picker.value + '-01';
-          await viewCalendar();
-        }catch(e){
-          alert('Error cambiando de mes: ' + e.message);
-        }
-      });
-    }
-
-    const title = document.getElementById('v6242CalendarMonthTitle');
-    const picker = document.getElementById('v6242CalendarMonthPicker');
-
-    if(title) title.textContent = v6242Title(d);
-    if(picker && picker.value !== v6242MonthValue(d)) picker.value = v6242MonthValue(d);
-
-    // Ocultar el h3 antiguo del mes si está duplicando justo antes del calendario.
-    const calendar = card.querySelector('.calendar');
-    if(calendar){
-      const before = calendar.previousElementSibling;
-      if(before && before.tagName === 'H3' && before.id !== 'v6242CalendarMonthTitle'){
-        before.style.display = 'none';
+  async function v6243LoadEventFull(id){
+    if(!id)return;
+    try{
+      const data=await v6243Api('/api/v6243/events/'+Number(id)+'/full');
+      if((data.assignments||[]).length && typeof v612AddAssignment==='function'){
+        const box=document.getElementById('v612Assignments'); if(box)box.innerHTML='';
+        const users=window.__v612Users||[], roles=window.__v612Roles||[];
+        data.assignments.forEach(a=>v612AddAssignment(users,roles,{user_id:a.user_id,role_id:a.role_id,service_role:a.service_role||'',planned_start:a.planned_start||'',planned_end:a.planned_end||'',shift_type:a.shift_type||'D',hourly_rate:a.hourly_rate||0,is_team_lead:a.is_team_lead||0,status:a.status||'asignado'}));
       }
-    }
+    }catch(e){console.warn('[V62.43] full load',e.message)}
   }
-
-  if(typeof viewCalendar === 'function' && !viewCalendar.__v6242Wrapped){
-    const oldViewCalendarV6242 = viewCalendar;
-    viewCalendar = async function(){
-      const r = await oldViewCalendarV6242.apply(this, arguments);
-      setTimeout(v6242Install, 80);
-      setTimeout(v6242Install, 350);
-      return r;
+  function v6243PatchForm(){
+    const form=document.getElementById('v612EventForm')||document.getElementById('v61EventForm')||document.getElementById('v60EditForm');
+    if(!form||form.__v6243Patched)return;
+    form.__v6243Patched=true;
+    form.onsubmit=async ev=>{
+      ev.preventDefault();
+      const event=Object.fromEntries(new FormData(form));
+      const id=Number(event.id||event.event_id||window.__lastEditingEventIdV6243||window.__lastEditingEventIdV6241||window.__lastEditingEventIdV6239||0);
+      try{
+        await v6243Api('/api/v6243/event-save-final'+(id?'?id='+id:''),{method:'POST',body:JSON.stringify({event,assignments:v6243Assignments()})});
+        if(typeof v534Toast==='function')v534Toast('Evento guardado con personal, roles y localización');
+        try{closeWizard()}catch(e){const root=document.getElementById('modalRoot'); if(root)root.innerHTML='';}
+        if(typeof load==='function')await load();
+        if(typeof viewCalendar==='function')await viewCalendar();
+      }catch(e){alert('Error guardando evento: '+e.message);}
     };
-    viewCalendar.__v6242Wrapped = true;
-    window.viewCalendar = viewCalendar;
   }
-
-  document.addEventListener('click', ev=>{
-    const el = ev.target.closest && ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn,.v622-menu-btn');
-    if(!el) return;
-    const t = (el.textContent || '').toLowerCase();
-
-    if(t.includes('calendario') || t.includes('mes anterior') || t.includes('mes siguiente') || t === 'hoy'){
-      setTimeout(v6242Install, 180);
-      setTimeout(v6242Install, 600);
-    }
-  }, true);
-
-  setInterval(()=>{
-    if(v6242IsCalendarPage()) v6242Install();
-  }, 3000);
+  if(typeof viewCalendar==='function' && !viewCalendar.__v6243Wrapped){
+    const old=viewCalendar;
+    viewCalendar=async function(){const r=await old.apply(this,arguments);setTimeout(v6243InstallMonth,80);setTimeout(v6243InstallMonth,350);return r;};
+    viewCalendar.__v6243Wrapped=true; window.viewCalendar=viewCalendar;
+  }
+  if(typeof openV612EventForm==='function' && !openV612EventForm.__v6243Wrapped){
+    const old=openV612EventForm;
+    openV612EventForm=async function(id=0){window.__lastEditingEventIdV6243=Number(id||0);const r=await old.apply(this,arguments);setTimeout(()=>v6243LoadEventFull(id),250);setTimeout(v6243PatchForm,350);setTimeout(()=>v6243LoadEventFull(id),900);setTimeout(v6243PatchForm,1000);return r;};
+    openV612EventForm.__v6243Wrapped=true;
+    window.openV612EventForm=openV612EventForm; window.openEditEventV60=openV612EventForm; window.editEventV582=openV612EventForm; window.editCalendarEventV576=openV612EventForm;
+  }
+  document.addEventListener('click',ev=>{const el=ev.target.closest&&ev.target.closest('button,a'); if(!el)return; const t=(el.textContent||'').toLowerCase(); if(t.includes('calendario')||t.includes('mes anterior')||t.includes('mes siguiente')||t==='hoy')setTimeout(v6243InstallMonth,400); if(t.includes('sincron')&&t.includes('google'))setTimeout(()=>v6243Api('/api/v6243/restore-all',{method:'POST'}).catch(()=>{}),1500);},true);
+  setInterval(()=>{v6243InstallMonth();v6243PatchForm();},1500);
+  setTimeout(()=>v6243Api('/api/v6243/restore-all',{method:'POST'}).catch(()=>{}),2500);
 })();

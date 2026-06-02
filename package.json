@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.42.0",
-  "description": "V62.42 Calendar Month Like Albaranes",
+  "version": "62.43.0",
+  "description": "V62.43 Calendar Albaranes View Real Persistence",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
