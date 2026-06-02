@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.44.0",
-  "description": "V62.44 Real Calendar and Persistence Fix",
+  "version": "62.45.0",
+  "description": "V62.45 Real DB Persistence Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

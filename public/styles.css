@@ -2178,3 +2178,6 @@ aside,.sidebar,nav{
 
 /* ---------- V62.44 REAL CALENDAR MONTH PICKER ---------- */
 #calendarMonthPickerV6244{min-width:160px}
+
+/* ---------- V62.45 CALENDAR MONTH SELECTOR ---------- */
+#content input[type="month"].field{min-width:170px}

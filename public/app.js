@@ -576,7 +576,7 @@ function viewCalendar(){
   const prev = new Date(year,month-1,1,12,0,0,0);
   const next = new Date(year,month+1,1,12,0,0,0);
   const list=(state.events||[]).filter(e=>e.status!=='realizado').sort((a,b)=>String(a.event_date||'').localeCompare(String(b.event_date||''))||String(a.start_time||'').localeCompare(String(b.start_time||''))).slice(0,80).map(e=>`<tr><td data-label="Fecha">${formatLocalDate(e.event_date)}<br>${esc(e.start_time||'')}-${esc(e.end_time||'')}</td><td data-label="Evento"><b>${esc(e.name||'')}</b><br>${esc(e.client||'')}</td><td data-label="Lugar">${esc(e.location||'')}</td><td data-label="Estado">${esc(e.status||'')}</td><td><button onclick="openEventDetail(${e.id})">Abrir</button><button class="danger" onclick="deleteEvent(${e.id})">Borrar</button></td></tr>`).join('');
-  $('#content').innerHTML=`<div class="card"><div class="top"><div><h3>Calendario eventos</h3><p class="muted">Fechas locales fijas. El evento queda exactamente en el día seleccionado.</p></div><button onclick="openEventWizard()">+ Crear evento</button></div><div class="actions"><button class="secondary" onclick="state.calendarMonth='${localDateStr(prev)}';viewCalendar()">Mes anterior</button><button class="secondary" onclick="state.calendarMonth='${localDateStr()}';viewCalendar()">Hoy</button><button class="secondary" onclick="state.calendarMonth='${localDateStr(next)}';viewCalendar()">Mes siguiente</button></div><h3>${first.toLocaleDateString('es-ES',{month:'long',year:'numeric'})}</h3><div class="calendar">${days.join('')}</div></div><div class="card"><h3>Listado de eventos programados/cancelados</h3><table class="table"><tbody>${list||'<tr><td>No hay eventos.</td></tr>'}</tbody></table></div>`;
+  $('#content').innerHTML=`<div class="card"><div class="top"><div><h3>Calendario eventos</h3><p class="muted">Fechas locales fijas. El evento queda exactamente en el día seleccionado.</p></div><button onclick="openEventWizard()">+ Crear evento</button></div><div class="actions"><button class="secondary" onclick="state.calendarMonth='${localDateStr(prev)}';viewCalendar()">← Mes</button><button class="secondary" onclick="state.calendarMonth='${localDateStr()}';viewCalendar()">Hoy</button><button class="secondary" onclick="state.calendarMonth='${localDateStr(next)}';viewCalendar()">Mes →</button></div><h2 style="text-transform:capitalize">${first.toLocaleDateString('es-ES',{month:'long',year:'numeric'})}</h2><div class="actions" style="margin-bottom:12px"><input class="field" type="month" value="${year}-${String(month+1).padStart(2,'0')}" onchange="if(this.value){state.calendarMonth=this.value+'-01';viewCalendar();}" style="max-width:190px;font-weight:900"></div><div class="calendar">${days.join('')}</div></div><div class="card"><h3>Listado de eventos programados/cancelados</h3><table class="table"><tbody>${list||'<tr><td>No hay eventos.</td></tr>'}</tbody></table></div>`;
 }
 
 async function viewRealizados(){
@@ -10342,4 +10342,25 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
     }
   },true);
   setTimeout(v6244Restore,2500);
+})();
+
+
+// ---------- V62.45 REAL DB PERSISTENCE FRONTEND ----------
+(function(){
+  async function v6245Restore(){
+    try{
+      await fetch('/api/v6244/restore-all',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',cache:'no-store'});
+      if(typeof load==='function') await load();
+    }catch(e){}
+  }
+  document.addEventListener('click',ev=>{
+    const el=ev.target.closest&&ev.target.closest('button,a');
+    if(!el)return;
+    const t=(el.textContent||'').toLowerCase();
+    if(t.includes('sincron')&&t.includes('google')&&ev.isTrusted){
+      setTimeout(v6245Restore,1600);
+      setTimeout(async()=>{try{if(typeof viewCalendar==='function')await viewCalendar();}catch(e){}},2600);
+    }
+  },true);
+  setTimeout(v6245Restore,2500);
 })();

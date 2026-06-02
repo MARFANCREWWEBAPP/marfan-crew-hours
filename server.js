@@ -40,6 +40,7 @@ function v627EnsurePersistentDb(){
       path_v627.join(__dirname, 'db.db'),
       path_v627.join(__dirname, 'data', 'database.sqlite'),
       path_v627.join(__dirname, 'data', 'db.sqlite'),
+      path_v627.join(__dirname, 'data', 'marfan.db'),
       path_v627.join(process.cwd(), 'database.sqlite'),
       path_v627.join(process.cwd(), 'db.sqlite'),
       path_v627.join(process.cwd(), 'marfan-crew-hours.sqlite')
@@ -156,7 +157,23 @@ const uploadDir = path.join(__dirname, 'public', 'uploads');
 fs.mkdirSync(dbDir, { recursive: true });
 fs.mkdirSync(uploadDir, { recursive: true });
 
-const db = new Database(path.join(dbDir, 'marfan.db'));
+// ---------- V62.45 REAL DB PERSISTENCE FIX ----------
+// Antes se preparaba /data, pero luego se abría __dirname/data/marfan.db.
+// Eso hacía que al actualizar la app se perdieran eventos, técnicos, roles y localizaciones.
+// Ahora se abre SIEMPRE la DB persistente de Railway (/data) mediante DB_PATH_V627.
+const LOCAL_DB_PATH_V6245 = path.join(dbDir, 'marfan.db');
+const ACTIVE_DB_PATH_V6245 = process.env.DB_PATH || global.DB_PATH_V627 || DB_PATH_V627 || LOCAL_DB_PATH_V6245;
+try{
+  fs.mkdirSync(path.dirname(ACTIVE_DB_PATH_V6245), {recursive:true});
+  if(!fs.existsSync(ACTIVE_DB_PATH_V6245) && fs.existsSync(LOCAL_DB_PATH_V6245)){
+    fs.copyFileSync(LOCAL_DB_PATH_V6245, ACTIVE_DB_PATH_V6245);
+    console.log('[V62.45] Migrated local DB to persistent DB:', ACTIVE_DB_PATH_V6245);
+  }
+}catch(e){
+  console.warn('[V62.45] DB migration warning:', e.message);
+}
+const db = new Database(ACTIVE_DB_PATH_V6245);
+console.log('[V62.45] ACTIVE SQLITE DB:', ACTIVE_DB_PATH_V6245);
 
 
 class SimpleSessionStore extends session.Store {
@@ -547,18 +564,54 @@ function v614EventDateTime(date, time, fallbackHour){
   return `${d}T${t.slice(0,5)}:00`;
 }
 
+
+// ---------- V62.45 GOOGLE DESCRIPTION WITH ASSIGNMENTS ----------
+function v6245AssignmentsText(eventId){
+  try{
+    const rows = db.prepare(`
+      SELECT a.*, u.first_name, u.last_name, u.nickname, u.email, u.phone
+      FROM assignments a
+      LEFT JOIN users u ON u.id=a.user_id
+      WHERE a.event_id=?
+      ORDER BY COALESCE(a.is_team_lead,0) DESC, u.first_name, u.last_name
+    `).all(eventId);
+    if(!rows.length) return '';
+    const lead = rows.filter(r=>Number(r.is_team_lead||0)===1);
+    const lines = [];
+    if(lead.length){
+      lines.push('JEFE DE EQUIPO:');
+      lead.forEach(r=>{
+        const name = [r.first_name,r.last_name].filter(Boolean).join(' ') || r.nickname || r.email || ('Usuario '+r.user_id);
+        lines.push('- ' + name + (r.service_role ? ' · ' + r.service_role : ''));
+      });
+      lines.push('');
+    }
+    lines.push('PERSONAL ASIGNADO:');
+    rows.forEach(r=>{
+      const name = [r.first_name,r.last_name].filter(Boolean).join(' ') || r.nickname || r.email || ('Usuario '+r.user_id);
+      lines.push('- ' + name + (r.service_role ? ' · ' + r.service_role : ''));
+    });
+    return lines.join('\\n');
+  }catch(e){ return ''; }
+}
+
 function v614GoogleDescription(event){
   const lines = [];
   lines.push('Evento creado/actualizado desde Marfan Crew Hours.');
   if(event.client) lines.push('Cliente: ' + event.client);
+  if(event.location) lines.push('Localización: ' + event.location);
+  if(event.address) lines.push('Dirección: ' + event.address);
+  if(event.google_maps_link) lines.push('Google Maps: ' + event.google_maps_link);
   if(event.contact_name) lines.push('Contacto: ' + event.contact_name);
   if(event.contact_phone) lines.push('Teléfono: ' + event.contact_phone);
   if(event.service_type) lines.push('Servicio: ' + event.service_type);
   if(event.access_notes) lines.push('Accesos: ' + event.access_notes);
   if(event.parking_notes) lines.push('Parking: ' + event.parking_notes);
   if(event.production_notes) lines.push('Producción: ' + event.production_notes);
+  const staff = (typeof v6245AssignmentsText === 'function') ? v6245AssignmentsText(event.id) : '';
+  if(staff) lines.push(staff);
   if(event.notes) lines.push('Notas: ' + event.notes);
-  return lines.filter(Boolean).join('\n');
+  return lines.filter(Boolean).join('\n\n');
 }
 
 async function v614ResolveWritableCalendar(calendar){
@@ -666,7 +719,23 @@ app.post('/api/v614/event-form-save', requireAdmin, async (req,res)=>{
       v612SaveAssignments(eventId, body.assignments || []);
     }
 
+    // V62.45: persistencia real también en la ruta activa V614.
+    try{
+      if(typeof v6244SavePersist === 'function'){
+        v6244SavePersist(eventId, payload, body.assignments || []);
+      }
+    }catch(e){
+      console.error('[V62.45] persist from v614/event-form-save', e.message);
+    }
+
     const google = await v614PushEventToGoogle(eventId);
+
+    // Persistir otra vez después de Google por si se creó google_event_link.
+    try{
+      if(typeof v6244SavePersist === 'function'){
+        v6244SavePersist(eventId, payload, body.assignments || []);
+      }
+    }catch(e){}
 
     res.setHeader('Content-Type','application/json; charset=utf-8');
     res.json({ok:true,event_id:eventId,updated:!!id,google});
@@ -692,7 +761,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version: '62.44.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version: '62.45.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -2966,7 +3035,7 @@ app.get('/api/v6216-auto-restore-status', requireAdmin, (req,res)=>{
   try{
     res.json({
       ok:true,
-      version: '62.44.0',
+      version: '62.45.0',
       status:global.V6216_RESTORE_STATUS || null,
       db_path:v6216DbPath(),
       data_dir:v6216DataDir(),
@@ -3639,7 +3708,7 @@ function v6223ExportUsersJson(){
     const users = db.prepare('SELECT * FROM users ORDER BY id').all();
     const stamp = new Date().toISOString().replace(/[:.]/g,'-');
     const out = p.join(v6223JsonDir(), `users-${stamp}.json`);
-    f.writeFileSync(out, JSON.stringify({version: '62.44.0', created_at:new Date().toISOString(), users}, null, 2));
+    f.writeFileSync(out, JSON.stringify({version: '62.45.0', created_at:new Date().toISOString(), users}, null, 2));
     v6223KeepLastFiles(v6223JsonDir(), 'users-', 10);
     return {ok:true,path:out,count:users.length};
   }catch(e){ return {ok:false,error:e.message}; }
@@ -3753,7 +3822,7 @@ app.get('/api/v6223-persistence-status', requireAdmin, (req,res)=>{
     try{ snapshots = db.prepare("SELECT COUNT(*) AS c FROM event_snapshots_v6218").get().c || 0; }catch(e){}
     res.json({
       ok:true,
-      version: '62.44.0',
+      version: '62.45.0',
       data_dir:v6223DataDir(),
       users,
       events,
@@ -5579,6 +5648,7 @@ app.post('/api/upload-photo', requireAdmin, (req, res) => {
 
 // Events
 app.get('/api/events', requireAuth, (req, res) => {
+  try{ if(typeof v6244RestoreAllPersist === 'function') v6244RestoreAllPersist(); }catch(e){}
   let sql = 'SELECT * FROM events WHERE 1=1';
   const p = [];
   if (req.query.status) { sql += ' AND status=?'; p.push(req.query.status); }
@@ -8897,7 +8967,7 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Marfan Crew Hours V62.44 Real Calendar and Persistence Fix listening on port ${PORT}`);
+  console.log(`Marfan Crew Hours V62.45 Real DB Persistence Fix listening on port ${PORT}`);
 });
 
 
