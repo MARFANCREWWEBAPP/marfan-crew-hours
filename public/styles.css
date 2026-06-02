@@ -2185,3 +2185,8 @@ aside,.sidebar,nav{
 .v582-calendar-card .top input[type="month"].field{
   min-width:170px;
 }
+
+/* ---------- V62.49 CALENDAR BUTTONS USE PICKER ---------- */
+#v6249MonthPicker{
+  min-width:170px;
+}

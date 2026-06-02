@@ -1,25 +1,14 @@
-# V62.48 Calendar Buttons Fix
+# V62.49 Calendar Buttons Use Picker
 
-Base: V62.47.
+Base: V62.48.
 
-Corrige solo:
-- Botón Mes anterior.
-- Botón Hoy.
-- Botón Mes siguiente.
-- Selector de mes.
+Corrige:
+- Mes anterior.
+- Hoy.
+- Mes siguiente.
 
-Motivo:
-Los botones V62.47 dependían de modificar v55CalDate directamente desde onclick.
-V62.48 usa funciones globales dedicadas:
-- v6248CalendarPrevMonth()
-- v6248CalendarToday()
-- v6248CalendarNextMonth()
-- v6248CalendarPickMonth(value)
+Cambio:
+Los botones ya no dependen del scope de v55CalDate.
+Ahora leen el valor real del input type=month, calculan el mes y llaman al mismo flujo que ya funciona cuando se cambia el selector manualmente.
 
-No toca:
-- edición moderna del evento
-- personal asignado
-- roles
-- jefe de equipo
-- Google Sync
-- base de datos
+No toca edición, personal, roles ni Google Sync.

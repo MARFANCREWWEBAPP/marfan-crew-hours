@@ -10350,9 +10350,14 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
 
 
 
-// ---------- V62.48 CALENDAR BUTTONS FIX ----------
+
+// [V62.49] Override V62.48 sustituido. Botones usan el mismo valor del selector month.
+
+
+
+// ---------- V62.49 CALENDAR BUTTONS USE PICKER ----------
 (function(){
-  function v6248EnsureDate(){
+  function v6249EnsureDate(){
     try{
       if(typeof v55CalDate === 'undefined' || !v55CalDate || !(v55CalDate instanceof Date)){
         window.v55CalDate = new Date();
@@ -10365,47 +10370,49 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
     }
   }
 
-  function v6248SetDate(d){
+  function v6249SetDate(d){
     window.v55CalDate = d;
     try{ v55CalDate = d; }catch(e){}
+    window.__v6249CalendarDate = d;
   }
 
-  function v6248MonthValue(d){
+  function v6249MonthValue(d){
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
   }
 
-  function v6248MonthTitle(d){
+  function v6249DateFromPicker(){
+    const input = document.getElementById('v6249MonthPicker');
+    if(input && input.value){
+      const y = Number(input.value.slice(0,4));
+      const m = Number(input.value.slice(5,7));
+      if(Number.isFinite(y) && Number.isFinite(m)) return new Date(y, m-1, 1);
+    }
+    return v6249EnsureDate();
+  }
+
+  function v6249Title(d){
     return d.toLocaleDateString('es-ES',{month:'long',year:'numeric'});
   }
 
-  window.v6248CalendarPrevMonth = async function(){
-    const d = new Date(v6248EnsureDate());
-    d.setDate(1);
-    d.setMonth(d.getMonth()-1);
-    v6248SetDate(d);
-    await window.showCalendarV582();
-  };
-
-  window.v6248CalendarToday = async function(){
-    v6248SetDate(new Date());
-    await window.showCalendarV582();
-  };
-
-  window.v6248CalendarNextMonth = async function(){
-    const d = new Date(v6248EnsureDate());
-    d.setDate(1);
-    d.setMonth(d.getMonth()+1);
-    v6248SetDate(d);
-    await window.showCalendarV582();
-  };
-
-  window.v6248CalendarPickMonth = async function(value){
+  window.v6249CalendarGo = async function(value){
     if(!value) return;
     const y = Number(String(value).slice(0,4));
     const m = Number(String(value).slice(5,7));
     if(!Number.isFinite(y) || !Number.isFinite(m)) return;
-    v6248SetDate(new Date(y, m-1, 1));
+    v6249SetDate(new Date(y, m-1, 1));
     await window.showCalendarV582();
+  };
+
+  window.v6249CalendarShift = async function(offset){
+    const d = v6249DateFromPicker();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + Number(offset || 0));
+    await window.v6249CalendarGo(v6249MonthValue(d));
+  };
+
+  window.v6249CalendarToday = async function(){
+    const d = new Date();
+    await window.v6249CalendarGo(v6249MonthValue(d));
   };
 
   window.editEventV582 = async function(id){
@@ -10431,7 +10438,7 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
   window.showCalendarV582 = async function(){
     const allEvents = await apiV582('/api/events').catch(()=>[]);
     const googleStatus = await apiV582('/api/google/status-v557').catch(()=>({connected:false}));
-    const d = v6248EnsureDate();
+    const d = v6249EnsureDate();
     const currentMonth = d.getMonth();
     const currentYear = d.getFullYear();
 
@@ -10451,9 +10458,9 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
           <div>Vista mensual operativa con edición completa de evento, personal y roles.</div>
         </div>
         <div class="v582-event-actions">
-          <button onclick="showCalendarV582()">Actualizar calendario</button>
-          <button onclick="openCreateEventV559()">+ Crear evento</button>
-          <button class="v583-sync-btn" onclick="forceGoogleSyncV583()">FORZAR SINCRONIZACIÓN GOOGLE</button>
+          <button type="button" onclick="showCalendarV582()">Actualizar calendario</button>
+          <button type="button" onclick="openCreateEventV559()">+ Crear evento</button>
+          <button type="button" class="v583-sync-btn" onclick="forceGoogleSyncV583()">FORZAR SINCRONIZACIÓN GOOGLE</button>
           ${googleStatus.connected ? '<span class="status-badge status-ok">Google conectado</span>' : '<span class="status-badge status-warn">Google no conectado</span>'}
         </div>
       </div>
@@ -10461,14 +10468,14 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
       <div class="card v582-calendar-card">
         <div class="top" style="align-items:center;gap:12px;flex-wrap:wrap">
           <div>
-            <h3 style="margin:0;text-transform:capitalize">${v6248MonthTitle(d)}</h3>
+            <h3 style="margin:0;text-transform:capitalize">${v6249Title(d)}</h3>
             <p class="muted">Selecciona mes igual que en Albaranes evento</p>
           </div>
           <div class="actions">
-            <button type="button" class="secondary" onclick="v6248CalendarPrevMonth()">← Mes anterior</button>
-            <button type="button" onclick="v6248CalendarToday()">Hoy</button>
-            <button type="button" class="secondary" onclick="v6248CalendarNextMonth()">Mes siguiente →</button>
-            <input class="field" type="month" value="${v6248MonthValue(d)}" onchange="v6248CalendarPickMonth(this.value)" style="max-width:190px;font-weight:900">
+            <button type="button" class="secondary" onclick="v6249CalendarShift(-1)">← Mes anterior</button>
+            <button type="button" onclick="v6249CalendarToday()">Hoy</button>
+            <button type="button" class="secondary" onclick="v6249CalendarShift(1)">Mes siguiente →</button>
+            <input id="v6249MonthPicker" class="field" type="month" value="${v6249MonthValue(d)}" onchange="v6249CalendarGo(this.value)" style="max-width:190px;font-weight:900">
           </div>
         </div>
         ${renderMonthV582(allEvents)}
