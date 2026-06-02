@@ -1,16 +1,3 @@
-# V62.40 Calendar Month UX
+# V62.41 Real Event Edit Persistence
 
-Base: V62.39 estable.
-
-Añade únicamente:
-- Título visible del mes en la vista de Calendario.
-- Selector rápido de mes/año con input type="month".
-- Mantiene los botones originales Mes anterior / Hoy / Mes siguiente.
-
-No toca:
-- Guardado de eventos.
-- Técnicos, roles y jefe de equipo.
-- Google Sync.
-- Persistencia.
-- Menú.
-- Login.
+Persistencia real al editar eventos: localización, técnicos, roles y jefe de equipo. Restauración al abrir formulario, al arrancar y tras sincronización manual Google. No toca la vista del calendario.
