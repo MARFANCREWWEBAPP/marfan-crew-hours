@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-hours",
-  "version": "62.47.0",
-  "description": "V62.47 Fix Real V582 V583",
+  "version": "62.48.0",
+  "description": "V62.48 Calendar Buttons Fix",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

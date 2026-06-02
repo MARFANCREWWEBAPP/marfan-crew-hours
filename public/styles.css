@@ -2180,3 +2180,8 @@ aside,.sidebar,nav{
 .v582-calendar-card .top input[type="month"].field{
   min-width:170px;
 }
+
+/* ---------- V62.48 CALENDAR BUTTONS FIX ---------- */
+.v582-calendar-card .top input[type="month"].field{
+  min-width:170px;
+}

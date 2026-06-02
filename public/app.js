@@ -10345,21 +10345,69 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
 })();
 
 
-// ---------- V62.47 FIX REAL V582/V583 ----------
+
+// [V62.48] Override V62.47 sustituido por versión con botones de mes funcionales.
+
+
+
+// ---------- V62.48 CALENDAR BUTTONS FIX ----------
 (function(){
-  function v6247MonthDate(){
-    if(typeof v55CalDate === 'undefined' || !v55CalDate) window.v55CalDate = new Date();
-    return v55CalDate;
+  function v6248EnsureDate(){
+    try{
+      if(typeof v55CalDate === 'undefined' || !v55CalDate || !(v55CalDate instanceof Date)){
+        window.v55CalDate = new Date();
+        try{ v55CalDate = window.v55CalDate; }catch(e){}
+      }
+      return v55CalDate;
+    }catch(e){
+      window.v55CalDate = new Date();
+      return window.v55CalDate;
+    }
   }
-  function v6247MonthValue(d){
+
+  function v6248SetDate(d){
+    window.v55CalDate = d;
+    try{ v55CalDate = d; }catch(e){}
+  }
+
+  function v6248MonthValue(d){
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
   }
-  function v6247MonthTitle(d){
+
+  function v6248MonthTitle(d){
     return d.toLocaleDateString('es-ES',{month:'long',year:'numeric'});
   }
 
-  // El editor V583 era el problema: no tenía operarios ni roles.
-  // Ahora cualquier clic en Editar desde calendario V582 abre el formulario moderno V612/V6219.
+  window.v6248CalendarPrevMonth = async function(){
+    const d = new Date(v6248EnsureDate());
+    d.setDate(1);
+    d.setMonth(d.getMonth()-1);
+    v6248SetDate(d);
+    await window.showCalendarV582();
+  };
+
+  window.v6248CalendarToday = async function(){
+    v6248SetDate(new Date());
+    await window.showCalendarV582();
+  };
+
+  window.v6248CalendarNextMonth = async function(){
+    const d = new Date(v6248EnsureDate());
+    d.setDate(1);
+    d.setMonth(d.getMonth()+1);
+    v6248SetDate(d);
+    await window.showCalendarV582();
+  };
+
+  window.v6248CalendarPickMonth = async function(value){
+    if(!value) return;
+    const y = Number(String(value).slice(0,4));
+    const m = Number(String(value).slice(5,7));
+    if(!Number.isFinite(y) || !Number.isFinite(m)) return;
+    v6248SetDate(new Date(y, m-1, 1));
+    await window.showCalendarV582();
+  };
+
   window.editEventV582 = async function(id){
     if(typeof openV612EventForm === 'function'){
       window.__lastEditingEventIdV6218 = Number(id);
@@ -10377,23 +10425,21 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
       }catch(e){}
       return;
     }
-
-    if(typeof openEventV582 === 'function') return openEventV582(Number(id));
     alert('No está disponible el formulario moderno de edición.');
   };
 
   window.showCalendarV582 = async function(){
     const allEvents = await apiV582('/api/events').catch(()=>[]);
     const googleStatus = await apiV582('/api/google/status-v557').catch(()=>({connected:false}));
-    const d = v6247MonthDate();
+    const d = v6248EnsureDate();
     const currentMonth = d.getMonth();
     const currentYear = d.getFullYear();
+
     const events = allEvents.filter(e=>{
       const ds = String(e.event_date || '').slice(0,10);
       if(!ds) return false;
-      const parts = ds.split('-').map(Number);
-      if(parts.length < 2) return false;
-      return parts[0] === currentYear && (parts[1]-1) === currentMonth;
+      const p = ds.split('-').map(Number);
+      return p[0] === currentYear && (p[1]-1) === currentMonth;
     });
 
     const content = document.getElementById('content') || document.querySelector('#main') || document.body;
@@ -10415,14 +10461,14 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
       <div class="card v582-calendar-card">
         <div class="top" style="align-items:center;gap:12px;flex-wrap:wrap">
           <div>
-            <h3 style="margin:0;text-transform:capitalize">${v6247MonthTitle(d)}</h3>
+            <h3 style="margin:0;text-transform:capitalize">${v6248MonthTitle(d)}</h3>
             <p class="muted">Selecciona mes igual que en Albaranes evento</p>
           </div>
           <div class="actions">
-            <button class="secondary" onclick="v55CalDate=new Date(v55CalDate.getFullYear(),v55CalDate.getMonth()-1,1);showCalendarV582()">← Mes anterior</button>
-            <button onclick="v55CalDate=new Date();showCalendarV582()">Hoy</button>
-            <button class="secondary" onclick="v55CalDate=new Date(v55CalDate.getFullYear(),v55CalDate.getMonth()+1,1);showCalendarV582()">Mes siguiente →</button>
-            <input class="field" type="month" value="${v6247MonthValue(d)}" onchange="if(this.value){v55CalDate=new Date(Number(this.value.slice(0,4)),Number(this.value.slice(5,7))-1,1);showCalendarV582();}" style="max-width:190px;font-weight:900">
+            <button type="button" class="secondary" onclick="v6248CalendarPrevMonth()">← Mes anterior</button>
+            <button type="button" onclick="v6248CalendarToday()">Hoy</button>
+            <button type="button" class="secondary" onclick="v6248CalendarNextMonth()">Mes siguiente →</button>
+            <input class="field" type="month" value="${v6248MonthValue(d)}" onchange="v6248CalendarPickMonth(this.value)" style="max-width:190px;font-weight:900">
           </div>
         </div>
         ${renderMonthV582(allEvents)}
