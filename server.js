@@ -355,6 +355,90 @@ function v612SaveAssignments(eventId, assignments){
   tx();
 }
 
+
+// ---------- V62.44 REAL PERSISTENCE CORE ----------
+function v6244EnsurePersist(){
+  try{ v612EnsureEventColumns(); v612EnsureAssignmentsColumns(); }catch(e){}
+  db.exec(`CREATE TABLE IF NOT EXISTS event_persist_v6244 (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL UNIQUE,
+    event_json TEXT NOT NULL DEFAULT '{}',
+    assignments_json TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );`);
+}
+function v6244GetAssignments(eventId){
+  try{
+    return db.prepare(`SELECT * FROM assignments WHERE event_id=? ORDER BY COALESCE(is_team_lead,0) DESC,id ASC`).all(eventId);
+  }catch(e){ return []; }
+}
+function v6244CleanAssignments(rows){
+  rows = Array.isArray(rows) ? rows : [];
+  return rows.map(r=>({
+    event_id:Number(r.event_id||0),
+    user_id:Number(r.user_id||0),
+    service_role:String(r.service_role||r.role_name||r.resolved_role||'').trim(),
+    planned_start:String(r.planned_start||'').trim(),
+    planned_end:String(r.planned_end||'').trim(),
+    status:String(r.status||'asignado'),
+    is_team_lead:Number(r.is_team_lead||0),
+    role_id:r.role_id ? Number(r.role_id) : null,
+    shift_type:String(r.shift_type||'D').trim()||'D',
+    hourly_rate:Number(r.hourly_rate||0)
+  })).filter(r=>r.user_id);
+}
+function v6244SavePersist(eventId, eventPayload, assignmentsPayload){
+  v6244EnsurePersist();
+  const dbEvent = db.prepare('SELECT * FROM events WHERE id=?').get(eventId);
+  if(!dbEvent) return {ok:false,error:'Evento no encontrado'};
+  const ev = Object.assign({}, dbEvent, eventPayload || {}, {id:eventId});
+  const assignments = v6244CleanAssignments(
+    Array.isArray(assignmentsPayload) && assignmentsPayload.length ? assignmentsPayload : v6244GetAssignments(eventId)
+  );
+  db.prepare(`INSERT INTO event_persist_v6244 (event_id,event_json,assignments_json,updated_at)
+    VALUES (?,?,?,CURRENT_TIMESTAMP)
+    ON CONFLICT(event_id) DO UPDATE SET
+      event_json=excluded.event_json,
+      assignments_json=excluded.assignments_json,
+      updated_at=CURRENT_TIMESTAMP`)
+    .run(eventId, JSON.stringify(ev), JSON.stringify(assignments));
+  return {ok:true,event_id:eventId,assignments:assignments.length};
+}
+function v6244RestorePersist(eventId){
+  v6244EnsurePersist();
+  const snap = db.prepare('SELECT * FROM event_persist_v6244 WHERE event_id=? ORDER BY updated_at DESC LIMIT 1').get(eventId);
+  if(!snap) return {ok:true,restored:false};
+  let ev = {}, assignments = [];
+  try{ ev = JSON.parse(snap.event_json || '{}'); }catch(e){}
+  try{ assignments = JSON.parse(snap.assignments_json || '[]'); }catch(e){}
+  const cols = db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
+  const keys = Object.keys(ev).filter(k=>k !== 'id' && cols.includes(k));
+  if(keys.length){
+    db.prepare(`UPDATE events SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>ev[k]), eventId);
+  }
+  if(assignments.length){
+    v612SaveAssignments(eventId, assignments.map(a=>Object.assign({},a,{event_id:eventId})));
+  }
+  return {ok:true,restored:true,event_id:eventId,assignments:assignments.length};
+}
+function v6244RestoreAllPersist(){
+  v6244EnsurePersist();
+  let restored = 0;
+  try{
+    const rows = db.prepare('SELECT event_id FROM event_persist_v6244 ORDER BY updated_at DESC').all();
+    for(const r of rows){
+      try{ const out = v6244RestorePersist(r.event_id); if(out.restored) restored++; }catch(e){}
+    }
+  }catch(e){}
+  return restored;
+}
+app.post('/api/v6244/restore-all', requireAdmin, (req,res)=>{
+  try{ res.json({ok:true,restored:v6244RestoreAllPersist()}); }
+  catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+setTimeout(()=>{ try{ console.log('[V62.44] restored persisted event data', v6244RestoreAllPersist()); }catch(e){} }, 2600);
+
 app.get('/api/v612/event-form-data', requireAdmin, (req,res)=>{
   try{
     v612EnsureEventColumns(); v612EnsureAssignmentsColumns();
@@ -362,6 +446,7 @@ app.get('/api/v612/event-form-data', requireAdmin, (req,res)=>{
     let event = null;
     let assignments = [];
     if(id){
+      try{ if(typeof v6244RestorePersist === 'function') v6244RestorePersist(id); }catch(e){}
       event = db.prepare('SELECT * FROM events WHERE id=?').get(id);
       if(!event) return res.status(404).json({ok:false,error:'Evento no encontrado'});
       try{
@@ -414,6 +499,7 @@ app.post('/api/v612/event-form-save', requireAdmin, (req,res)=>{
       eventId = info.lastInsertRowid;
     }
     v612SaveAssignments(eventId, body.assignments || []);
+    try{ if(typeof v6244SavePersist === 'function') v6244SavePersist(eventId, payload, body.assignments || []); }catch(e){ console.error('[V62.44] persist save', e.message); }
     res.setHeader('Content-Type','application/json; charset=utf-8');
     res.json({ok:true,event_id:eventId,updated:!!id});
   }catch(e){ res.status(500).json({ok:false,error:e.message}); }
@@ -606,7 +692,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version: '62.43.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version: '62.44.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -2880,7 +2966,7 @@ app.get('/api/v6216-auto-restore-status', requireAdmin, (req,res)=>{
   try{
     res.json({
       ok:true,
-      version: '62.43.0',
+      version: '62.44.0',
       status:global.V6216_RESTORE_STATUS || null,
       db_path:v6216DbPath(),
       data_dir:v6216DataDir(),
@@ -3553,7 +3639,7 @@ function v6223ExportUsersJson(){
     const users = db.prepare('SELECT * FROM users ORDER BY id').all();
     const stamp = new Date().toISOString().replace(/[:.]/g,'-');
     const out = p.join(v6223JsonDir(), `users-${stamp}.json`);
-    f.writeFileSync(out, JSON.stringify({version: '62.43.0', created_at:new Date().toISOString(), users}, null, 2));
+    f.writeFileSync(out, JSON.stringify({version: '62.44.0', created_at:new Date().toISOString(), users}, null, 2));
     v6223KeepLastFiles(v6223JsonDir(), 'users-', 10);
     return {ok:true,path:out,count:users.length};
   }catch(e){ return {ok:false,error:e.message}; }
@@ -3667,7 +3753,7 @@ app.get('/api/v6223-persistence-status', requireAdmin, (req,res)=>{
     try{ snapshots = db.prepare("SELECT COUNT(*) AS c FROM event_snapshots_v6218").get().c || 0; }catch(e){}
     res.json({
       ok:true,
-      version: '62.43.0',
+      version: '62.44.0',
       data_dir:v6223DataDir(),
       users,
       events,
@@ -3678,7 +3764,7 @@ app.get('/api/v6223-persistence-status', requireAdmin, (req,res)=>{
 });
 // Arranque automático: usuarios + calendario
 setTimeout(()=>{ try{ v6223EnsureNoDemoOverwrite(); v6223RestoreUsersJsonIfNeeded(); v6223ExportUsersJson(); }catch(e){ console.error('[V62.23] users persistence', e.message); } }, 1800);
-// [V62.37] Calendar autoload automático desactivado para mantener calendario original estable.
+setTimeout(()=>{ try{ v6223CalendarRestoreAndAutoSync(); }catch(e){ console.error('[V62.23] calendar autoload', e.message); } }, 2600);
 
 
 // ---------- V62.25 CALENDAR SILENT SYNC MONTH NAVIGATION API ----------
@@ -3799,612 +3885,6 @@ app.post('/api/v6227/users/:id/role', v6227RoleMiddleware, (req,res)=>{
     res.json({ok:true,id,role});
   }catch(e){res.status(500).json({ok:false,error:e.message});}
 });
-
-
-// ---------- V62.38 CALENDAR ENTERPRISE PERSISTENCE ----------
-function v6238Norm(v){
-  return String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
-}
-function v6238Date(v){ return String(v || '').slice(0,10); }
-function v6238Ensure(){
-  try{
-    db.exec(`CREATE TABLE IF NOT EXISTS event_enterprise_snapshots_v6238 (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      event_id INTEGER DEFAULT NULL,
-      google_event_id TEXT DEFAULT '',
-      stable_key TEXT UNIQUE NOT NULL,
-      event_date TEXT DEFAULT '',
-      event_name TEXT DEFAULT '',
-      payload_json TEXT DEFAULT '{}',
-      assignments_json TEXT DEFAULT '[]',
-      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );`);
-  }catch(e){}
-  try{ if(typeof v612EnsureEventColumns === 'function') v612EnsureEventColumns(); }catch(e){}
-  try{ if(typeof v612EnsureAssignmentsColumns === 'function') v612EnsureAssignmentsColumns(); }catch(e){}
-  try{ if(typeof v6219EnsureAssignmentsHard === 'function') v6219EnsureAssignmentsHard(); }catch(e){}
-}
-function v6238GoogleIdForEvent(eventId){
-  try{
-    const row = db.prepare('SELECT google_event_id FROM google_event_links WHERE event_id=? ORDER BY id DESC LIMIT 1').get(eventId);
-    return row && row.google_event_id ? String(row.google_event_id) : '';
-  }catch(e){ return ''; }
-}
-function v6238StableKeyForEvent(ev){
-  if(!ev) return '';
-  const googleId = ev.google_event_id || ev.google_id || ev.gcal_id || v6238GoogleIdForEvent(ev.id) || '';
-  if(googleId) return 'google:' + String(googleId);
-  const date = v6238Date(ev.event_date || ev.date || ev.start_date || ev.start || '');
-  const name = v6238Norm(ev.name || ev.title || ev.summary || '');
-  return 'event:' + date + ':' + name;
-}
-function v6238Event(eventId){
-  try{ return db.prepare('SELECT * FROM events WHERE id=?').get(eventId) || null; }catch(e){ return null; }
-}
-function v6238Assignments(eventId){
-  try{
-    return db.prepare(`
-      SELECT a.*, u.first_name,u.last_name,u.nickname,u.email,u.phone,
-             COALESCE(r.role,r.name,a.service_role) AS resolved_role
-      FROM assignments a
-      LEFT JOIN users u ON u.id=a.user_id
-      LEFT JOIN rates r ON r.id=a.role_id
-      WHERE a.event_id=?
-      ORDER BY COALESCE(a.is_team_lead,0) DESC,u.first_name,u.last_name
-    `).all(eventId) || [];
-  }catch(e){
-    try{ return db.prepare('SELECT * FROM assignments WHERE event_id=?').all(eventId) || []; }catch(_e){ return []; }
-  }
-}
-function v6238SaveSnapshot(eventId, payloadOverride, assignmentsOverride){
-  v6238Ensure();
-  const ev = Object.assign({}, v6238Event(eventId) || {}, payloadOverride || {});
-  if(!ev || !ev.id) return {ok:false, reason:'event_not_found'};
-  const assignments = Array.isArray(assignmentsOverride) ? assignmentsOverride : v6238Assignments(eventId);
-  const googleId = v6238GoogleIdForEvent(eventId);
-  const stableKey = v6238StableKeyForEvent(Object.assign({}, ev, {google_event_id:googleId}));
-  if(!stableKey || stableKey === 'event::') return {ok:false, reason:'empty_stable_key'};
-  db.prepare(`INSERT INTO event_enterprise_snapshots_v6238
-    (event_id, google_event_id, stable_key, event_date, event_name, payload_json, assignments_json, updated_at)
-    VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-    ON CONFLICT(stable_key) DO UPDATE SET
-      event_id=excluded.event_id,
-      google_event_id=excluded.google_event_id,
-      event_date=excluded.event_date,
-      event_name=excluded.event_name,
-      payload_json=excluded.payload_json,
-      assignments_json=excluded.assignments_json,
-      updated_at=CURRENT_TIMESTAMP`)
-    .run(eventId, googleId, stableKey, v6238Date(ev.event_date || ''), String(ev.name || ''), JSON.stringify(ev), JSON.stringify(assignments || []));
-  return {ok:true, event_id:eventId, stable_key:stableKey, assignments:(assignments||[]).length};
-}
-function v6238FindSnapshot(ev){
-  v6238Ensure();
-  const key = v6238StableKeyForEvent(ev);
-  if(key){
-    const row = db.prepare('SELECT * FROM event_enterprise_snapshots_v6238 WHERE stable_key=? ORDER BY updated_at DESC LIMIT 1').get(key);
-    if(row) return row;
-  }
-  const date = v6238Date(ev.event_date || ev.date || '');
-  const name = v6238Norm(ev.name || ev.title || '');
-  if(date && name){
-    const rows = db.prepare('SELECT * FROM event_enterprise_snapshots_v6238 WHERE event_date=? ORDER BY updated_at DESC').all(date);
-    const found = rows.find(r=>{
-      const rn = v6238Norm(r.event_name || '');
-      return rn === name || rn.includes(name) || name.includes(rn);
-    });
-    if(found) return found;
-  }
-  return null;
-}
-function v6238RestoreEvent(eventId){
-  v6238Ensure();
-  const ev = v6238Event(eventId);
-  if(!ev) return {ok:false, restored:false, reason:'event_not_found'};
-  const googleId = v6238GoogleIdForEvent(eventId);
-  const snap = v6238FindSnapshot(Object.assign({}, ev, {google_event_id:googleId}));
-  if(!snap) return {ok:true, restored:false, reason:'snapshot_not_found'};
-  let payload = {};
-  let assignments = [];
-  try{ payload = JSON.parse(snap.payload_json || '{}'); }catch(e){}
-  try{ assignments = JSON.parse(snap.assignments_json || '[]'); }catch(e){}
-  const cols = db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
-  const keys = Object.keys(payload || {}).filter(k=>cols.includes(k) && k !== 'id');
-  if(keys.length){
-    db.prepare(`UPDATE events SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>payload[k]), eventId);
-  }
-  if(assignments && assignments.length){
-    try{
-      if(typeof v6219SaveAssignmentsHard === 'function') v6219SaveAssignmentsHard(eventId, assignments.map(a=>Object.assign({},a,{event_id:eventId, service_role:a.service_role || a.role_name || a.resolved_role || ''})));
-      else if(typeof v612SaveAssignments === 'function') v612SaveAssignments(eventId, assignments.map(a=>Object.assign({},a,{event_id:eventId})));
-    }catch(e){}
-  }
-  try{ db.prepare('UPDATE event_enterprise_snapshots_v6238 SET event_id=?, google_event_id=? WHERE id=?').run(eventId, googleId, snap.id); }catch(e){}
-  return {ok:true, restored:true, snapshot_id:snap.id, assignments:assignments.length};
-}
-function v6238RestoreAll(){
-  v6238Ensure();
-  let restored = 0;
-  try{
-    const events = db.prepare('SELECT * FROM events').all();
-    for(const e of events){
-      try{ const r = v6238RestoreEvent(e.id); if(r.restored) restored++; }catch(_e){}
-    }
-  }catch(e){}
-  return restored;
-}
-function v6238AssignmentDescription(eventId){
-  const rows = v6238Assignments(eventId);
-  if(!rows.length) return '';
-  const leadRows = rows.filter(r=>Number(r.is_team_lead||0)===1);
-  const workerRows = rows;
-  const lines = [];
-  if(leadRows.length){
-    lines.push('JEFE DE EQUIPO:');
-    leadRows.forEach(r=>{
-      const name = [r.first_name,r.last_name].filter(Boolean).join(' ') || r.nickname || r.email || ('ID '+r.user_id);
-      lines.push('- ' + name + (r.resolved_role || r.service_role ? ' · ' + (r.resolved_role || r.service_role) : ''));
-    });
-    lines.push('');
-  }
-  lines.push('PERSONAL ASIGNADO:');
-  workerRows.forEach(r=>{
-    const name = [r.first_name,r.last_name].filter(Boolean).join(' ') || r.nickname || r.email || ('ID '+r.user_id);
-    lines.push('- ' + name + (r.resolved_role || r.service_role ? ' · ' + (r.resolved_role || r.service_role) : ''));
-  });
-  return lines.join('\n');
-}
-
-// Enriquecer descripción Google sin cambiar la vista ni el calendario.
-try{
-  if(typeof v614GoogleDescription === 'function' && !v614GoogleDescription.__v6238Wrapped){
-    const oldDescV6238 = v614GoogleDescription;
-    v614GoogleDescription = function(event){
-      let base = oldDescV6238(event) || '';
-      const extra = v6238AssignmentDescription(event.id);
-      const locationBlock = [
-        event.location ? ('LOCALIZACIÓN: ' + event.location) : '',
-        event.address ? ('DIRECCIÓN: ' + event.address) : '',
-        event.google_maps_link ? ('GOOGLE MAPS: ' + event.google_maps_link) : ''
-      ].filter(Boolean).join('\n');
-      const notesBlock = [
-        event.load_in_time ? ('MONTAJE: ' + event.load_in_time) : '',
-        event.load_out_time ? ('RECOGIDA: ' + event.load_out_time) : '',
-        event.access_notes ? ('ACCESOS: ' + event.access_notes) : '',
-        event.parking_notes ? ('PARKING: ' + event.parking_notes) : '',
-        event.crew_notes ? ('CREW: ' + event.crew_notes) : '',
-        event.production_notes ? ('PRODUCCIÓN: ' + event.production_notes) : ''
-      ].filter(Boolean).join('\n');
-      return [base, locationBlock, extra, notesBlock].filter(Boolean).join('\n\n');
-    };
-    v614GoogleDescription.__v6238Wrapped = true;
-  }
-}catch(e){}
-
-// Persistir después de guardar asignaciones.
-try{
-  if(typeof v612SaveAssignments === 'function' && !v612SaveAssignments.__v6238Wrapped){
-    const oldSaveAssignmentsV6238 = v612SaveAssignments;
-    v612SaveAssignments = function(eventId, assignments){
-      const out = oldSaveAssignmentsV6238(eventId, assignments);
-      try{ v6238SaveSnapshot(eventId, null, assignments); }catch(e){}
-      return out;
-    };
-    v612SaveAssignments.__v6238Wrapped = true;
-  }
-}catch(e){}
-
-// Persistir después de guardado fuerte de roles.
-try{
-  if(typeof v6219SaveAssignmentsHard === 'function' && !v6219SaveAssignmentsHard.__v6238Wrapped){
-    const oldHardV6238 = v6219SaveAssignmentsHard;
-    v6219SaveAssignmentsHard = function(eventId, rows){
-      const out = oldHardV6238(eventId, rows);
-      try{ v6238SaveSnapshot(eventId, null, rows); }catch(e){}
-      return out;
-    };
-    v6219SaveAssignmentsHard.__v6238Wrapped = true;
-  }
-}catch(e){}
-
-// Persistir después de empujar a Google.
-try{
-  if(typeof v614PushEventToGoogle === 'function' && !v614PushEventToGoogle.__v6238Wrapped){
-    const oldPushV6238 = v614PushEventToGoogle;
-    v614PushEventToGoogle = async function(eventId){
-      const out = await oldPushV6238(eventId);
-      try{ v6238SaveSnapshot(eventId); }catch(e){}
-      return out;
-    };
-    v614PushEventToGoogle.__v6238Wrapped = true;
-  }
-}catch(e){}
-
-app.post('/api/v6238/events/:id/persist-now', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
-  try{
-    const r = v6238SaveSnapshot(Number(req.params.id));
-    res.json(r);
-  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
-});
-app.post('/api/v6238/events/:id/restore-now', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
-  try{
-    const r = v6238RestoreEvent(Number(req.params.id));
-    res.json(r);
-  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
-});
-app.post('/api/v6238/restore-all', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
-  try{
-    const restored = v6238RestoreAll();
-    res.json({ok:true,restored});
-  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
-});
-app.get('/api/v6238/persistence-status', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
-  try{
-    v6238Ensure();
-    const snapshots = db.prepare('SELECT COUNT(*) AS c FROM event_enterprise_snapshots_v6238').get().c || 0;
-    const events = db.prepare('SELECT COUNT(*) AS c FROM events').get().c || 0;
-    res.json({ok:true,version: '62.43.0',events,snapshots});
-  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
-});
-
-// Restauración automática al arrancar versión nueva.
-setTimeout(()=>{ try{ console.log('[V62.38] enterprise snapshots restored:', v6238RestoreAll()); }catch(e){} }, 2600);
-
-
-// ---------- V62.39 REAL EVENT SAVE HOOK ----------
-function v6239Ensure(){
-  try{ if(typeof v6238Ensure === 'function') v6238Ensure(); }catch(e){}
-  try{ if(typeof v612EnsureEventColumns === 'function') v612EnsureEventColumns(); }catch(e){}
-  try{ if(typeof v612EnsureAssignmentsColumns === 'function') v612EnsureAssignmentsColumns(); }catch(e){}
-  db.exec(`CREATE TABLE IF NOT EXISTS event_full_payload_v6239 (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_id INTEGER NOT NULL,
-    stable_key TEXT DEFAULT '',
-    event_json TEXT DEFAULT '{}',
-    assignments_json TEXT DEFAULT '[]',
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(event_id)
-  );`);
-}
-function v6239NormalizeAssignments(rows){
-  rows = Array.isArray(rows) ? rows : [];
-  return rows.map(r=>({
-    user_id:Number(r.user_id || r.operator_id || r.worker_id || 0),
-    role_id:r.role_id ? Number(r.role_id) : null,
-    service_role:String(r.service_role || r.role_name || r.operator_role_name || r.resolved_role || r.role || '').trim(),
-    planned_start:String(r.planned_start || r.start_time || r.start || '').trim(),
-    planned_end:String(r.planned_end || r.end_time || r.end || '').trim(),
-    shift_type:String(r.shift_type || r.shift || 'D').trim() || 'D',
-    hourly_rate:Number(r.hourly_rate || r.rate || r.price || 0),
-    is_team_lead:Number(r.is_team_lead || r.team_lead || r.lead || 0),
-    status:String(r.status || 'asignado'),
-    notes:String(r.notes || '')
-  })).filter(r=>r.user_id);
-}
-function v6239Stable(ev){
-  try{
-    if(typeof v6238StableKeyForEvent === 'function') return v6238StableKeyForEvent(ev);
-  }catch(e){}
-  const date = String(ev.event_date || ev.date || '').slice(0,10);
-  const name = String(ev.name || ev.title || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
-  return 'event:'+date+':'+name;
-}
-function v6239SaveFull(eventId, eventPayload, assignmentsPayload){
-  v6239Ensure();
-  const dbEvent = db.prepare('SELECT * FROM events WHERE id=?').get(eventId);
-  if(!dbEvent) return {ok:false,error:'Evento no encontrado'};
-  const merged = Object.assign({}, dbEvent, eventPayload || {}, {id:eventId});
-  const assignments = v6239NormalizeAssignments(assignmentsPayload && assignmentsPayload.length ? assignmentsPayload : (typeof v6238Assignments === 'function' ? v6238Assignments(eventId) : []));
-  const stable = v6239Stable(merged);
-  db.prepare(`INSERT INTO event_full_payload_v6239 (event_id,stable_key,event_json,assignments_json,updated_at)
-    VALUES (?,?,?,?,CURRENT_TIMESTAMP)
-    ON CONFLICT(event_id) DO UPDATE SET
-      stable_key=excluded.stable_key,
-      event_json=excluded.event_json,
-      assignments_json=excluded.assignments_json,
-      updated_at=CURRENT_TIMESTAMP`)
-    .run(eventId, stable, JSON.stringify(merged), JSON.stringify(assignments));
-
-  try{
-    if(assignments.length){
-      if(typeof v6219SaveAssignmentsHard === 'function') v6219SaveAssignmentsHard(eventId, assignments);
-      else if(typeof v612SaveAssignments === 'function') v612SaveAssignments(eventId, assignments);
-    }
-  }catch(e){}
-
-  try{ if(typeof v6238SaveSnapshot === 'function') v6238SaveSnapshot(eventId, merged, assignments); }catch(e){}
-  return {ok:true,event_id:eventId,stable_key:stable,assignments:assignments.length};
-}
-function v6239RestoreFull(eventId){
-  v6239Ensure();
-  const snap = db.prepare('SELECT * FROM event_full_payload_v6239 WHERE event_id=? ORDER BY updated_at DESC LIMIT 1').get(eventId);
-  if(!snap) return {ok:true,restored:false,reason:'no_full_payload'};
-  let ev = {}, assignments = [];
-  try{ ev = JSON.parse(snap.event_json || '{}'); }catch(e){}
-  try{ assignments = JSON.parse(snap.assignments_json || '[]'); }catch(e){}
-  const cols = db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
-  const keys = Object.keys(ev).filter(k=>cols.includes(k) && k !== 'id');
-  if(keys.length){
-    db.prepare(`UPDATE events SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>ev[k]), eventId);
-  }
-  assignments = v6239NormalizeAssignments(assignments);
-  if(assignments.length){
-    try{
-      if(typeof v6219SaveAssignmentsHard === 'function') v6219SaveAssignmentsHard(eventId, assignments);
-      else if(typeof v612SaveAssignments === 'function') v612SaveAssignments(eventId, assignments);
-    }catch(e){}
-  }
-  return {ok:true,restored:true,event_id:eventId,assignments:assignments.length};
-}
-function v6239RestoreAll(){
-  v6239Ensure();
-  let n=0;
-  try{
-    const rows = db.prepare('SELECT event_id FROM event_full_payload_v6239 ORDER BY updated_at DESC').all();
-    for(const r of rows){ try{ const out=v6239RestoreFull(r.event_id); if(out.restored)n++; }catch(e){} }
-  }catch(e){}
-  try{ if(typeof v6238RestoreAll === 'function') v6238RestoreAll(); }catch(e){}
-  return n;
-}
-
-// Endpoints explícitos
-app.post('/api/v6239/events/:id/save-full', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
-  try{
-    const eventId = Number(req.params.id);
-    const body = req.body || {};
-    const out = v6239SaveFull(eventId, body.event || body, body.assignments || []);
-    res.json(out);
-  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
-});
-app.post('/api/v6239/events/:id/restore-full', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
-  try{ res.json(v6239RestoreFull(Number(req.params.id))); }
-  catch(e){ res.status(500).json({ok:false,error:e.message}); }
-});
-app.post('/api/v6239/restore-all-full', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
-  try{ res.json({ok:true,restored:v6239RestoreAll()}); }
-  catch(e){ res.status(500).json({ok:false,error:e.message}); }
-});
-
-// Rutas de guardado definitivas para usar desde frontend.
-// Estas NO dependen de wrappers antiguos.
-app.post('/api/v6239/event-form-save-final', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), async (req,res)=>{
-  try{
-    if(typeof v612EnsureEventColumns === 'function') v612EnsureEventColumns();
-    if(typeof v612EnsureAssignmentsColumns === 'function') v612EnsureAssignmentsColumns();
-
-    const id = Number(req.query.id || 0);
-    const body = req.body || {};
-    const payload = (typeof v612CleanEventPayload === 'function') ? v612CleanEventPayload(body.event || body) : (body.event || body || {});
-    const assignments = v6239NormalizeAssignments(body.assignments || []);
-
-    const cols = db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);
-    const keys = Object.keys(payload).filter(k=>cols.includes(k));
-    let eventId = id;
-
-    if(eventId){
-      const exists = db.prepare('SELECT id FROM events WHERE id=?').get(eventId);
-      if(!exists) return res.status(404).json({ok:false,error:'Evento no encontrado'});
-      if(keys.length) db.prepare(`UPDATE events SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>payload[k]), eventId);
-    }else{
-      const info = db.prepare(`INSERT INTO events (${keys.map(k=>`"${k}"`).join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>payload[k]));
-      eventId = info.lastInsertRowid;
-    }
-
-    if(typeof v6219SaveAssignmentsHard === 'function') v6219SaveAssignmentsHard(eventId, assignments);
-    else if(typeof v612SaveAssignments === 'function') v612SaveAssignments(eventId, assignments);
-
-    const persist = v6239SaveFull(eventId, payload, assignments);
-
-    let google = {ok:false, skipped:true, reason:'Google sync manual/no disponible'};
-    try{
-      if(typeof v614PushEventToGoogle === 'function'){
-        google = await v614PushEventToGoogle(eventId);
-        v6239SaveFull(eventId, payload, assignments);
-      }
-    }catch(e){ google = {ok:false,error:e.message}; }
-
-    res.json({ok:true,event_id:eventId,updated:!!id,persist,google});
-  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
-});
-
-setTimeout(()=>{ try{ console.log('[V62.39] full event payloads restored:', v6239RestoreAll()); }catch(e){} }, 2800);
-
-
-// ---------- V62.41 REAL EVENT EDIT PERSISTENCE ----------
-function v6241Ensure(){
-  try{ if(typeof v612EnsureEventColumns==='function') v612EnsureEventColumns(); }catch(e){}
-  try{ if(typeof v612EnsureAssignmentsColumns==='function') v612EnsureAssignmentsColumns(); }catch(e){}
-  try{ if(typeof v6219EnsureAssignmentsHard==='function') v6219EnsureAssignmentsHard(); }catch(e){}
-  db.exec(`CREATE TABLE IF NOT EXISTS event_edit_persist_v6241 (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_id INTEGER NOT NULL,
-    stable_key TEXT DEFAULT '',
-    event_json TEXT DEFAULT '{}',
-    assignments_json TEXT DEFAULT '[]',
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(event_id)
-  );`);
-}
-function v6241Norm(s){return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();}
-function v6241Stable(ev){const date=String(ev.event_date||ev.date||ev.start_date||'').slice(0,10);const name=v6241Norm(ev.name||ev.title||ev.summary||'');let google='';try{const gl=db.prepare('SELECT google_event_id FROM google_event_links WHERE event_id=? ORDER BY id DESC LIMIT 1').get(ev.id);google=gl&&gl.google_event_id?String(gl.google_event_id):'';}catch(e){}return google?('google:'+google):('event:'+date+':'+name);}
-function v6241NormalizeAssignments(rows){rows=Array.isArray(rows)?rows:[];return rows.map(r=>({event_id:Number(r.event_id||0),user_id:Number(r.user_id||r.operator_id||r.worker_id||0),role_id:r.role_id?Number(r.role_id):null,service_role:String(r.service_role||r.role_name||r.operator_role_name||r.resolved_role||r.role||'').trim(),shift_type:String(r.shift_type||r.shift||'D').trim()||'D',planned_start:String(r.planned_start||r.start_time||r.start||'').trim(),planned_end:String(r.planned_end||r.end_time||r.end||'').trim(),hourly_rate:Number(r.hourly_rate||r.rate||r.price||0),is_team_lead:Number(r.is_team_lead||r.team_lead||r.lead||0),status:String(r.status||'asignado'),notes:String(r.notes||'')})).filter(r=>r.user_id);}
-function v6241CurrentAssignments(eventId){try{if(typeof v6219GetAssignmentsFull==='function')return v6219GetAssignmentsFull(eventId);}catch(e){}try{return db.prepare(`SELECT a.*,u.first_name,u.last_name,u.nickname,u.email,u.phone FROM assignments a LEFT JOIN users u ON u.id=a.user_id WHERE a.event_id=? ORDER BY COALESCE(a.is_team_lead,0) DESC,u.first_name,u.last_name`).all(eventId);}catch(e){return [];}}
-function v6241SaveAssignments(eventId,assignments){const rows=v6241NormalizeAssignments(assignments).map(a=>Object.assign({},a,{event_id:eventId}));if(typeof v6219SaveAssignmentsHard==='function')return v6219SaveAssignmentsHard(eventId,rows);if(typeof v612SaveAssignments==='function')return v612SaveAssignments(eventId,rows);return 0;}
-function v6241SaveSnapshot(eventId,eventPayload,assignmentsPayload){
-  v6241Ensure(); const dbEvent=db.prepare('SELECT * FROM events WHERE id=?').get(eventId); if(!dbEvent)return {ok:false,error:'Evento no encontrado'};
-  const event=Object.assign({},dbEvent,eventPayload||{},{id:eventId});
-  const assignments=v6241NormalizeAssignments(Array.isArray(assignmentsPayload)&&assignmentsPayload.length?assignmentsPayload:v6241CurrentAssignments(eventId));
-  const stable=v6241Stable(event);
-  db.prepare(`INSERT INTO event_edit_persist_v6241 (event_id,stable_key,event_json,assignments_json,updated_at) VALUES (?,?,?,?,CURRENT_TIMESTAMP)
-    ON CONFLICT(event_id) DO UPDATE SET stable_key=excluded.stable_key,event_json=excluded.event_json,assignments_json=excluded.assignments_json,updated_at=CURRENT_TIMESTAMP`)
-    .run(eventId,stable,JSON.stringify(event),JSON.stringify(assignments));
-  try{if(typeof v6239SaveFull==='function')v6239SaveFull(eventId,event,assignments);}catch(e){}
-  try{if(typeof v6238SaveSnapshot==='function')v6238SaveSnapshot(eventId,event,assignments);}catch(e){}
-  return {ok:true,event_id:eventId,assignments:assignments.length,stable_key:stable};
-}
-function v6241RestoreSnapshot(eventId){
-  v6241Ensure(); let snap=db.prepare('SELECT * FROM event_edit_persist_v6241 WHERE event_id=? ORDER BY updated_at DESC LIMIT 1').get(eventId);
-  if(!snap){try{const ev=db.prepare('SELECT * FROM events WHERE id=?').get(eventId);if(ev){snap=db.prepare('SELECT * FROM event_edit_persist_v6241 WHERE stable_key=? ORDER BY updated_at DESC LIMIT 1').get(v6241Stable(ev));}}catch(e){}}
-  if(!snap)return {ok:true,restored:false,reason:'Sin snapshot'};
-  let evPayload={},assignments=[];try{evPayload=JSON.parse(snap.event_json||'{}');}catch(e){}try{assignments=JSON.parse(snap.assignments_json||'[]');}catch(e){}
-  const cols=db.prepare('PRAGMA table_info(events)').all().map(c=>c.name); const keys=Object.keys(evPayload).filter(k=>cols.includes(k)&&k!=='id');
-  if(keys.length)db.prepare(`UPDATE events SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>evPayload[k]),eventId);
-  if(assignments.length)v6241SaveAssignments(eventId,assignments);
-  return {ok:true,restored:true,event_id:eventId,assignments:assignments.length};
-}
-function v6241RestoreAll(){v6241Ensure();let restored=0;try{const events=db.prepare('SELECT id FROM events').all();for(const e of events){try{const r=v6241RestoreSnapshot(e.id);if(r.restored)restored++;}catch(_e){}}}catch(e){}try{if(typeof v6239RestoreAll==='function')v6239RestoreAll();}catch(e){}try{if(typeof v6238RestoreAll==='function')v6238RestoreAll();}catch(e){}return restored;}
-app.post('/api/v6241/event-save-final',(typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin),async(req,res)=>{try{v6241Ensure();const id=Number(req.query.id||0);const body=req.body||{};const rawEvent=body.event||body||{};const payload=(typeof v612CleanEventPayload==='function')?v612CleanEventPayload(rawEvent):rawEvent;const assignments=v6241NormalizeAssignments(body.assignments||[]);const cols=db.prepare('PRAGMA table_info(events)').all().map(c=>c.name);const keys=Object.keys(payload).filter(k=>cols.includes(k));let eventId=id;if(eventId){if(!db.prepare('SELECT id FROM events WHERE id=?').get(eventId))return res.status(404).json({ok:false,error:'Evento no encontrado'});if(keys.length)db.prepare(`UPDATE events SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>payload[k]),eventId);}else{const info=db.prepare(`INSERT INTO events (${keys.map(k=>`"${k}"`).join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>payload[k]));eventId=info.lastInsertRowid;}v6241SaveAssignments(eventId,assignments);const snap=v6241SaveSnapshot(eventId,payload,assignments);res.json({ok:true,event_id:eventId,updated:!!id,snapshot:snap});}catch(e){res.status(500).json({ok:false,error:e.message});}});
-app.post('/api/v6241/events/:id/snapshot-save',(typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin),(req,res)=>{try{const body=req.body||{};res.json(v6241SaveSnapshot(Number(req.params.id),body.event||body,body.assignments||[]));}catch(e){res.status(500).json({ok:false,error:e.message});}});
-app.get('/api/v6241/events/:id/full-edit-data',(typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin),(req,res)=>{try{const id=Number(req.params.id);v6241RestoreSnapshot(id);res.json({ok:true,event:db.prepare('SELECT * FROM events WHERE id=?').get(id),assignments:v6241CurrentAssignments(id)});}catch(e){res.status(500).json({ok:false,error:e.message});}});
-app.post('/api/v6241/restore-all',(typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin),(req,res)=>{try{res.json({ok:true,restored:v6241RestoreAll()});}catch(e){res.status(500).json({ok:false,error:e.message});}});
-setTimeout(()=>{try{console.log('[V62.41] restored edit snapshots',v6241RestoreAll());}catch(e){}},3000);
-
-
-// ---------- V62.43 REAL EVENT PERSISTENCE THAT SURVIVES APP UPDATES ----------
-function v6243EnsurePersistenceTables(){
-  try{ if(typeof v6219EnsureAssignmentsHard === 'function') v6219EnsureAssignmentsHard(); }catch(e){}
-  db.exec(`CREATE TABLE IF NOT EXISTS event_persist_v6243 (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_id INTEGER NOT NULL UNIQUE,
-    event_json TEXT NOT NULL DEFAULT '{}',
-    assignments_json TEXT NOT NULL DEFAULT '[]',
-    stable_date TEXT DEFAULT '',
-    stable_name TEXT DEFAULT '',
-    google_event_id TEXT DEFAULT '',
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-  );`);
-}
-function v6243TableCols(table){
-  try{return db.prepare(`PRAGMA table_info("${table}")`).all().map(c=>c.name);}catch(e){return [];}
-}
-function v6243CleanAssignments(rows){
-  rows = Array.isArray(rows) ? rows : [];
-  return rows.map(r=>({
-    event_id:Number(r.event_id||0),
-    user_id:Number(r.user_id||r.operator_id||r.worker_id||0),
-    role_id:r.role_id ? Number(r.role_id) : null,
-    service_role:String(r.service_role||r.role_name||r.operator_role_name||r.resolved_role||r.role||'').trim(),
-    planned_start:String(r.planned_start||r.start_time||r.start||'').trim(),
-    planned_end:String(r.planned_end||r.end_time||r.end||'').trim(),
-    shift_type:String(r.shift_type||r.shift||'D').trim()||'D',
-    hourly_rate:Number(r.hourly_rate||r.rate||r.price||0),
-    is_team_lead:Number(r.is_team_lead||r.team_lead||r.lead||0),
-    status:String(r.status||'asignado'),
-    notes:String(r.notes||'')
-  })).filter(r=>r.user_id);
-}
-function v6243GetAssignments(eventId){
-  try{
-    return db.prepare(`SELECT * FROM assignments WHERE event_id=? ORDER BY COALESCE(is_team_lead,0) DESC,id ASC`).all(eventId);
-  }catch(e){return [];}
-}
-function v6243GoogleId(eventId){
-  try{
-    const r=db.prepare('SELECT google_event_id FROM google_event_links WHERE event_id=? ORDER BY id DESC LIMIT 1').get(eventId);
-    return r && r.google_event_id ? String(r.google_event_id) : '';
-  }catch(e){return '';}
-}
-function v6243SaveSnapshot(eventId, eventPayload, assignmentsPayload){
-  v6243EnsurePersistenceTables();
-  const ev0=db.prepare('SELECT * FROM events WHERE id=?').get(eventId);
-  if(!ev0) return {ok:false,error:'Evento no encontrado'};
-  const ev=Object.assign({},ev0,eventPayload||{},{id:eventId});
-  const assignments=v6243CleanAssignments(Array.isArray(assignmentsPayload)&&assignmentsPayload.length ? assignmentsPayload : v6243GetAssignments(eventId));
-  const googleId=v6243GoogleId(eventId);
-  db.prepare(`INSERT INTO event_persist_v6243 (event_id,event_json,assignments_json,stable_date,stable_name,google_event_id,updated_at)
-    VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP)
-    ON CONFLICT(event_id) DO UPDATE SET
-      event_json=excluded.event_json,
-      assignments_json=excluded.assignments_json,
-      stable_date=excluded.stable_date,
-      stable_name=excluded.stable_name,
-      google_event_id=excluded.google_event_id,
-      updated_at=CURRENT_TIMESTAMP`)
-    .run(eventId,JSON.stringify(ev),JSON.stringify(assignments),String(ev.event_date||'').slice(0,10),String(ev.name||''),googleId);
-  return {ok:true,event_id:eventId,assignments:assignments.length};
-}
-function v6243SaveAssignments(eventId, assignments){
-  assignments=v6243CleanAssignments(assignments).map(a=>Object.assign({},a,{event_id:eventId}));
-  try{
-    if(typeof v6219SaveAssignmentsHard === 'function') return v6219SaveAssignmentsHard(eventId, assignments);
-  }catch(e){}
-  try{
-    db.prepare('DELETE FROM assignments WHERE event_id=?').run(eventId);
-    const cols=v6243TableCols('assignments');
-    const allowed=['event_id','user_id','service_role','planned_start','planned_end','status','role_id','shift_type','hourly_rate','is_team_lead','notes'].filter(c=>cols.includes(c));
-    const stmt=db.prepare(`INSERT INTO assignments (${allowed.map(c=>`"${c}"`).join(',')}) VALUES (${allowed.map(()=>'?').join(',')})`);
-    const tx=db.transaction(()=>{ assignments.forEach(a=>stmt.run(...allowed.map(c=>a[c] ?? ''))); });
-    tx();
-  }catch(e){}
-}
-function v6243RestoreOne(eventId){
-  v6243EnsurePersistenceTables();
-  const snap=db.prepare('SELECT * FROM event_persist_v6243 WHERE event_id=? ORDER BY updated_at DESC LIMIT 1').get(eventId);
-  if(!snap) return {ok:true,restored:false};
-  let ev={}, assignments=[];
-  try{ev=JSON.parse(snap.event_json||'{}')}catch(e){}
-  try{assignments=JSON.parse(snap.assignments_json||'[]')}catch(e){}
-  const cols=v6243TableCols('events');
-  const keys=Object.keys(ev).filter(k=>k!=='id' && cols.includes(k));
-  if(keys.length){
-    db.prepare(`UPDATE events SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>ev[k]),eventId);
-  }
-  if(assignments.length) v6243SaveAssignments(eventId,assignments);
-  return {ok:true,restored:true,event_id:eventId,assignments:assignments.length};
-}
-function v6243RestoreAll(){
-  v6243EnsurePersistenceTables();
-  let n=0;
-  try{
-    const rows=db.prepare('SELECT event_id FROM event_persist_v6243 ORDER BY updated_at DESC').all();
-    rows.forEach(r=>{try{const out=v6243RestoreOne(r.event_id); if(out.restored)n++;}catch(e){}});
-  }catch(e){}
-  return n;
-}
-app.post('/api/v6243/events/:id/persist', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
-  try{
-    const body=req.body||{};
-    res.json(v6243SaveSnapshot(Number(req.params.id), body.event||body, body.assignments||[]));
-  }catch(e){res.status(500).json({ok:false,error:e.message});}
-});
-app.get('/api/v6243/events/:id/full', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
-  try{
-    const id=Number(req.params.id);
-    v6243RestoreOne(id);
-    res.json({ok:true,event:db.prepare('SELECT * FROM events WHERE id=?').get(id),assignments:v6243GetAssignments(id)});
-  }catch(e){res.status(500).json({ok:false,error:e.message});}
-});
-app.post('/api/v6243/event-save-final', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
-  try{
-    v6243EnsurePersistenceTables();
-    const id=Number(req.query.id||0);
-    const body=req.body||{};
-    const raw=body.event||body||{};
-    const payload=(typeof v612CleanEventPayload==='function') ? v612CleanEventPayload(raw) : raw;
-    const assignments=v6243CleanAssignments(body.assignments||[]);
-    const cols=v6243TableCols('events');
-    const keys=Object.keys(payload).filter(k=>cols.includes(k));
-    let eventId=id;
-    if(eventId){
-      if(!db.prepare('SELECT id FROM events WHERE id=?').get(eventId)) return res.status(404).json({ok:false,error:'Evento no encontrado'});
-      if(keys.length) db.prepare(`UPDATE events SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>payload[k]),eventId);
-    }else{
-      const info=db.prepare(`INSERT INTO events (${keys.map(k=>`"${k}"`).join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>payload[k]));
-      eventId=info.lastInsertRowid;
-    }
-    v6243SaveAssignments(eventId,assignments);
-    const snap=v6243SaveSnapshot(eventId,payload,assignments);
-    res.json({ok:true,event_id:eventId,snapshot:snap});
-  }catch(e){res.status(500).json({ok:false,error:e.message});}
-});
-app.post('/api/v6243/restore-all', (typeof requireAdminSoftV6226==='function'?requireAdminSoftV6226:requireAdmin), (req,res)=>{
-  try{res.json({ok:true,restored:v6243RestoreAll()});}
-  catch(e){res.status(500).json({ok:false,error:e.message});}
-});
-setTimeout(()=>{try{console.log('[V62.43] restored persisted event data',v6243RestoreAll());}catch(e){}},2500);
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads'), { maxAge: 0 }));
@@ -9417,7 +8897,7 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Marfan Crew Hours V62.43 Calendar Albaranes View Real Persistence listening on port ${PORT}`);
+  console.log(`Marfan Crew Hours V62.44 Real Calendar and Persistence Fix listening on port ${PORT}`);
 });
 
 
