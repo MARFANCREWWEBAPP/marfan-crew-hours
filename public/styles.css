@@ -2176,5 +2176,7 @@ aside,.sidebar,nav{
   pointer-events:auto!important;
 }
 
-/* V62.46 */
-.v55-calendar-toolbar input[type='month'].field{min-width:170px}
+/* ---------- V62.47 FIX REAL V582/V583 ---------- */
+.v582-calendar-card .top input[type="month"].field{
+  min-width:170px;
+}

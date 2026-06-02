@@ -1,13 +1,17 @@
-# V62.46 Real Files Final Fix
+# V62.47 Fix Real V582/V583
 
-Hecho sobre los archivos reales subidos por el usuario.
+Corrección hecha sobre los archivos reales.
 
-Correcciones:
-1. DB real persistente: abre /data/marfan-crew-hours.sqlite, no __dirname/data/marfan.db.
-2. La ruta activa de guardado /api/v6218/event-save-real persiste evento + localización + personal + roles + jefe de equipo en event_persist_v6246.
-3. /api/events restaura persistencia antes de listar calendario.
-4. /api/v612/event-form-data restaura persistencia antes de abrir edición.
-5. Google description incluye localización, personal, roles y jefe de equipo.
-6. El calendario activo V55/v561 incluye selector de mes en la vista real.
+Qué corrige:
+1. La vista real del calendario es showCalendarV582. Ahora tiene:
+   - Mes anterior
+   - Hoy
+   - Mes siguiente
+   - selector type=month estilo Albaranes
+2. El botón Editar evento del calendario V582 ya NO abre el formulario viejo V583.
+   Abre openV612EventForm(id), que sí tiene personal, roles y jefe de equipo.
+3. Se mantiene compatibilidad con save-v583 por si se usara.
+4. No se toca el resto de módulos.
 
-Importante: Railway debe tener Volume montado en /data.
+Causa real:
+El formulario editEventFormV583 no tenía campos de operarios ni roles, y guardaba solo /api/events/:id/save-v583.

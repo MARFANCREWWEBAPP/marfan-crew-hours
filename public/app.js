@@ -5484,10 +5484,7 @@ async function viewCalendar(){
           <button onclick="v55CalDate=new Date();viewCalendar()">Hoy</button>
           <button class="secondary" onclick="v55MoveCalendar(1)">Siguiente →</button>
         </div>
-        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-          <h2 style="text-transform:capitalize;margin:0">${v55CalendarTitle()}</h2>
-          <input class="field" type="month" value="${v55CalDate.getFullYear()}-${String(v55CalDate.getMonth()+1).padStart(2,'0')}" onchange="if(this.value){v55CalDate=new Date(Number(this.value.slice(0,4)), Number(this.value.slice(5,7))-1, 1); viewCalendar();}" style="max-width:190px;font-weight:900">
-        </div>
+        <h2 style="text-transform:capitalize">${v55CalendarTitle()}</h2>
         <div class="v55-view-tabs">
           <button class="${v55CalView==='month'?'active':''}" onclick="v55SetView('month')">Mes</button>
           <button class="${v55CalView==='week'?'active':''}" onclick="v55SetView('week')">Semana</button>
@@ -10348,22 +10345,110 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
 })();
 
 
-// ---------- V62.46 FINAL FRONTEND RESTORE ----------
+// ---------- V62.47 FIX REAL V582/V583 ----------
 (function(){
-  async function v6246Restore(){
-    try{
-      await fetch('/api/v6246/restore-all',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',cache:'no-store'});
-      if(typeof load==='function') await load();
-    }catch(e){}
+  function v6247MonthDate(){
+    if(typeof v55CalDate === 'undefined' || !v55CalDate) window.v55CalDate = new Date();
+    return v55CalDate;
   }
-  document.addEventListener('click',ev=>{
-    const el=ev.target.closest&&ev.target.closest('button,a');
-    if(!el)return;
-    const t=(el.textContent||'').toLowerCase();
-    if(t.includes('sincron')&&t.includes('google') || t.includes('importar marfan') || t.includes('exportar a marfan')){
-      setTimeout(v6246Restore,1600);
-      setTimeout(async()=>{try{if(typeof viewCalendar==='function') await viewCalendar();}catch(e){}},2600);
+  function v6247MonthValue(d){
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  }
+  function v6247MonthTitle(d){
+    return d.toLocaleDateString('es-ES',{month:'long',year:'numeric'});
+  }
+
+  // El editor V583 era el problema: no tenía operarios ni roles.
+  // Ahora cualquier clic en Editar desde calendario V582 abre el formulario moderno V612/V6219.
+  window.editEventV582 = async function(id){
+    if(typeof openV612EventForm === 'function'){
+      window.__lastEditingEventIdV6218 = Number(id);
+      window.__lastEditingEventIdV6219 = Number(id);
+      await openV612EventForm(Number(id));
+      try{
+        if(typeof v6219LoadAssignmentsIntoForm === 'function'){
+          setTimeout(()=>v6219LoadAssignmentsIntoForm(Number(id)),250);
+          setTimeout(()=>v6219LoadAssignmentsIntoForm(Number(id)),900);
+        }
+        if(typeof patchEventSaveV6219 === 'function'){
+          setTimeout(patchEventSaveV6219,350);
+          setTimeout(patchEventSaveV6219,1000);
+        }
+      }catch(e){}
+      return;
     }
-  },true);
-  setTimeout(v6246Restore,2500);
+
+    if(typeof openEventV582 === 'function') return openEventV582(Number(id));
+    alert('No está disponible el formulario moderno de edición.');
+  };
+
+  window.showCalendarV582 = async function(){
+    const allEvents = await apiV582('/api/events').catch(()=>[]);
+    const googleStatus = await apiV582('/api/google/status-v557').catch(()=>({connected:false}));
+    const d = v6247MonthDate();
+    const currentMonth = d.getMonth();
+    const currentYear = d.getFullYear();
+    const events = allEvents.filter(e=>{
+      const ds = String(e.event_date || '').slice(0,10);
+      if(!ds) return false;
+      const parts = ds.split('-').map(Number);
+      if(parts.length < 2) return false;
+      return parts[0] === currentYear && (parts[1]-1) === currentMonth;
+    });
+
+    const content = document.getElementById('content') || document.querySelector('#main') || document.body;
+
+    content.innerHTML = `
+      <div class="v582-calendar-force-banner">
+        <div>
+          <h2 style="margin:0">Calendario eventos</h2>
+          <div>Vista mensual operativa con edición completa de evento, personal y roles.</div>
+        </div>
+        <div class="v582-event-actions">
+          <button onclick="showCalendarV582()">Actualizar calendario</button>
+          <button onclick="openCreateEventV559()">+ Crear evento</button>
+          <button class="v583-sync-btn" onclick="forceGoogleSyncV583()">FORZAR SINCRONIZACIÓN GOOGLE</button>
+          ${googleStatus.connected ? '<span class="status-badge status-ok">Google conectado</span>' : '<span class="status-badge status-warn">Google no conectado</span>'}
+        </div>
+      </div>
+
+      <div class="card v582-calendar-card">
+        <div class="top" style="align-items:center;gap:12px;flex-wrap:wrap">
+          <div>
+            <h3 style="margin:0;text-transform:capitalize">${v6247MonthTitle(d)}</h3>
+            <p class="muted">Selecciona mes igual que en Albaranes evento</p>
+          </div>
+          <div class="actions">
+            <button class="secondary" onclick="v55CalDate=new Date(v55CalDate.getFullYear(),v55CalDate.getMonth()-1,1);showCalendarV582()">← Mes anterior</button>
+            <button onclick="v55CalDate=new Date();showCalendarV582()">Hoy</button>
+            <button class="secondary" onclick="v55CalDate=new Date(v55CalDate.getFullYear(),v55CalDate.getMonth()+1,1);showCalendarV582()">Mes siguiente →</button>
+            <input class="field" type="month" value="${v6247MonthValue(d)}" onchange="if(this.value){v55CalDate=new Date(Number(this.value.slice(0,4)),Number(this.value.slice(5,7))-1,1);showCalendarV582();}" style="max-width:190px;font-weight:900">
+          </div>
+        </div>
+        ${renderMonthV582(allEvents)}
+      </div>
+
+      ${renderEventRowsV582(events)}
+    `;
+
+    document.querySelectorAll('[data-v582-event]').forEach(btn=>{
+      btn.addEventListener('click', ev=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+        openEventV582(Number(btn.dataset.v582Event));
+      });
+    });
+  };
+
+  window.viewCalendar = window.showCalendarV582;
+  window.viewCalendarV579Final = window.showCalendarV582;
+  window.viewCalendarV582Final = window.showCalendarV582;
+
+  try{
+    if(typeof routes !== 'undefined' && routes){
+      routes.eventos = window.showCalendarV582;
+      routes.calendario = window.showCalendarV582;
+      routes.calendar = window.showCalendarV582;
+    }
+  }catch(e){}
 })();
