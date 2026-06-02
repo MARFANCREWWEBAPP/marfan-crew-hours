@@ -1,11 +1,13 @@
-# V62.45 Real DB Persistence Fix
+# V62.46 Real Files Final Fix
 
-Corrección real detectada en archivos subidos:
-1. La app preparaba /data pero abría __dirname/data/marfan.db. Ahora abre DB_PATH_V627 en /data.
-2. El formulario activo guardaba por /api/v614/event-form-save y esa ruta no persistía v6244. Ahora sí.
-3. /api/events restaura datos persistidos antes de devolver listado.
-4. Google Calendar recibe descripción con localización, personal, roles y jefe de equipo.
-5. Calendario real tiene selector de mes igual estilo albaranes.
+Hecho sobre los archivos reales subidos por el usuario.
 
-IMPORTANTE:
-Para conservar datos entre versiones en Railway, el Volume debe estar montado en /data.
+Correcciones:
+1. DB real persistente: abre /data/marfan-crew-hours.sqlite, no __dirname/data/marfan.db.
+2. La ruta activa de guardado /api/v6218/event-save-real persiste evento + localización + personal + roles + jefe de equipo en event_persist_v6246.
+3. /api/events restaura persistencia antes de listar calendario.
+4. /api/v612/event-form-data restaura persistencia antes de abrir edición.
+5. Google description incluye localización, personal, roles y jefe de equipo.
+6. El calendario activo V55/v561 incluye selector de mes en la vista real.
+
+Importante: Railway debe tener Volume montado en /data.
