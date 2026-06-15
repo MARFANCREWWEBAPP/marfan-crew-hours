@@ -1,14 +1,45 @@
-# V62.49 Calendar Buttons Use Picker
+# Marfan Crew 2.0 — Clean Rebuild
 
-Base: V62.48.
+Versión limpia creada desde cero. No contiene código heredado de V62/V63.
 
-Corrige:
-- Mes anterior.
-- Hoy.
-- Mes siguiente.
+## Arranque local
 
-Cambio:
-Los botones ya no dependen del scope de v55CalDate.
-Ahora leen el valor real del input type=month, calculan el mes y llaman al mismo flujo que ya funciona cuando se cambia el selector manualmente.
+```bash
+cp .env.example .env
+npm install
+npm start
+```
 
-No toca edición, personal, roles ni Google Sync.
+Abrir: http://localhost:3000
+
+Usuario inicial:
+- admin@marfan.local
+- Admin1234!
+
+## Incluye
+
+- Login JWT.
+- Roles: Super Admin, Admin, Jefe de equipo, Operario, Cliente.
+- Menú de usuarios admin.
+- Crear/editar usuarios.
+- Reset de contraseña.
+- Clientes.
+- Eventos.
+- Asignación de equipo.
+- Fichajes con estructura GPS.
+- Dashboard operativo.
+- Diseño Apple-style responsive.
+- Base de datos SQLite local para pruebas.
+
+## Próximo salto recomendado
+
+Para producción real:
+- PostgreSQL.
+- Prisma.
+- Migraciones versionadas.
+- PDFs de albaranes.
+- Firma digital canvas.
+- PWA móvil.
+- Permisos por módulo.
+- Auditoría de cambios.
+- Backups automáticos.
