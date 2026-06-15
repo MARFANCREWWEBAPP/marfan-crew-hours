@@ -1,7 +1,7 @@
 {
-  "name": "marfan-crew-2-0-2-enterprise-menus",
-  "version": "2.0.2",
-  "description": "Marfan Crew 2.0 limpia con menus completos migrados desde V62.49",
+  "name": "marfan-crew-2-0-3-enterprise-data",
+  "version": "2.0.3",
+  "description": "Marfan Crew 2.0 limpia con menus y datos reales migrados desde V62.49",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
@@ -19,6 +19,10 @@
     "sqlite3": "^5.1.7",
     "uuid": "^11.0.3"
   },
-  "devDependencies": { "nodemon": "^3.1.9" },
-  "engines": { "node": ">=18" }
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  },
+  "engines": {
+    "node": ">=18"
+  }
 }

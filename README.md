@@ -1,46 +1,46 @@
-# Marfan Crew 2.0.2 Enterprise Menus
+# Marfan Crew 2.0.3 Enterprise Data
 
-Versión limpia desde cero, preparada para Railway, sin `express-session` y sin depender del `server.js` antiguo.
+Versión limpia tipo Apple para Railway, sin express-session y con datos reales migrados desde V62.49.
 
 ## Incluye
 
-- Diseño Apple style.
-- Login JWT.
-- Menús completos migrados de la V62.49:
-  - Dashboard
-  - Calendario eventos
-  - Control diario
-  - GPS Live
-  - Vista operario
-  - Clientes
-  - Eventos
-  - Eventos realizados
-  - Operarios
-  - Usuarios admin
-  - Tarifas
-  - Documentación
-  - Albaranes evento
-  - Finanzas Pro
-  - Informes PDF
-  - Contraseñas
-  - Ajustes ERP
-- Backend limpio con SQLite.
-- Railway fallback `server.js` en raíz.
+- Menús completos de la versión 2.0.2.
+- Importación automática de clientes reales V62.49.
+- Importación automática de operarios reales V62.49.
+- Login de operarios por teléfono o email.
+- Contraseña inicial de operarios importados: `Marfan1234*`.
+- Super Admin inicial: `admin@marfan.local` / `Admin1234!`.
+- Campos ampliados de operarios: DNI/NIE, Seguridad Social, IBAN, dirección, tallas, PRL, EPIs y emergencia.
+- Sin `express-session`. Preparada para Railway.
 
-## Arranque
+## Railway
+
+Start command recomendado:
 
 ```bash
-npm install
 npm start
 ```
 
-Usuario inicial:
+También incluye `server.js` en la raíz para evitar errores si Railway intenta ejecutar `node server.js`.
 
-```txt
-admin@marfan.local
-Admin1234!
+## Variables opcionales
+
+```env
+DEFAULT_ADMIN_EMAIL=admin@marfan.local
+DEFAULT_ADMIN_PASSWORD=Admin1234!
+DEFAULT_OPERATOR_PASSWORD=Marfan1234*
+JWT_SECRET=cambia_esto
+AUTO_IMPORT_LEGACY_DATA=true
+DATABASE_FILE=./data/marfan.sqlite
 ```
 
-## Nota
+## Importación manual
 
-Esta versión reconstruye los menús y módulos principales en base limpia 2.0. No arrastra el `server.js` antiguo de 385k líneas ni sus parches V52-V62.
+Desde Super Admin puedes llamar a:
+
+```txt
+POST /api/legacy/import-data
+GET /api/legacy/status
+```
+
+Por defecto la importación se ejecuta automáticamente al arrancar, sin duplicar datos.

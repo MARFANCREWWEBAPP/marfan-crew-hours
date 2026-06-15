@@ -34,6 +34,27 @@ async function migrate() {
     notes TEXT DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`);
+
+  // Campos ampliados migrados desde V62.49 para no perder datos reales de operarios
+  await addCol('users','first_name','TEXT DEFAULT ""');
+  await addCol('users','last_name','TEXT DEFAULT ""');
+  await addCol('users','nickname','TEXT DEFAULT ""');
+  await addCol('users','iban','TEXT DEFAULT ""');
+  await addCol('users','bank_iban','TEXT DEFAULT ""');
+  await addCol('users','bank_name','TEXT DEFAULT ""');
+  await addCol('users','social_security_number','TEXT DEFAULT ""');
+  await addCol('users','full_address','TEXT DEFAULT ""');
+  await addCol('users','address','TEXT DEFAULT ""');
+  await addCol('users','operator_role_name','TEXT DEFAULT ""');
+  await addCol('users','operator_role_id','INTEGER DEFAULT NULL');
+  await addCol('users','shirt_size','TEXT DEFAULT ""');
+  await addCol('users','pants_size','TEXT DEFAULT ""');
+  await addCol('users','shoe_size','TEXT DEFAULT ""');
+  await addCol('users','epis_delivered','INTEGER DEFAULT 0');
+  await addCol('users','has_prl','INTEGER DEFAULT 0');
+  await addCol('users','emergency_contact_name','TEXT DEFAULT ""');
+  await addCol('users','emergency_contact_phone','TEXT DEFAULT ""');
+
   await run(`CREATE TABLE IF NOT EXISTS clients (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -130,6 +151,33 @@ async function migrate() {
     notes TEXT DEFAULT '',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )`);
+  await run(`CREATE TABLE IF NOT EXISTS operator_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    doc_type TEXT DEFAULT '',
+    filename TEXT DEFAULT '',
+    original_name TEXT DEFAULT '',
+    path TEXT DEFAULT '',
+    url TEXT DEFAULT '',
+    mime_type TEXT DEFAULT '',
+    size INTEGER DEFAULT 0,
+    uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+  await run(`CREATE TABLE IF NOT EXISTS password_vault (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    service TEXT DEFAULT '',
+    category TEXT DEFAULT '',
+    username TEXT DEFAULT '',
+    password TEXT DEFAULT '',
+    url TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+
   await run(`CREATE TABLE IF NOT EXISTS delivery_notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id INTEGER,

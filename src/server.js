@@ -7,6 +7,7 @@ const jwt = require('jsonwebtoken');
 const path = require('path');
 require('dotenv').config();
 const { migrate, run, get, all } = require('./db');
+const { importLegacyData } = require('./legacy/importLegacyData');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -49,19 +50,19 @@ app.get('/api/dashboard', auth, allow(...adminTeam), async (req,res)=>{
   res.json({users:users.total,operators:operators.total,clients:clients.total,eventsToday:eventsToday.total,activeWorkers:openEntries.total,monthRevenue:monthRevenue.total,doneEvents:doneEvents.total,totalEvents:totalEvents.total,nextEvents});
 });
 
-app.get('/api/users', auth, allow(...adminRoles), async (req,res)=> res.json(await all('SELECT id,name,email,phone,role,active,hourly_rate,position,dni,emergency_phone,notes,created_at FROM users ORDER BY role,name')));
+app.get('/api/users', auth, allow(...adminRoles), async (req,res)=> res.json(await all('SELECT id,name,email,phone,role,active,hourly_rate,position,dni,emergency_phone,emergency_contact_name,emergency_contact_phone,notes,created_at,first_name,last_name,nickname,iban,bank_iban,bank_name,social_security_number,full_address,address,operator_role_name,shirt_size,pants_size,shoe_size,epis_delivered,has_prl FROM users ORDER BY role,name')));
 app.post('/api/users', auth, allow('super_admin'), async (req,res)=>{
-  const {name,email,phone,password,role,hourly_rate=0,position='',dni='',emergency_phone='',notes=''}=req.body;
+  const {name,email,phone,password,role,hourly_rate=0,position='',dni='',emergency_phone='',emergency_contact_name='',emergency_contact_phone='',notes='',first_name='',last_name='',nickname='',iban='',bank_iban='',bank_name='',social_security_number='',full_address='',address='',operator_role_name='',shirt_size='',pants_size='',shoe_size='',epis_delivered=0,has_prl=0}=req.body;
   if(!name||!password||!role) return res.status(400).json({error:'Nombre, contraseña y rol son obligatorios'});
   if(!['super_admin','admin','team_lead','operator','client'].includes(role)) return res.status(400).json({error:'Rol inválido'});
   const hash=await bcrypt.hash(password,10);
-  const r=await run('INSERT INTO users(name,email,phone,password_hash,role,hourly_rate,position,dni,emergency_phone,notes) VALUES(?,?,?,?,?,?,?,?,?,?)',[name,email||null,phone||null,hash,role,hourly_rate,position,dni,emergency_phone,notes]);
-  res.status(201).json(await get('SELECT id,name,email,phone,role,active,hourly_rate,position FROM users WHERE id=?',[r.id]));
+  const r=await run(`INSERT INTO users(name,email,phone,password_hash,role,hourly_rate,position,dni,emergency_phone,emergency_contact_name,emergency_contact_phone,notes,first_name,last_name,nickname,iban,bank_iban,bank_name,social_security_number,full_address,address,operator_role_name,shirt_size,pants_size,shoe_size,epis_delivered,has_prl) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[name,email||null,phone||null,hash,role,hourly_rate,position,dni,emergency_phone,emergency_contact_name,emergency_contact_phone,notes,first_name,last_name,nickname,iban,bank_iban,bank_name,social_security_number,full_address,address,operator_role_name,shirt_size,pants_size,shoe_size,Number(epis_delivered||0),Number(has_prl||0)]);
+  res.status(201).json(await get('SELECT * FROM users WHERE id=?',[r.id]));
 });
 app.put('/api/users/:id', auth, allow('super_admin'), async (req,res)=>{
-  const {name,email,phone,role,active=1,hourly_rate=0,position='',dni='',emergency_phone='',notes=''}=req.body;
-  await run('UPDATE users SET name=?,email=?,phone=?,role=?,active=?,hourly_rate=?,position=?,dni=?,emergency_phone=?,notes=? WHERE id=?',[name,email||null,phone||null,role,active?1:0,hourly_rate,position,dni,emergency_phone,notes,req.params.id]);
-  res.json(await get('SELECT id,name,email,phone,role,active,hourly_rate,position FROM users WHERE id=?',[req.params.id]));
+  const {name,email,phone,role,active=1,hourly_rate=0,position='',dni='',emergency_phone='',emergency_contact_name='',emergency_contact_phone='',notes='',first_name='',last_name='',nickname='',iban='',bank_iban='',bank_name='',social_security_number='',full_address='',address='',operator_role_name='',shirt_size='',pants_size='',shoe_size='',epis_delivered=0,has_prl=0}=req.body;
+  await run(`UPDATE users SET name=?,email=?,phone=?,role=?,active=?,hourly_rate=?,position=?,dni=?,emergency_phone=?,emergency_contact_name=?,emergency_contact_phone=?,notes=?,first_name=?,last_name=?,nickname=?,iban=?,bank_iban=?,bank_name=?,social_security_number=?,full_address=?,address=?,operator_role_name=?,shirt_size=?,pants_size=?,shoe_size=?,epis_delivered=?,has_prl=? WHERE id=?`,[name,email||null,phone||null,role,active?1:0,hourly_rate,position,dni,emergency_phone,emergency_contact_name,emergency_contact_phone,notes,first_name,last_name,nickname,iban,bank_iban,bank_name,social_security_number,full_address,address,operator_role_name,shirt_size,pants_size,shoe_size,Number(epis_delivered||0),Number(has_prl||0),req.params.id]);
+  res.json(await get('SELECT * FROM users WHERE id=?',[req.params.id]));
 });
 app.post('/api/users/:id/reset-password', auth, allow('super_admin'), async (req,res)=>{ const {password}=req.body; if(!password||password.length<8) return res.status(400).json({error:'La contraseña debe tener mínimo 8 caracteres'}); await run('UPDATE users SET password_hash=? WHERE id=?',[await bcrypt.hash(password,10),req.params.id]); res.json({ok:true}); });
 
@@ -94,6 +95,19 @@ app.get('/api/my-calendar', auth, async (req,res)=> res.json(await all(`SELECT e
 app.get('/api/settings', auth, allow(...adminRoles), async (req,res)=>{ const rows=await all('SELECT key,value FROM settings ORDER BY key'); res.json(Object.fromEntries(rows.map(r=>[r.key,r.value]))); });
 app.post('/api/settings', auth, allow('super_admin'), async (req,res)=>{ for(const [k,v] of Object.entries(req.body||{})) await run('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',[k,String(v)]); res.json({ok:true}); });
 app.get('/api/reports/summary', auth, allow(...adminTeam), async (req,res)=>{ const rows=await all(`SELECT substr(date,1,7) month, COUNT(*) events, COALESCE(SUM(budget),0) amount, COALESCE(SUM(external_cost+transport_cost+other_cost),0) cost FROM events GROUP BY substr(date,1,7) ORDER BY month DESC LIMIT 12`); res.json(rows.map(r=>({...r, profit:Number(r.amount||0)-Number(r.cost||0)}))); });
-app.get('/api/health', (req,res)=> res.json({ok:true, app:'Marfan Crew 2.0.2', clean:true, legacyMenusMigrated:true}));
 
-migrate().then(async()=>{ const email=process.env.DEFAULT_ADMIN_EMAIL||'admin@marfan.local'; const pass=process.env.DEFAULT_ADMIN_PASSWORD||'Admin1234!'; const exists=await get('SELECT id FROM users WHERE email=?',[email]); if(!exists) await run('INSERT INTO users(name,email,password_hash,role,active,position) VALUES(?,?,?,?,?,?)',['Super Admin',email,await bcrypt.hash(pass,10),'super_admin',1,'Dirección']); app.listen(PORT,()=>console.log(`Marfan Crew 2.0.2 running on ${PORT}`)); }).catch(err=>{ console.error(err); process.exit(1); });
+app.post('/api/legacy/import-data', auth, allow('super_admin'), async (req,res)=>{
+  try{ res.json({ok:true, ...(await importLegacyData({get, run}))}); }
+  catch(e){ res.status(500).json({error:e.message}); }
+});
+app.get('/api/legacy/status', auth, allow(...adminRoles), async (req,res)=>{
+  const [clients,operators] = await Promise.all([
+    get('SELECT COUNT(*) total FROM clients WHERE active=1'),
+    get("SELECT COUNT(*) total FROM users WHERE role IN ('operator','team_lead') AND active=1")
+  ]);
+  res.json({ok:true, clients:clients.total, operators:operators.total, defaultOperatorLogin:'teléfono o email', defaultOperatorPassword:process.env.DEFAULT_OPERATOR_PASSWORD || 'Marfan1234*'});
+});
+
+app.get('/api/health', (req,res)=> res.json({ok:true, app:'Marfan Crew 2.0.3', clean:true, legacyMenusMigrated:true, legacyDataImported:true}));
+
+migrate().then(async()=>{ const email=process.env.DEFAULT_ADMIN_EMAIL||'admin@marfan.local'; const pass=process.env.DEFAULT_ADMIN_PASSWORD||'Admin1234!'; const exists=await get('SELECT id FROM users WHERE email=?',[email]); if(!exists) await run('INSERT INTO users(name,email,password_hash,role,active,position) VALUES(?,?,?,?,?,?)',['Super Admin',email,await bcrypt.hash(pass,10),'super_admin',1,'Dirección']); if(process.env.AUTO_IMPORT_LEGACY_DATA !== 'false'){ try{ const r=await importLegacyData({get,run}); console.log('[Marfan 2.0.3] Datos V62.49 importados', r); }catch(e){ console.warn('[Marfan 2.0.3] Import legacy warning', e.message); } } app.listen(PORT,()=>console.log(`Marfan Crew 2.0.3 running on ${PORT}`)); }).catch(err=>{ console.error(err); process.exit(1); });
