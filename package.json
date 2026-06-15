@@ -1,13 +1,12 @@
 {
-  "name": "marfan-crew-2-0-clean",
-  "version": "2.0.1",
-  "description": "Marfan Crew 2.0 clean rebuild - Railway fixed launcher - Apple style operations management app",
+  "name": "marfan-crew-2-0-2-enterprise-menus",
+  "version": "2.0.2",
+  "description": "Marfan Crew 2.0 limpia con menus completos migrados desde V62.49",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "seed": "node src/seed.js",
-    "start:railway-safe": "node server.js"
+    "seed": "node src/seed.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -18,13 +17,8 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "sqlite3": "^5.1.7",
-    "uuid": "^11.0.3",
-    "express-session": "^1.18.1"
+    "uuid": "^11.0.3"
   },
-  "devDependencies": {
-    "nodemon": "^3.1.9"
-  },
-  "engines": {
-    "node": ">=18"
-  }
+  "devDependencies": { "nodemon": "^3.1.9" },
+  "engines": { "node": ">=18" }
 }

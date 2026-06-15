@@ -1,45 +1,46 @@
-# Marfan Crew 2.0 — Clean Rebuild
+# Marfan Crew 2.0.2 Enterprise Menus
 
-Versión limpia creada desde cero. No contiene código heredado de V62/V63.
+Versión limpia desde cero, preparada para Railway, sin `express-session` y sin depender del `server.js` antiguo.
 
-## Arranque local
+## Incluye
+
+- Diseño Apple style.
+- Login JWT.
+- Menús completos migrados de la V62.49:
+  - Dashboard
+  - Calendario eventos
+  - Control diario
+  - GPS Live
+  - Vista operario
+  - Clientes
+  - Eventos
+  - Eventos realizados
+  - Operarios
+  - Usuarios admin
+  - Tarifas
+  - Documentación
+  - Albaranes evento
+  - Finanzas Pro
+  - Informes PDF
+  - Contraseñas
+  - Ajustes ERP
+- Backend limpio con SQLite.
+- Railway fallback `server.js` en raíz.
+
+## Arranque
 
 ```bash
-cp .env.example .env
 npm install
 npm start
 ```
 
-Abrir: http://localhost:3000
-
 Usuario inicial:
-- admin@marfan.local
-- Admin1234!
 
-## Incluye
+```txt
+admin@marfan.local
+Admin1234!
+```
 
-- Login JWT.
-- Roles: Super Admin, Admin, Jefe de equipo, Operario, Cliente.
-- Menú de usuarios admin.
-- Crear/editar usuarios.
-- Reset de contraseña.
-- Clientes.
-- Eventos.
-- Asignación de equipo.
-- Fichajes con estructura GPS.
-- Dashboard operativo.
-- Diseño Apple-style responsive.
-- Base de datos SQLite local para pruebas.
+## Nota
 
-## Próximo salto recomendado
-
-Para producción real:
-- PostgreSQL.
-- Prisma.
-- Migraciones versionadas.
-- PDFs de albaranes.
-- Firma digital canvas.
-- PWA móvil.
-- Permisos por módulo.
-- Auditoría de cambios.
-- Backups automáticos.
+Esta versión reconstruye los menús y módulos principales en base limpia 2.0. No arrastra el `server.js` antiguo de 385k líneas ni sus parches V52-V62.
