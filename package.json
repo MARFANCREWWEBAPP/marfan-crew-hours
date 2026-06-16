@@ -1,8 +1,8 @@
 {
-  "name": "marfan-crew-2-1-2-railway-production-base",
-  "version": "2.1.2",
+  "name": "marfan-crew-2-1-3-full-menus-recovery",
+  "version": "2.1.3",
   "private": true,
-  "description": "Marfan Crew Railway Production Base - stable zero external dependencies",
+  "description": "Marfan Crew V2.1.3 Full Menus Recovery - Railway stable base with recovered operational menus",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js"
