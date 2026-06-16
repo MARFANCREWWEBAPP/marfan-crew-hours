@@ -261,9 +261,10 @@ app.post('/api/event-delivery-notes/generate', auth, allow(...adminTeam), async 
   if(!ev) return res.status(404).json({error:'Evento no encontrado'});
   const st=await getSettingsMap(); const vatPercent=Number(st.vat_percent||21), dietAmount=Number(st.diet_amount||15);
   const entries=await all(`SELECT t.*, u.name user_name,u.hourly_rate,u.position,u.operator_role_name,a.role_label,a.hourly_rate assignment_rate,r.day_rate,r.night_rate FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN event_assignments a ON a.event_id=t.event_id AND a.user_id=t.user_id LEFT JOIN rates r ON lower(r.role)=lower(COALESCE(a.role_label,u.operator_role_name,u.position,'')) WHERE t.event_id=? ORDER BY u.name,t.check_in`,[event_id]);
+  const teamLead = await get(`SELECT a.user_id, u.name FROM event_assignments a JOIN users u ON u.id=a.user_id WHERE a.event_id=? AND (a.is_team_lead=1 OR u.role='team_lead') ORDER BY a.is_team_lead DESC, u.name LIMIT 1`,[event_id]);
   let normal=0, night=0, lineTotal=0;
   const number=`${st.invoice_prefix||'ALB'}-${String(event_id).padStart(4,'0')}-${Date.now()}`;
-  const r=await run('INSERT INTO delivery_notes(event_id,number,client_name,event_date,normal_hours,night_hours,diets,km,grand_total,grand_total_vat,vat_percent,locked) VALUES(?,?,?,?,?,?,?,?,?,?,?,0)',[event_id,number,ev.client_name||'',ev.date,0,0,0,0,0,0,vatPercent]);
+  const r=await run('INSERT INTO delivery_notes(event_id,number,client_name,event_date,normal_hours,night_hours,diets,km,grand_total,grand_total_vat,vat_percent,locked,team_lead_user_id,team_lead_name) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',[event_id,number,ev.client_name||'',ev.date,0,0,0,0,0,0,vatPercent,0,teamLead?.user_id||null,teamLead?.name||'']);
   for(const t of entries){
     const totalH=hoursBetween(t.check_in,t.check_out,t.break_minutes); const nh=nightHoursExact(t.check_in,t.check_out); const norm=Math.max(0,totalH-nh);
     const dayRate=Number(t.assignment_rate||t.day_rate||t.hourly_rate||0); const nightRate=Number(t.night_rate||dayRate||0); const diet = totalH>=6 ? dietAmount : 0; const lt=(norm*dayRate)+(nh*nightRate)+diet;
@@ -548,7 +549,7 @@ app.get('/api/pdf-template/:type/:id', auth, async (req,res)=>{
 
 
 
-// ---------- V2.0.8 LEGACY REPLICA OPERATIVA ----------
+// ---------- V2.0.9 LEGACY REPLICA OPERATIVA ----------
 // Rutas puente y módulos operativos replicados de V62.49 sobre la base limpia 2.0.
 app.post('/api/login-phone', async (req,res)=>{
   const {phone,password}=req.body||{};
@@ -594,9 +595,16 @@ app.get('/api/client/:id/folder', auth, allow(...adminTeam), async (req,res)=>{
 app.get('/api/availability', auth, allow(...adminTeam), async (req,res)=> res.json(await all(`SELECT a.*, u.name user_name FROM worker_availability a JOIN users u ON u.id=a.user_id ORDER BY a.date DESC,u.name LIMIT 1000`)));
 app.post('/api/availability', auth, allow(...adminTeam), async (req,res)=>{ const b=req.body||{}; const r=await run(`INSERT INTO worker_availability(user_id,date,status,notes) VALUES(?,?,?,?) ON CONFLICT(user_id,date) DO UPDATE SET status=excluded.status, notes=excluded.notes`,[b.user_id,b.date,b.status||'available',b.notes||'']); res.json({ok:true,id:r.id}); });
 app.get('/api/legacy/menus-status', auth, allow(...adminTeam), async (req,res)=>{
-  res.json({ok:true,version:'2.0.8',replicated:['dashboard','control diario','operaciones','clientes','informes','calendario','realizados','operarios','tarifas','gps','produccion','finanzas','documentacion','vista operario','albaranes','contraseñas','ajustes ERP','subventanas evento','subventanas operario','subventanas cliente','roles por evento','checklists','liquidaciones','conflictos','firma pública']});
+  res.json({ok:true,version:'2.0.9',replicated:['dashboard','control diario','operaciones','clientes','informes','calendario','realizados','operarios','tarifas','gps','produccion','finanzas','documentacion','vista operario','albaranes','contraseñas','ajustes ERP','subventanas evento','subventanas operario','subventanas cliente','roles por evento','checklists','liquidaciones','conflictos','firma pública']});
 });
 
-app.get('/api/health', (req,res)=> res.json({ok:true, app:'Marfan Crew 2.0.8 Replica Operativa Total', clean:true, geofence:true, pdfA4Pro:true, vaultEncrypted:true, auditLogs:true, controlTower:true, settlements:true, checklists:true, publicDeliverySignature:true}));
+app.get('/api/db-status', auth, allow(...adminRoles), async (req,res)=>{
+  const { absoluteDb } = require('./db');
+  let stat = null;
+  try{ stat = fs.existsSync(absoluteDb) ? fs.statSync(absoluteDb) : null; }catch(e){}
+  res.json({ ok:true, db_path:absoluteDb, exists:!!stat, size_bytes:stat?stat.size:0, persistent: absoluteDb.includes('/data') || absoluteDb.includes('vol_') || absoluteDb.includes('railway') });
+});
 
-migrate().then(async()=>{ await migratePasswordVaultEncryption(); const email=process.env.DEFAULT_ADMIN_EMAIL||'admin@marfan.local'; const pass=process.env.DEFAULT_ADMIN_PASSWORD||'Admin1234!'; const exists=await get('SELECT id FROM users WHERE email=?',[email]); if(!exists) await run('INSERT INTO users(name,email,password_hash,role,active,position) VALUES(?,?,?,?,?,?)',['Super Admin',email,await bcrypt.hash(pass,10),'super_admin',1,'Dirección']); if(process.env.AUTO_IMPORT_LEGACY_DATA !== 'false'){ try{ const r=await importLegacyData({get,run}); console.log('[Marfan 2.0.6] Datos V62.49 importados', r); }catch(e){ console.warn('[Marfan 2.0.6] Import legacy warning', e.message); } } app.listen(PORT,()=>console.log(`Marfan Crew 2.0.8 running on ${PORT}`)); }).catch(err=>{ console.error(err); process.exit(1); });
+app.get('/api/health', (req,res)=> res.json({ok:true, app:'Marfan Crew 2.0.9 Replica Operativa Total', clean:true, geofence:true, pdfA4Pro:true, vaultEncrypted:true, auditLogs:true, controlTower:true, settlements:true, checklists:true, publicDeliverySignature:true}));
+
+migrate().then(async()=>{ await migratePasswordVaultEncryption(); const email=process.env.DEFAULT_ADMIN_EMAIL||'admin@marfan.local'; const pass=process.env.DEFAULT_ADMIN_PASSWORD||'Admin1234!'; const exists=await get('SELECT id FROM users WHERE email=?',[email]); if(!exists) await run('INSERT INTO users(name,email,password_hash,role,active,position) VALUES(?,?,?,?,?,?)',['Super Admin',email,await bcrypt.hash(pass,10),'super_admin',1,'Dirección']); if(process.env.AUTO_IMPORT_LEGACY_DATA !== 'false'){ try{ const r=await importLegacyData({get,run}); console.log('[Marfan 2.0.6] Datos V62.49 importados', r); }catch(e){ console.warn('[Marfan 2.0.6] Import legacy warning', e.message); } } app.listen(PORT,()=>console.log(`Marfan Crew 2.0.9 running on ${PORT}`)); }).catch(err=>{ console.error(err); process.exit(1); });

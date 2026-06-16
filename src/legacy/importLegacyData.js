@@ -32,12 +32,15 @@ async function importLegacyData({get, run}){
     const first=String(w.first_name||'').trim(); const last=String(w.last_name||'').trim();
     const name=`${first} ${last}`.trim(); if(!name) continue;
     const email=operatorEmail(w); const phone=normalPhone(w.phone); const dni=String(w.dni||'').trim();
-    const existing = await get('SELECT id FROM users WHERE (dni<>\'\' AND dni=?) OR lower(email)=lower(?) OR (phone<>\'\' AND phone=?)',[dni,email,phone]);
-    const params=[name,email,phone,hash,'operator',1,12,'Operario',dni,w.social_security_number||'',w.iban||'',w.iban||'',first,last,'Importado desde V62.49. Login por teléfono o email. Contraseña inicial: Marfan1234*'];
+    const existing = await get('SELECT id, role, password_hash FROM users WHERE (dni<>\'\' AND dni=?) OR lower(email)=lower(?) OR (phone<>\'\' AND phone=?)',[dni,email,phone]);
+    const notes='Importado desde V62.49. Login por teléfono o email. Contraseña inicial: Marfan1234*';
     if(existing){
-      await run('UPDATE users SET name=?,email=?,phone=?,password_hash=COALESCE(password_hash,?),role=?,active=?,hourly_rate=?,position=?,dni=?,social_security_number=?,iban=?,bank_iban=?,first_name=?,last_name=?,notes=? WHERE id=?',[...params,existing.id]);
+      // V2.0.9: NO machacar rol ni contraseña al actualizar la app.
+      // Si un operario se marca como Jefe de equipo, se mantiene para siempre.
+      await run(`UPDATE users SET name=?,email=?,phone=?,active=1,hourly_rate=COALESCE(hourly_rate,12),position=COALESCE(NULLIF(position,''),'Operario'),dni=?,social_security_number=?,iban=?,bank_iban=?,first_name=?,last_name=?,notes=COALESCE(NULLIF(notes,''),?) WHERE id=?`,[name,email,phone,dni,w.social_security_number||'',w.iban||'',w.iban||'',first,last,notes,existing.id]);
       operatorsUpdated++;
     }else{
+      const params=[name,email,phone,hash,'operator',1,12,'Operario',dni,w.social_security_number||'',w.iban||'',w.iban||'',first,last,notes];
       await run('INSERT INTO users(name,email,phone,password_hash,role,active,hourly_rate,position,dni,social_security_number,iban,bank_iban,first_name,last_name,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',params);
       operatorsImported++;
     }

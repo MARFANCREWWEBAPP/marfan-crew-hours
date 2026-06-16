@@ -1,7 +1,7 @@
 {
-  "name": "marfan-crew-2-0-8-replica-operativa-total",
-  "version": "2.0.8",
-  "description": "Marfan Crew 2.0.8: réplica operativa total de V62.49 sobre base limpia 2.0, Railway ready.",
+  "name": "marfan-crew-2-0-9-persistencia-login-jefe-equipo",
+  "version": "2.0.9",
+  "description": "Marfan Crew 2.0.9: persistencia real, login separado Admin/Operario y jefe de equipo con firma de cliente.",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

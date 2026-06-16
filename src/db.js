@@ -3,9 +3,20 @@ const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 require('dotenv').config();
 
-const dbFile = process.env.DATABASE_FILE || process.env.SQLITE_PATH || process.env.DB_PATH || './data/marfan.sqlite';
+// V2.0.9 PERSISTENCIA REAL PARA RAILWAY
+// Prioridad: Railway Volume > /data > variable DB > carpeta local.
+// Así la información NO se pierde al actualizar la app si hay Volume montado.
+const persistentDir = process.env.RAILWAY_VOLUME_MOUNT_PATH
+  || process.env.PERSISTENT_DATA_DIR
+  || process.env.DATA_DIR
+  || (fs.existsSync('/data') ? '/data' : null);
+const dbFile = process.env.DATABASE_FILE
+  || process.env.SQLITE_PATH
+  || process.env.DB_PATH
+  || (persistentDir ? path.join(persistentDir, 'marfan-crew-2.sqlite') : './data/marfan.sqlite');
 const absoluteDb = path.resolve(process.cwd(), dbFile);
 fs.mkdirSync(path.dirname(absoluteDb), { recursive: true });
+console.log('[DB] Marfan Crew usando base de datos:', absoluteDb);
 const db = new sqlite3.Database(absoluteDb);
 
 function run(sql, params = []) {
@@ -296,6 +307,8 @@ async function migrate() {
   await addCol('delivery_notes','public_token_expires_at','TEXT DEFAULT ""');
   await addCol('delivery_notes','client_observations','TEXT DEFAULT ""');
   await addCol('delivery_notes','emailed_at','TEXT DEFAULT ""');
+  await addCol('delivery_notes','team_lead_user_id','INTEGER DEFAULT NULL');
+  await addCol('delivery_notes','team_lead_name','TEXT DEFAULT ""');
   await addCol('users','available','INTEGER DEFAULT 1');
   await addCol('users','default_day_rate','REAL DEFAULT 0');
   await addCol('users','default_night_rate','REAL DEFAULT 0');
@@ -343,4 +356,4 @@ async function migrate() {
   const defaults = [['Auxiliar montaje',12,15],['Jefe equipo',16,20],['Runner',12,15],['Carretilla',18,22],['Limpieza',11,14]];
   for (const r of defaults) await run('INSERT OR IGNORE INTO rates(id,role,day_rate,night_rate,active) VALUES((SELECT id FROM rates WHERE role=?),?,?,?,1)', [r[0], r[0], r[1], r[2]]).catch(()=>{});
 }
-module.exports = { db, run, get, all, migrate };
+module.exports = { db, run, get, all, migrate, absoluteDb };
