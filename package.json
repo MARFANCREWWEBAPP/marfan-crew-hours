@@ -1,6 +1,6 @@
 {
   "name": "marfan-crew-2-0-9-persistencia-login-jefe-equipo",
-  "version": "2.0.9",
+  "version": "2.1.0",
   "description": "Marfan Crew 2.0.9: persistencia real, login separado Admin/Operario y jefe de equipo con firma de cliente.",
   "main": "src/server.js",
   "scripts": {

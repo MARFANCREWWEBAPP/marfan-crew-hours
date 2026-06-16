@@ -119,13 +119,25 @@ app.get('/api/events', auth, async (req,res)=> {
   res.json(rows);
 });
 app.post('/api/events', auth, allow(...adminTeam), async (req,res)=>{
-  const b=req.body; const r=await run(`INSERT INTO events(title,event_code,client_id,client_name,location,address,google_maps_link,date,start_time,end_time,load_in_time,load_out_time,service_type,status,operational_status,budget,external_cost,transport_cost,other_cost,notes,access_notes,parking_notes,material_notes,crew_notes,production_notes,lat,lng) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[b.title,b.event_code||'',b.client_id||null,b.client_name||'',b.location||'',b.address||'',b.google_maps_link||'',b.date,b.start_time,b.end_time,b.load_in_time||'',b.load_out_time||'',b.service_type||'',b.status||'planned',b.operational_status||'',b.budget||0,b.external_cost||0,b.transport_cost||0,b.other_cost||0,b.notes||'',b.access_notes||'',b.parking_notes||'',b.material_notes||'',b.crew_notes||'',b.production_notes||'',b.lat||null,b.lng||null]);
-  for(const userId of (b.assignments||[])) await run('INSERT OR IGNORE INTO event_assignments(event_id,user_id,hourly_rate) VALUES(?,?,(SELECT hourly_rate FROM users WHERE id=?))',[r.id,userId,userId]);
+  const b=req.body;
+  const simpleAssignments=(b.assignments||[]).map(x=>typeof x==='object'?x:{user_id:x,planned_start:b.start_time,planned_end:b.end_time});
+  const conflicts=await findAssignmentConflicts({eventId:0,date:b.date,start_time:b.start_time,end_time:b.end_time,assignments:simpleAssignments});
+  if(conflicts.length) return res.status(409).json({error:'No se puede crear: hay operarios con horarios solapados en otros eventos.',code:'ASSIGNMENT_TIME_CONFLICT',conflicts});
+  const r=await run(`INSERT INTO events(title,event_code,client_id,client_name,location,address,google_maps_link,date,start_time,end_time,load_in_time,load_out_time,service_type,status,operational_status,budget,external_cost,transport_cost,other_cost,notes,access_notes,parking_notes,material_notes,crew_notes,production_notes,lat,lng) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[b.title,b.event_code||'',b.client_id||null,b.client_name||'',b.location||'',b.address||'',b.google_maps_link||'',b.date,b.start_time,b.end_time,b.load_in_time||'',b.load_out_time||'',b.service_type||'',b.status||'planned',b.operational_status||'',b.budget||0,b.external_cost||0,b.transport_cost||0,b.other_cost||0,b.notes||'',b.access_notes||'',b.parking_notes||'',b.material_notes||'',b.crew_notes||'',b.production_notes||'',b.lat||null,b.lng||null]);
+  for(const a of simpleAssignments){ const userId=Number(a.user_id||a); if(userId) await run('INSERT OR IGNORE INTO event_assignments(event_id,user_id,planned_start,planned_end,hourly_rate) VALUES(?,?,?,?,(SELECT hourly_rate FROM users WHERE id=?))',[r.id,userId,a.planned_start||b.start_time,a.planned_end||b.end_time,userId]); }
   res.status(201).json(await get('SELECT * FROM events WHERE id=?',[r.id]));
 });
 app.put('/api/events/:id', auth, allow(...adminTeam), async (req,res)=>{ const b=req.body; await run(`UPDATE events SET title=?,event_code=?,client_id=?,location=?,address=?,google_maps_link=?,date=?,start_time=?,end_time=?,load_in_time=?,load_out_time=?,service_type=?,status=?,operational_status=?,budget=?,external_cost=?,transport_cost=?,other_cost=?,notes=?,access_notes=?,parking_notes=?,material_notes=?,crew_notes=?,production_notes=?,lat=?,lng=? WHERE id=?`,[b.title,b.event_code||'',b.client_id||null,b.location||'',b.address||'',b.google_maps_link||'',b.date,b.start_time,b.end_time,b.load_in_time||'',b.load_out_time||'',b.service_type||'',b.status||'planned',b.operational_status||'',b.budget||0,b.external_cost||0,b.other_cost||0,b.transport_cost||0,b.notes||'',b.access_notes||'',b.parking_notes||'',b.material_notes||'',b.crew_notes||'',b.production_notes||'',b.lat||null,b.lng||null,req.params.id]); res.json(await get('SELECT * FROM events WHERE id=?',[req.params.id])); });
 app.get('/api/events/:id/assignments', auth, async (req,res)=> res.json(await all(`SELECT a.*, u.name, u.role, u.phone FROM event_assignments a JOIN users u ON u.id=a.user_id WHERE event_id=? ORDER BY u.name`,[req.params.id])));
-app.post('/api/events/:id/assignments', auth, allow(...adminTeam), async (req,res)=>{ const {user_ids=[]}=req.body; await run('DELETE FROM event_assignments WHERE event_id=?',[req.params.id]); for(const userId of user_ids) await run('INSERT OR IGNORE INTO event_assignments(event_id,user_id,hourly_rate) VALUES(?,?,(SELECT hourly_rate FROM users WHERE id=?))',[req.params.id,userId,userId]); res.json({ok:true}); });
+app.post('/api/events/:id/assignments', auth, allow(...adminTeam), async (req,res)=>{ 
+  const ev=await get('SELECT * FROM events WHERE id=?',[req.params.id]); if(!ev) return res.status(404).json({error:'Evento no encontrado'});
+  const {user_ids=[]}=req.body; const assignments=user_ids.map(x=>typeof x==='object'?x:{user_id:x,planned_start:ev.start_time,planned_end:ev.end_time});
+  const conflicts=await findAssignmentConflicts({eventId:Number(req.params.id),date:ev.date,start_time:ev.start_time,end_time:ev.end_time,assignments});
+  if(conflicts.length) return res.status(409).json({error:'No se puede asignar: hay operarios con horarios solapados en otros eventos.',code:'ASSIGNMENT_TIME_CONFLICT',conflicts});
+  await run('DELETE FROM event_assignments WHERE event_id=?',[req.params.id]); 
+  for(const a of assignments){ const userId=Number(a.user_id||a); if(userId) await run('INSERT OR IGNORE INTO event_assignments(event_id,user_id,planned_start,planned_end,hourly_rate) VALUES(?,?,?,?,(SELECT hourly_rate FROM users WHERE id=?))',[req.params.id,userId,a.planned_start||ev.start_time,a.planned_end||ev.end_time,userId]); } 
+  res.json({ok:true}); 
+});
 
 app.get('/api/rates', auth, allow(...adminRoles), async (req,res)=> res.json(await all('SELECT * FROM rates ORDER BY role')));
 app.post('/api/rates', auth, allow(...adminRoles), async (req,res)=>{ const {role,day_rate=0,night_rate=0,active=1}=req.body; const r=await run('INSERT INTO rates(role,day_rate,night_rate,active) VALUES(?,?,?,?)',[role,day_rate,night_rate,active?1:0]); res.status(201).json(await get('SELECT * FROM rates WHERE id=?',[r.id])); });
@@ -561,18 +573,128 @@ app.post('/api/login-phone', async (req,res)=>{
 });
 app.post('/api/forgot-password', (req,res)=>res.json({ok:true,message:'Solicitud registrada. Contacta con administración.'}));
 app.get('/api/job-rates', auth, allow(...adminTeam), async (req,res)=>res.json(await all('SELECT * FROM rates ORDER BY role')));
+
+
+// ---------- V2.1.0 CONTROL SOLAPAMIENTO HORARIO ----------
+function minutesFromHHMM(value){
+  const txt=String(value||'').trim();
+  const m=txt.match(/^(\d{1,2}):(\d{2})/);
+  if(!m) return null;
+  const h=Math.max(0,Math.min(23,Number(m[1])));
+  const min=Math.max(0,Math.min(59,Number(m[2])));
+  return h*60+min;
+}
+function normalizeTimeRange(start,end){
+  let s=minutesFromHHMM(start), e=minutesFromHHMM(end);
+  if(s===null || e===null) return null;
+  // Si termina antes o igual que empieza, se considera turno que cruza medianoche.
+  if(e<=s) e+=1440;
+  return {start:s,end:e};
+}
+function rangesOverlap(aStart,aEnd,bStart,bEnd){
+  const a=normalizeTimeRange(aStart,aEnd), b=normalizeTimeRange(bStart,bEnd);
+  if(!a || !b) return false;
+  return a.start < b.end && b.start < a.end;
+}
+async function findAssignmentConflicts({eventId=0,date,start_time,end_time,assignments=[]}){
+  const conflicts=[];
+  const seen=new Set();
+  for(const raw of assignments){
+    const userId=Number(raw.user_id||raw);
+    if(!userId) continue;
+    if(seen.has(userId)){
+      const u=await get('SELECT id,name FROM users WHERE id=?',[userId]);
+      conflicts.push({user_id:userId,user_name:u?.name||`Operario ${userId}`,type:'duplicate',message:`${u?.name||'Operario'} está repetido en este mismo evento.`});
+      continue;
+    }
+    seen.add(userId);
+    const plannedStart=raw.planned_start||start_time;
+    const plannedEnd=raw.planned_end||end_time;
+    const rows=await all(`
+      SELECT a.id assignment_id,a.planned_start,a.planned_end,a.role_label,
+             e.id event_id,e.title event_title,e.date,e.start_time,e.end_time,e.location,
+             u.name user_name,u.phone
+      FROM event_assignments a
+      JOIN events e ON e.id=a.event_id
+      JOIN users u ON u.id=a.user_id
+      WHERE a.user_id=?
+        AND e.date=?
+        AND e.id<>?
+        AND COALESCE(e.status,'') NOT IN ('cancelled','cancelado')
+      ORDER BY e.start_time,e.title
+    `,[userId,date,Number(eventId||0)]);
+    for(const r of rows){
+      const otherStart=r.planned_start||r.start_time;
+      const otherEnd=r.planned_end||r.end_time;
+      if(rangesOverlap(plannedStart,plannedEnd,otherStart,otherEnd)){
+        conflicts.push({
+          user_id:userId,
+          user_name:r.user_name,
+          phone:r.phone,
+          event_id:r.event_id,
+          event_title:r.event_title,
+          date:r.date,
+          current_start:plannedStart,
+          current_end:plannedEnd,
+          conflict_start:otherStart,
+          conflict_end:otherEnd,
+          location:r.location,
+          type:'time_overlap',
+          message:`${r.user_name} ya está asignado a “${r.event_title}” de ${otherStart} a ${otherEnd}.`
+        });
+      }
+    }
+  }
+  return conflicts;
+}
+async function workersAvailabilityForRange({eventId=0,date,start_time,end_time}){
+  const workers=await all(`SELECT id,name,email,phone,role,active,position,operator_role_name,hourly_rate,default_day_rate,default_night_rate FROM users WHERE role IN ('operator','team_lead') AND COALESCE(active,1)=1 ORDER BY name`);
+  const out=[];
+  for(const w of workers){
+    const conflicts=await findAssignmentConflicts({eventId,date,start_time,end_time,assignments:[{user_id:w.id,planned_start:start_time,planned_end:end_time}]});
+    out.push({...w, available:conflicts.length===0, conflicts});
+  }
+  return out;
+}
+
 app.get('/api/event-form-data', auth, allow(...adminTeam), async (req,res)=>{
   const id=Number(req.query.id||0);
   const event=id?await get('SELECT * FROM events WHERE id=?',[id]):null;
   const assignments=id?await all(`SELECT a.*, u.name,u.phone,u.email FROM event_assignments a JOIN users u ON u.id=a.user_id WHERE a.event_id=? ORDER BY u.name`,[id]):[];
-  const users=await all(`SELECT id,name,email,phone,role,active,position,operator_role_name,hourly_rate,default_day_rate,default_night_rate FROM users WHERE role IN ('operator','team_lead') ORDER BY name`);
+  const baseDate=req.query.date || event?.date || null;
+  const baseStart=req.query.start_time || event?.start_time || null;
+  const baseEnd=req.query.end_time || event?.end_time || null;
+  const users=(baseDate && baseStart && baseEnd)
+    ? await workersAvailabilityForRange({eventId:id,date:baseDate,start_time:baseStart,end_time:baseEnd})
+    : await all(`SELECT id,name,email,phone,role,active,position,operator_role_name,hourly_rate,default_day_rate,default_night_rate, 1 available FROM users WHERE role IN ('operator','team_lead') AND COALESCE(active,1)=1 ORDER BY name`);
   const roles=await all('SELECT * FROM rates ORDER BY role');
   const clients=await all('SELECT * FROM clients ORDER BY name');
   res.json({ok:true,event,assignments,users,roles,clients});
 });
+app.get('/api/assignment-availability', auth, allow(...adminTeam), async (req,res)=>{
+  const date=req.query.date;
+  const start_time=req.query.start_time;
+  const end_time=req.query.end_time;
+  const eventId=Number(req.query.event_id||0);
+  if(!date||!start_time||!end_time) return res.status(400).json({error:'Faltan fecha, hora inicio u hora fin'});
+  res.json({ok:true, workers:await workersAvailabilityForRange({eventId,date,start_time,end_time})});
+});
+app.post('/api/assignment-conflicts/check', auth, allow(...adminTeam), async (req,res)=>{
+  const b=req.body||{};
+  const conflicts=await findAssignmentConflicts({eventId:Number(b.id||b.event_id||0),date:b.date,start_time:b.start_time,end_time:b.end_time,assignments:Array.isArray(b.assignments)?b.assignments:[]});
+  res.json({ok:true,blocked:conflicts.length>0,conflicts});
+});
 app.post('/api/event-form-save', auth, allow(...adminTeam), async (req,res)=>{
   const b=req.body||{}; const id=Number(b.id||req.query.id||0); const assignments=Array.isArray(b.assignments)?b.assignments:[];
   const payload={title:b.title||b.name||'Evento',event_code:b.event_code||'',client_id:b.client_id||null,location:b.location||'',address:b.address||'',google_maps_link:b.google_maps_link||'',date:b.date||b.event_date,start_time:b.start_time||'09:00',end_time:b.end_time||'18:00',load_in_time:b.load_in_time||'',load_out_time:b.load_out_time||'',service_type:b.service_type||'',status:b.status||'planned',operational_status:b.operational_status||'',budget:Number(b.budget||0),external_cost:Number(b.external_cost||0),transport_cost:Number(b.transport_cost||0),other_cost:Number(b.other_cost||0),notes:b.notes||'',access_notes:b.access_notes||'',parking_notes:b.parking_notes||'',material_notes:b.material_notes||'',crew_notes:b.crew_notes||'',production_notes:b.production_notes||'',lat:b.lat||null,lng:b.lng||null};
+  const conflicts = await findAssignmentConflicts({eventId:id,date:payload.date,start_time:payload.start_time,end_time:payload.end_time,assignments});
+  if(conflicts.length){
+    return res.status(409).json({
+      error:'No se puede guardar: hay operarios con horarios solapados en otros eventos.',
+      code:'ASSIGNMENT_TIME_CONFLICT',
+      conflicts
+    });
+  }
   let eventId=id;
   if(eventId){ await run(`UPDATE events SET title=?,event_code=?,client_id=?,location=?,address=?,google_maps_link=?,date=?,start_time=?,end_time=?,load_in_time=?,load_out_time=?,service_type=?,status=?,operational_status=?,budget=?,external_cost=?,transport_cost=?,other_cost=?,notes=?,access_notes=?,parking_notes=?,material_notes=?,crew_notes=?,production_notes=?,lat=?,lng=? WHERE id=?`,[payload.title,payload.event_code,payload.client_id,payload.location,payload.address,payload.google_maps_link,payload.date,payload.start_time,payload.end_time,payload.load_in_time,payload.load_out_time,payload.service_type,payload.status,payload.operational_status,payload.budget,payload.external_cost,payload.transport_cost,payload.other_cost,payload.notes,payload.access_notes,payload.parking_notes,payload.material_notes,payload.crew_notes,payload.production_notes,payload.lat,payload.lng,eventId]); }
   else { const r=await run(`INSERT INTO events(title,event_code,client_id,location,address,google_maps_link,date,start_time,end_time,load_in_time,load_out_time,service_type,status,operational_status,budget,external_cost,transport_cost,other_cost,notes,access_notes,parking_notes,material_notes,crew_notes,production_notes,lat,lng) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[payload.title,payload.event_code,payload.client_id,payload.location,payload.address,payload.google_maps_link,payload.date,payload.start_time,payload.end_time,payload.load_in_time,payload.load_out_time,payload.service_type,payload.status,payload.operational_status,payload.budget,payload.external_cost,payload.transport_cost,payload.other_cost,payload.notes,payload.access_notes,payload.parking_notes,payload.material_notes,payload.crew_notes,payload.production_notes,payload.lat,payload.lng]); eventId=r.id; }
@@ -605,6 +727,6 @@ app.get('/api/db-status', auth, allow(...adminRoles), async (req,res)=>{
   res.json({ ok:true, db_path:absoluteDb, exists:!!stat, size_bytes:stat?stat.size:0, persistent: absoluteDb.includes('/data') || absoluteDb.includes('vol_') || absoluteDb.includes('railway') });
 });
 
-app.get('/api/health', (req,res)=> res.json({ok:true, app:'Marfan Crew 2.0.9 Replica Operativa Total', clean:true, geofence:true, pdfA4Pro:true, vaultEncrypted:true, auditLogs:true, controlTower:true, settlements:true, checklists:true, publicDeliverySignature:true}));
+app.get('/api/health', (req,res)=> res.json({ok:true, app:'Marfan Crew 2.1.0 Control Solapamientos', clean:true, geofence:true, pdfA4Pro:true, vaultEncrypted:true, auditLogs:true, controlTower:true, settlements:true, checklists:true, publicDeliverySignature:true}));
 
-migrate().then(async()=>{ await migratePasswordVaultEncryption(); const email=process.env.DEFAULT_ADMIN_EMAIL||'admin@marfan.local'; const pass=process.env.DEFAULT_ADMIN_PASSWORD||'Admin1234!'; const exists=await get('SELECT id FROM users WHERE email=?',[email]); if(!exists) await run('INSERT INTO users(name,email,password_hash,role,active,position) VALUES(?,?,?,?,?,?)',['Super Admin',email,await bcrypt.hash(pass,10),'super_admin',1,'Dirección']); if(process.env.AUTO_IMPORT_LEGACY_DATA !== 'false'){ try{ const r=await importLegacyData({get,run}); console.log('[Marfan 2.0.6] Datos V62.49 importados', r); }catch(e){ console.warn('[Marfan 2.0.6] Import legacy warning', e.message); } } app.listen(PORT,()=>console.log(`Marfan Crew 2.0.9 running on ${PORT}`)); }).catch(err=>{ console.error(err); process.exit(1); });
+migrate().then(async()=>{ await migratePasswordVaultEncryption(); const email=process.env.DEFAULT_ADMIN_EMAIL||'admin@marfan.local'; const pass=process.env.DEFAULT_ADMIN_PASSWORD||'Admin1234!'; const exists=await get('SELECT id FROM users WHERE email=?',[email]); if(!exists) await run('INSERT INTO users(name,email,password_hash,role,active,position) VALUES(?,?,?,?,?,?)',['Super Admin',email,await bcrypt.hash(pass,10),'super_admin',1,'Dirección']); if(process.env.AUTO_IMPORT_LEGACY_DATA !== 'false'){ try{ const r=await importLegacyData({get,run}); console.log('[Marfan 2.0.6] Datos V62.49 importados', r); }catch(e){ console.warn('[Marfan 2.0.6] Import legacy warning', e.message); } } app.listen(PORT,()=>console.log(`Marfan Crew 2.1.0 running on ${PORT}`)); }).catch(err=>{ console.error(err); process.exit(1); });

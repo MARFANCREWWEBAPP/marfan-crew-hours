@@ -380,7 +380,7 @@ function loginFormHtml(kind){
   return `<form id="loginForm" class="login-form-block"><div class="field"><label>${isAdmin?'Email administrador':'Teléfono o email operario'}</label><input name="login" value="${isAdmin?'admin@marfan.local':''}" placeholder="${isAdmin?'admin@marfan.local':'Ej: 645252250'}" required></div><div class="field"><label>Contraseña</label><input name="password" type="password" value="${isAdmin?'Admin1234!':''}" placeholder="Contraseña" required></div><button class="blue full">Entrar como ${isAdmin?'administrador':'operario'}</button></form>`;
 }
 renderLogin = function(active='admin'){
-  app.innerHTML=`<main class="login"><section class="login-card login-card-wide"><div class="brand big"><img src="/logo.png" onerror="this.style.display='none'"><div><h1>Marfan Crew 2.0.9</h1><p>Base limpia · datos persistentes · login separado</p></div></div><div class="login-tabs"><button class="${active==='admin'?'active':''}" id="tabAdmin">Login administrador</button><button class="${active==='operator'?'active':''}" id="tabOperator">Login operario</button></div><div id="loginBox">${loginFormHtml(active)}</div><p class="muted small login-help"><b>Admin inicial:</b> admin@marfan.local / Admin1234!<br><b>Operarios:</b> teléfono o email + clave asignada desde administración.</p></section></main>`;
+  app.innerHTML=`<main class="login"><section class="login-card login-card-wide"><div class="brand big"><img src="/logo.png" onerror="this.style.display='none'"><div><h1>Marfan Crew 2.1.0</h1><p>Base limpia · datos persistentes · login separado</p></div></div><div class="login-tabs"><button class="${active==='admin'?'active':''}" id="tabAdmin">Login administrador</button><button class="${active==='operator'?'active':''}" id="tabOperator">Login operario</button></div><div id="loginBox">${loginFormHtml(active)}</div><p class="muted small login-help"><b>Admin inicial:</b> admin@marfan.local / Admin1234!<br><b>Operarios:</b> teléfono o email + clave asignada desde administración.</p></section></main>`;
   $('#tabAdmin').onclick=()=>renderLogin('admin');
   $('#tabOperator').onclick=()=>renderLogin('operator');
   $('#loginForm').onsubmit=async e=>{e.preventDefault(); try{ const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))}); token=r.token; me=r.user; localStorage.setItem('token',token); localStorage.setItem('me',JSON.stringify(me)); state.page = ['operator','client'].includes(me.role) ? 'vista-operario' : 'dashboard'; await boot(); }catch(err){toast(err.message)}};
@@ -394,7 +394,7 @@ visiblePages = function(){
 const _renderShellV209 = renderShell;
 renderShell = function(){
   const groups={}; visiblePages().forEach(p=>(groups[p[0]]??=[]).push(p));
-  app.innerHTML=`<div class="shell"><aside class="side"><div class="brand"><img src="/logo.png" onerror="this.remove()"><div><h1>MARFAN CREW</h1><p>App 2.0.9</p></div></div><div class="nav">${Object.entries(groups).map(([g,items])=>`<div class="navgroup"><span>${g}</span>${items.map(p=>`<button data-page="${p[1]}" class="${state.page===p[1]?'active':''}">${p[2]}</button>`).join('')}</div>`).join('')}</div><div class="userbox"><p>${esc(me?.name||'')}<br><b>${roleLabel(me?.role)}</b></p><button class="secondary full" id="logout">Salir</button></div></aside><main class="main" id="main"></main></div>`;
+  app.innerHTML=`<div class="shell"><aside class="side"><div class="brand"><img src="/logo.png" onerror="this.remove()"><div><h1>MARFAN CREW</h1><p>App 2.1.0</p></div></div><div class="nav">${Object.entries(groups).map(([g,items])=>`<div class="navgroup"><span>${g}</span>${items.map(p=>`<button data-page="${p[1]}" class="${state.page===p[1]?'active':''}">${p[2]}</button>`).join('')}</div>`).join('')}</div><div class="userbox"><p>${esc(me?.name||'')}<br><b>${roleLabel(me?.role)}</b></p><button class="secondary full" id="logout">Salir</button></div></aside><main class="main" id="main"></main></div>`;
   document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{state.page=b.dataset.page; renderShell();});
   $('#logout').onclick=()=>{localStorage.clear();token=null;me=null;renderLogin('admin')}; renderPage();
 };
@@ -424,3 +424,56 @@ const _dashboardV209 = dashboard;
 dashboard = function(){ _dashboardV209(); api('/api/db-status').then(d=>{ const main=$('#main'); if(main) main.insertAdjacentHTML('beforeend', `<section class="card"><h3>Persistencia de datos</h3><p class="muted">Base de datos: <b>${esc(d.persistent?'PERSISTENTE':'LOCAL')}</b> · ${esc(d.db_path)} · ${(d.size_bytes/1024).toFixed(1)} KB</p></section>`); }).catch(()=>{}); };
 
 boot();
+
+// ---------- V2.1.0 CONTROL SOLAPAMIENTO HORARIO EN FRONTEND ----------
+function conflictText(c){ return `${esc(c.user_name||'Operario')} ocupado en ${esc(c.event_title||'otro evento')} · ${esc(c.conflict_start||'')} - ${esc(c.conflict_end||'')}`; }
+function workerOptionAvailability(u){
+  const disabled = u.available===false ? 'disabled' : '';
+  const reason = u.available===false && u.conflicts?.length ? ` — OCUPADO: ${u.conflicts.map(c=>`${c.event_title} ${c.conflict_start}-${c.conflict_end}`).join(' / ')}` : '';
+  return `<option value="${u.id}" ${disabled} data-rate="${Number(u.hourly_rate||u.default_day_rate||0)}" data-role="${esc(u.operator_role_name||u.position||'')}" data-islead="${u.role==='team_lead'?'1':'0'}">${esc(u.name)} · ${roleLabel(u.role)} · ${esc(u.phone||'')}${reason}</option>`;
+}
+function assignmentRowV210(a={}, workersOverride=null){
+  const workers=workersOverride || (state.users||[]).filter(u=>['operator','team_lead'].includes(u.role));
+  const rid='ass_'+Math.random().toString(36).slice(2);
+  return `<div class="assignment-row" data-row="1"><select name="user_id" id="${rid}" required><option value="">Seleccionar operario disponible</option>${workers.map(workerOptionAvailability).join('')}</select><input name="role_label" placeholder="Rol en evento / tarea" value="${esc(a.role_label||'')}"><input name="planned_start" type="time" value="${esc(a.planned_start||'')}"><input name="planned_end" type="time" value="${esc(a.planned_end||'')}"><input name="hourly_rate" type="number" step="0.01" placeholder="€/h" value="${Number(a.hourly_rate||0)}"><label class="check"><input name="is_team_lead" type="checkbox" ${a.is_team_lead?'checked':''}> Jefe de equipo / firma cliente</label><button type="button" class="secondary" onclick="this.closest('.assignment-row').remove(); refreshAssignmentAvailabilityV210();">Quitar</button></div>`;
+}
+async function refreshAssignmentAvailabilityV210(){
+  const f=document.querySelector('#f.event-form-pro'); if(!f) return;
+  const date=f.elements.date?.value, start=f.elements.start_time?.value, end=f.elements.end_time?.value;
+  const eventId=Number(f.dataset.eventId||0);
+  const panel=document.getElementById('availabilityPanel');
+  if(!date||!start||!end){ if(panel) panel.innerHTML='<span class="muted">Indica fecha y horario para ver operarios disponibles.</span>'; return; }
+  try{
+    const out=await api(`/api/assignment-availability?date=${encodeURIComponent(date)}&start_time=${encodeURIComponent(start)}&end_time=${encodeURIComponent(end)}&event_id=${eventId}`);
+    const workers=out.workers||[];
+    const conflicts=workers.filter(w=>w.available===false);
+    const selects=[...document.querySelectorAll('.assignment-row select[name=user_id]')];
+    selects.forEach(sel=>{
+      const current=sel.value;
+      sel.innerHTML='<option value="">Seleccionar operario disponible</option>'+workers.map(workerOptionAvailability).join('');
+      if(current){
+        sel.value=current;
+        const selectedWorker=workers.find(w=>String(w.id)===String(current));
+        if(selectedWorker?.available===false){ sel.classList.add('invalid-select'); } else { sel.classList.remove('invalid-select'); }
+      }
+    });
+    if(panel){
+      panel.innerHTML = conflicts.length
+        ? `<div class="alert danger"><b>Operarios ocupados en este horario:</b><br>${conflicts.map(w=>`${esc(w.name)}: ${w.conflicts.map(conflictText).join(' · ')}`).join('<br>')}</div>`
+        : `<div class="alert ok"><b>Horario libre:</b> todos los operarios activos están disponibles para este tramo.</div>`;
+    }
+  }catch(e){ if(panel) panel.innerHTML=`<div class="alert danger">${esc(e.message)}</div>`; }
+}
+
+eventModal = async function(id=null, preDate=''){
+  const isEdit=!!id;
+  const data=await api(`/api/event-form-data${id?'?id='+id:''}`).catch(()=>({event:null,assignments:[],clients:state.clients,users:state.users,rates:state.rates}));
+  const ev=data.event||{}; const assigns=data.assignments||[]; const clients=data.clients||state.clients||[]; const workers=data.users||state.users||[];
+  modal(`<h3>${isEdit?'Editar evento completo':'Crear evento completo'}</h3><form id="f" class="formgrid event-form-pro" data-event-id="${id||0}"><input name="title" placeholder="Nombre del evento" value="${esc(ev.title||'')}" required><input name="event_code" placeholder="Código evento" value="${esc(ev.event_code||'')}"><select name="client_id"><option value="">Cliente</option>${clients.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><input name="date" type="date" value="${esc(ev.date||preDate||new Date().toISOString().slice(0,10))}" required><input name="start_time" type="time" value="${esc(ev.start_time||'09:00')}" required><input name="end_time" type="time" value="${esc(ev.end_time||'18:00')}" required><input name="load_in_time" type="time" value="${esc(ev.load_in_time||'')}"><input name="load_out_time" type="time" value="${esc(ev.load_out_time||'')}"><input name="location" placeholder="Lugar" value="${esc(ev.location||'')}"><input name="address" placeholder="Dirección" value="${esc(ev.address||'')}"><input name="google_maps_link" placeholder="Google Maps" value="${esc(ev.google_maps_link||'')}"><input name="service_type" placeholder="Tipo de servicio" value="${esc(ev.service_type||'')}"><select name="status"><option value="planned">Planificado</option><option value="confirmed">Confirmado</option><option value="done">Realizado</option><option value="cancelled">Cancelado</option></select><input name="budget" type="number" step="0.01" placeholder="Presupuesto" value="${Number(ev.budget||0)}"><input name="external_cost" type="number" step="0.01" placeholder="Coste externo" value="${Number(ev.external_cost||0)}"><input name="transport_cost" type="number" step="0.01" placeholder="Transporte" value="${Number(ev.transport_cost||0)}"><input name="other_cost" type="number" step="0.01" placeholder="Otros costes" value="${Number(ev.other_cost||0)}"><textarea name="access_notes" placeholder="Notas de acceso">${esc(ev.access_notes||'')}</textarea><textarea name="parking_notes" placeholder="Parking / descarga">${esc(ev.parking_notes||'')}</textarea><textarea name="material_notes" placeholder="Material">${esc(ev.material_notes||'')}</textarea><textarea name="crew_notes" placeholder="Notas personal">${esc(ev.crew_notes||'')}</textarea><textarea name="production_notes" placeholder="Producción">${esc(ev.production_notes||'')}</textarea><textarea name="notes" placeholder="Notas internas">${esc(ev.notes||'')}</textarea><div class="fullrow card inner"><h4>Equipo asignado</h4><p class="muted"><b>Control automático:</b> si un operario está ocupado en otro evento que se pisa en horario, no aparece disponible y el backend bloquea el guardado.</p><div id="availabilityPanel" class="availability-panel"><span class="muted">Comprobando disponibilidad...</span></div><div id="assignmentRows">${assigns.length?assigns.map(a=>assignmentRowV210(a,workers)).join(''):assignmentRowV210({},workers)}</div><button type="button" class="secondary" id="addAssignment">Añadir operario</button></div><button class="blue">Guardar evento</button><button type="button" class="secondary" onclick="closeModal()">Cancelar</button></form>`);
+  if(ev.client_id) $('#f').elements.client_id.value=ev.client_id; if(ev.status) $('#f').elements.status.value=ev.status;
+  assigns.forEach((a,i)=>{ const rows=[...document.querySelectorAll('.assignment-row')]; if(rows[i]) rows[i].querySelector('[name=user_id]').value=a.user_id; });
+  ['date','start_time','end_time'].forEach(name=>$('#f').elements[name].addEventListener('change', refreshAssignmentAvailabilityV210));
+  $('#addAssignment').onclick=()=>{ $('#assignmentRows').insertAdjacentHTML('beforeend', assignmentRowV210({},workers)); refreshAssignmentAvailabilityV210(); };
+  refreshAssignmentAvailabilityV210();
+  $('#f').onsubmit=async e=>{ e.preventDefault(); const fd=new FormData(e.target); const body=Object.fromEntries(fd); ['budget','external_cost','transport_cost','other_cost'].forEach(k=>body[k]=Number(body[k]||0)); body.assignments=[...document.querySelectorAll('.assignment-row')].map(row=>({ user_id:Number(row.querySelector('[name=user_id]').value||0), role_label:row.querySelector('[name=role_label]').value||'', planned_start:row.querySelector('[name=planned_start]').value||body.start_time, planned_end:row.querySelector('[name=planned_end]').value||body.end_time, hourly_rate:Number(row.querySelector('[name=hourly_rate]').value||0), is_team_lead:row.querySelector('[name=is_team_lead]').checked?1:0, status:'asignado' })).filter(a=>a.user_id); try{ await api('/api/event-form-save',{method:'POST',body:JSON.stringify({...body,id:id||0})}); closeModal(); await loadBase(); state.calendar = state.calendar || {}; state.calendar.date=new Date((body.date||new Date().toISOString().slice(0,10))+'T00:00:00'); renderShell(); toast('Evento guardado con equipo asignado'); }catch(err){ if(err.message.includes('solapados')||err.message.includes('ocupado')) await refreshAssignmentAvailabilityV210(); toast(err.message); } };
+};

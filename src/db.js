@@ -127,6 +127,11 @@ async function migrate() {
     FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   )`);
+
+  // V2.1.0 Control de solapamiento: índices para validar asignaciones por horario
+  await run(`CREATE INDEX IF NOT EXISTS idx_events_date_time ON events(date,start_time,end_time)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_assignments_user_event ON event_assignments(user_id,event_id)`);
+
   await run(`CREATE TABLE IF NOT EXISTS time_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id INTEGER NOT NULL,
