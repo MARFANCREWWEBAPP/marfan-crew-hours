@@ -166,3 +166,107 @@ albaranes = function(){
 };
 
 try { document.querySelectorAll('.brand p').forEach(el=>el.textContent='App 2.0.6'); } catch(e) {}
+
+// ---------- V2.0.7 CALENDARIO OPERATIVO REAL ----------
+state.calendar = state.calendar || { date: new Date(), status: 'all', search: '' };
+function pad2(n){ return String(n).padStart(2,'0'); }
+function ymd(d){ return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
+function monthTitle(d){ return d.toLocaleDateString('es-ES',{month:'long', year:'numeric'}).replace(/^./,m=>m.toUpperCase()); }
+function calendarStatusClass(s){ return `cal-status-${String(s||'planned').replace(/[^a-z0-9_-]/gi,'')}`; }
+function filteredCalendarEvents(){
+  const st = state.calendar || {}; const q = String(st.search||'').toLowerCase().trim(); const status = st.status || 'all';
+  return (state.events||[]).filter(e=>{
+    if(status !== 'all' && String(e.status||'planned') !== status) return false;
+    if(!q) return true;
+    return [e.title,e.client_name,e.location,e.address,e.service_type,e.event_code].some(v=>String(v||'').toLowerCase().includes(q));
+  });
+}
+calendario = function(){
+  state.calendar = state.calendar || { date:new Date(), status:'all', search:'' };
+  const current = new Date(state.calendar.date || new Date()); current.setDate(1);
+  const first = new Date(current.getFullYear(), current.getMonth(), 1);
+  const last = new Date(current.getFullYear(), current.getMonth()+1, 0);
+  const startOffset = (first.getDay()+6)%7; // lunes primero
+  const days = [];
+  for(let i=0;i<startOffset;i++) days.push(null);
+  for(let d=1; d<=last.getDate(); d++) days.push(new Date(current.getFullYear(), current.getMonth(), d));
+  while(days.length % 7 !== 0) days.push(null);
+  const events = filteredCalendarEvents();
+  const byDate = {};
+  events.forEach(e=>{ const key=e.date||''; (byDate[key]??=[]).push(e); });
+  Object.keys(byDate).forEach(k=>byDate[k].sort((a,b)=>String(a.start_time||'').localeCompare(String(b.start_time||''))));
+  const totals = {
+    month: events.filter(e=>(e.date||'').slice(0,7)===ymd(first).slice(0,7)).length,
+    planned: events.filter(e=>e.status==='planned').length,
+    confirmed: events.filter(e=>e.status==='confirmed').length,
+    done: events.filter(e=>['done','realizado'].includes(e.status)).length
+  };
+  $('#main').innerHTML = header('Calendario operativo','Calendario mensual real: crear, abrir, editar, filtrar y controlar eventos por fecha.',
+    `<button class="secondary" onclick="calPrevMonth()">← Mes anterior</button><button class="secondary" onclick="calToday()">Hoy</button><button class="secondary" onclick="calNextMonth()">Mes siguiente →</button><button class="blue" onclick="eventModal()">Crear evento</button>`) +
+    `<section class="card calendar-toolbar">
+      <div><h3>${monthTitle(first)}</h3><p class="muted">${totals.month} eventos este mes · ${totals.confirmed} confirmados · ${totals.done} realizados</p></div>
+      <div class="formgrid calfilters"><select id="calStatus"><option value="all">Todos los estados</option><option value="planned">Planificados</option><option value="confirmed">Confirmados</option><option value="done">Realizados</option><option value="cancelled">Cancelados</option></select><input id="calSearch" placeholder="Buscar evento, cliente, lugar..." value="${esc(state.calendar.search||'')}"></div>
+    </section>
+    <section class="card calendar-pro">
+      <div class="cal-head">${['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'].map(x=>`<b>${x}</b>`).join('')}</div>
+      <div class="cal-grid">${days.map(d=>{
+        if(!d) return '<div class="cal-cell empty"></div>';
+        const key = ymd(d); const list = byDate[key] || []; const today = key === ymd(new Date());
+        return `<div class="cal-cell ${today?'today':''}" ondblclick="eventModal(null,'${key}')"><div class="cal-date"><b>${d.getDate()}</b><button class="mini" onclick="eventModal(null,'${key}')">+</button></div>${list.slice(0,5).map(e=>`<button class="cal-event ${calendarStatusClass(e.status)}" onclick="eventModal(${e.id})"><span>${esc(e.start_time||'--:--')}</span><b>${esc(e.title)}</b><small>${esc(e.client_name||'Sin cliente')}</small></button>`).join('')}${list.length>5?`<p class="muted small">+${list.length-5} más</p>`:''}</div>`;
+      }).join('')}</div>
+    </section>
+    <section class="card"><h3>Lista rápida del mes</h3>${table(['Fecha','Hora','Evento','Cliente','Lugar','Personal','Estado','Acciones'],events.filter(e=>(e.date||'').slice(0,7)===ymd(first).slice(0,7)).sort((a,b)=>String(a.date+a.start_time).localeCompare(String(b.date+b.start_time))).map(e=>[dateES(e.date),`${esc(e.start_time||'')}-${esc(e.end_time||'')}`,esc(e.title),esc(e.client_name||''),esc(e.location||''),e.assigned_count||0,statusLabel(e.status),`<button class="blue smallbtn" onclick="eventModal(${e.id})">Abrir/editar</button>`]))}</section>`;
+  $('#calStatus').value = state.calendar.status || 'all';
+  $('#calStatus').onchange = e=>{ state.calendar.status=e.target.value; calendario(); };
+  $('#calSearch').oninput = e=>{ state.calendar.search=e.target.value; clearTimeout(window.__calSearchTimer); window.__calSearchTimer=setTimeout(()=>calendario(),250); };
+};
+window.calPrevMonth = ()=>{ const d=new Date(state.calendar.date||new Date()); d.setMonth(d.getMonth()-1); state.calendar.date=d; calendario(); };
+window.calNextMonth = ()=>{ const d=new Date(state.calendar.date||new Date()); d.setMonth(d.getMonth()+1); state.calendar.date=d; calendario(); };
+window.calToday = ()=>{ state.calendar.date=new Date(); state.calendar.status='all'; state.calendar.search=''; calendario(); };
+
+eventModal = async function(id=null, preDate=''){
+  try{
+    const ops=(state.users||[]).filter(u=>['operator','team_lead'].includes(u.role));
+    const isEdit = !!id;
+    let ev = isEdit ? await api(`/api/events/${id}`) : {date:preDate||ymd(new Date()), status:'planned'};
+    let assigned = [];
+    if(isEdit){ assigned = (await api(`/api/events/${id}/assignments`).catch(()=>[])).map(a=>Number(a.user_id)); }
+    modal(`<h3>${isEdit?'Editar evento':'Crear evento'}</h3><form id="f" class="formgrid">
+      <input name="title" placeholder="Nombre evento" value="${esc(ev.title||'')}" required>
+      <input name="event_code" placeholder="Código evento" value="${esc(ev.event_code||'')}">
+      <select name="client_id"><option value="">Sin cliente</option>${(state.clients||[]).map(c=>`<option value="${c.id}" ${Number(ev.client_id)===Number(c.id)?'selected':''}>${esc(c.name)}</option>`).join('')}</select>
+      <input name="location" placeholder="Localización" value="${esc(ev.location||'')}">
+      <input name="address" placeholder="Dirección" value="${esc(ev.address||'')}">
+      <input name="google_maps_link" placeholder="Google Maps" value="${esc(ev.google_maps_link||'')}">
+      <input name="date" type="date" value="${esc(ev.date||preDate||'')}" required>
+      <input name="start_time" type="time" value="${esc(ev.start_time||'09:00')}" required>
+      <input name="end_time" type="time" value="${esc(ev.end_time||'18:00')}" required>
+      <input name="load_in_time" type="time" value="${esc(ev.load_in_time||'')}">
+      <input name="load_out_time" type="time" value="${esc(ev.load_out_time||'')}">
+      <input name="service_type" placeholder="Tipo servicio" value="${esc(ev.service_type||'')}">
+      <select name="status"><option value="planned">Planificado</option><option value="confirmed">Confirmado</option><option value="done">Realizado</option><option value="cancelled">Cancelado</option></select>
+      <input name="budget" type="number" step="0.01" placeholder="Presupuesto" value="${Number(ev.budget||0)}">
+      <input name="external_cost" type="number" step="0.01" placeholder="Coste externo" value="${Number(ev.external_cost||0)}">
+      <input name="transport_cost" type="number" step="0.01" placeholder="Transporte" value="${Number(ev.transport_cost||0)}">
+      <input name="other_cost" type="number" step="0.01" placeholder="Otros costes" value="${Number(ev.other_cost||0)}">
+      <input name="lat" placeholder="Latitud evento / geocerca" value="${esc(ev.lat||'')}">
+      <input name="lng" placeholder="Longitud evento / geocerca" value="${esc(ev.lng||'')}">
+      <textarea name="material_notes" placeholder="Material">${esc(ev.material_notes||'')}</textarea>
+      <textarea name="crew_notes" placeholder="Personal">${esc(ev.crew_notes||'')}</textarea>
+      <textarea name="production_notes" placeholder="Producción">${esc(ev.production_notes||'')}</textarea>
+      <div class="fullrow"><b>Equipo asignado</b><div class="assign-grid">${ops.map(o=>`<label class="check"><input type="checkbox" name="assignments" value="${o.id}" ${assigned.includes(Number(o.id))?'checked':''}>${esc(o.name)} <span class="muted small">${roleLabel(o.role)}</span></label>`).join('')}</div></div>
+      <button class="blue">${isEdit?'Guardar cambios':'Crear evento'}</button><button type="button" class="secondary" onclick="closeModal()">Cancelar</button>
+    </form>`);
+    $('#f').elements.status.value = ev.status || 'planned';
+    $('#f').onsubmit=async e=>{
+      e.preventDefault(); const fd=new FormData(e.target); const body=Object.fromEntries(fd); body.assignments=fd.getAll('assignments').map(Number);
+      ['budget','external_cost','transport_cost','other_cost'].forEach(k=>body[k]=Number(body[k]||0));
+      try{
+        if(isEdit){ await api(`/api/events/${id}`,{method:'PUT',body:JSON.stringify(body)}); await api(`/api/events/${id}/assignments`,{method:'POST',body:JSON.stringify({user_ids:body.assignments})}).catch(()=>{}); }
+        else { await api('/api/events',{method:'POST',body:JSON.stringify(body)}); }
+        closeModal(); await loadBase(); state.calendar.date = new Date((body.date||ymd(new Date()))+'T00:00:00'); renderShell(); toast(isEdit?'Evento actualizado':'Evento creado');
+      }catch(err){toast(err.message)}
+    };
+  }catch(err){ toast(err.message); }
+};
+try { document.querySelectorAll('.brand p').forEach(el=>el.textContent='App 2.0.7'); } catch(e) {}
