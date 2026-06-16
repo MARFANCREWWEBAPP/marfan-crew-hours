@@ -1,7 +1,7 @@
 {
-  "name": "marfan-crew-2-0-3-enterprise-data",
-  "version": "2.0.3",
-  "description": "Marfan Crew 2.0 limpia con menus y datos reales migrados desde V62.49",
+  "name": "marfan-crew-2-0-4-enterprise-operations",
+  "version": "2.0.4",
+  "description": "Marfan Crew 2.0.4 limpia con operativa V62.49 replicada: calendarios, fichajes GPS, albaranes, informes, finanzas, passwords y datos reales.",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

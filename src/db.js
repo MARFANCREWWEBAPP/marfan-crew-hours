@@ -178,6 +178,45 @@ async function migrate() {
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
   )`);
 
+
+  await run(`CREATE TABLE IF NOT EXISTS production_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER,
+    title TEXT NOT NULL,
+    assigned_to INTEGER,
+    status TEXT DEFAULT 'pending',
+    due_date TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
+    FOREIGN KEY(assigned_to) REFERENCES users(id) ON DELETE SET NULL
+  )`);
+  await run(`CREATE TABLE IF NOT EXISTS production_incidents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER,
+    user_id INTEGER,
+    title TEXT NOT NULL,
+    severity TEXT DEFAULT 'media',
+    status TEXT DEFAULT 'abierta',
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+  )`);
+  await run(`CREATE TABLE IF NOT EXISTS event_role_lines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL,
+    role_label TEXT NOT NULL,
+    quantity INTEGER DEFAULT 1,
+    day_rate REAL DEFAULT 0,
+    night_rate REAL DEFAULT 0,
+    planned_start TEXT DEFAULT '',
+    planned_end TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE
+  )`);
+
   await run(`CREATE TABLE IF NOT EXISTS delivery_notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id INTEGER,
