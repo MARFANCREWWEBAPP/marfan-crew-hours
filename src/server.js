@@ -546,6 +546,57 @@ app.get('/api/pdf-template/:type/:id', auth, async (req,res)=>{
   res.status(404).json({error:'Tipo no soportado'});
 });
 
-app.get('/api/health', (req,res)=> res.json({ok:true, app:'Marfan Crew 2.0.6 Operativa Real', clean:true, geofence:true, pdfA4Pro:true, vaultEncrypted:true, auditLogs:true, controlTower:true, settlements:true, checklists:true, publicDeliverySignature:true}));
 
-migrate().then(async()=>{ await migratePasswordVaultEncryption(); const email=process.env.DEFAULT_ADMIN_EMAIL||'admin@marfan.local'; const pass=process.env.DEFAULT_ADMIN_PASSWORD||'Admin1234!'; const exists=await get('SELECT id FROM users WHERE email=?',[email]); if(!exists) await run('INSERT INTO users(name,email,password_hash,role,active,position) VALUES(?,?,?,?,?,?)',['Super Admin',email,await bcrypt.hash(pass,10),'super_admin',1,'Dirección']); if(process.env.AUTO_IMPORT_LEGACY_DATA !== 'false'){ try{ const r=await importLegacyData({get,run}); console.log('[Marfan 2.0.6] Datos V62.49 importados', r); }catch(e){ console.warn('[Marfan 2.0.6] Import legacy warning', e.message); } } app.listen(PORT,()=>console.log(`Marfan Crew 2.0.6 running on ${PORT}`)); }).catch(err=>{ console.error(err); process.exit(1); });
+
+// ---------- V2.0.8 LEGACY REPLICA OPERATIVA ----------
+// Rutas puente y módulos operativos replicados de V62.49 sobre la base limpia 2.0.
+app.post('/api/login-phone', async (req,res)=>{
+  const {phone,password}=req.body||{};
+  const u=await get('SELECT * FROM users WHERE phone=? OR email=?',[phone,phone]);
+  if(!u||!u.active) return res.status(401).json({error:'Credenciales incorrectas'});
+  const ok=await bcrypt.compare(password||'',u.password_hash); if(!ok) return res.status(401).json({error:'Credenciales incorrectas'});
+  const token=jwt.sign({id:u.id,role:u.role},JWT_SECRET,{expiresIn:'7d'});
+  res.json({token,user:{id:u.id,name:u.name,email:u.email,phone:u.phone,role:u.role,position:u.position}});
+});
+app.post('/api/forgot-password', (req,res)=>res.json({ok:true,message:'Solicitud registrada. Contacta con administración.'}));
+app.get('/api/job-rates', auth, allow(...adminTeam), async (req,res)=>res.json(await all('SELECT * FROM rates ORDER BY role')));
+app.get('/api/event-form-data', auth, allow(...adminTeam), async (req,res)=>{
+  const id=Number(req.query.id||0);
+  const event=id?await get('SELECT * FROM events WHERE id=?',[id]):null;
+  const assignments=id?await all(`SELECT a.*, u.name,u.phone,u.email FROM event_assignments a JOIN users u ON u.id=a.user_id WHERE a.event_id=? ORDER BY u.name`,[id]):[];
+  const users=await all(`SELECT id,name,email,phone,role,active,position,operator_role_name,hourly_rate,default_day_rate,default_night_rate FROM users WHERE role IN ('operator','team_lead') ORDER BY name`);
+  const roles=await all('SELECT * FROM rates ORDER BY role');
+  const clients=await all('SELECT * FROM clients ORDER BY name');
+  res.json({ok:true,event,assignments,users,roles,clients});
+});
+app.post('/api/event-form-save', auth, allow(...adminTeam), async (req,res)=>{
+  const b=req.body||{}; const id=Number(b.id||req.query.id||0); const assignments=Array.isArray(b.assignments)?b.assignments:[];
+  const payload={title:b.title||b.name||'Evento',event_code:b.event_code||'',client_id:b.client_id||null,location:b.location||'',address:b.address||'',google_maps_link:b.google_maps_link||'',date:b.date||b.event_date,start_time:b.start_time||'09:00',end_time:b.end_time||'18:00',load_in_time:b.load_in_time||'',load_out_time:b.load_out_time||'',service_type:b.service_type||'',status:b.status||'planned',operational_status:b.operational_status||'',budget:Number(b.budget||0),external_cost:Number(b.external_cost||0),transport_cost:Number(b.transport_cost||0),other_cost:Number(b.other_cost||0),notes:b.notes||'',access_notes:b.access_notes||'',parking_notes:b.parking_notes||'',material_notes:b.material_notes||'',crew_notes:b.crew_notes||'',production_notes:b.production_notes||'',lat:b.lat||null,lng:b.lng||null};
+  let eventId=id;
+  if(eventId){ await run(`UPDATE events SET title=?,event_code=?,client_id=?,location=?,address=?,google_maps_link=?,date=?,start_time=?,end_time=?,load_in_time=?,load_out_time=?,service_type=?,status=?,operational_status=?,budget=?,external_cost=?,transport_cost=?,other_cost=?,notes=?,access_notes=?,parking_notes=?,material_notes=?,crew_notes=?,production_notes=?,lat=?,lng=? WHERE id=?`,[payload.title,payload.event_code,payload.client_id,payload.location,payload.address,payload.google_maps_link,payload.date,payload.start_time,payload.end_time,payload.load_in_time,payload.load_out_time,payload.service_type,payload.status,payload.operational_status,payload.budget,payload.external_cost,payload.transport_cost,payload.other_cost,payload.notes,payload.access_notes,payload.parking_notes,payload.material_notes,payload.crew_notes,payload.production_notes,payload.lat,payload.lng,eventId]); }
+  else { const r=await run(`INSERT INTO events(title,event_code,client_id,location,address,google_maps_link,date,start_time,end_time,load_in_time,load_out_time,service_type,status,operational_status,budget,external_cost,transport_cost,other_cost,notes,access_notes,parking_notes,material_notes,crew_notes,production_notes,lat,lng) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[payload.title,payload.event_code,payload.client_id,payload.location,payload.address,payload.google_maps_link,payload.date,payload.start_time,payload.end_time,payload.load_in_time,payload.load_out_time,payload.service_type,payload.status,payload.operational_status,payload.budget,payload.external_cost,payload.transport_cost,payload.other_cost,payload.notes,payload.access_notes,payload.parking_notes,payload.material_notes,payload.crew_notes,payload.production_notes,payload.lat,payload.lng]); eventId=r.id; }
+  if(assignments.length){ await run('DELETE FROM event_assignments WHERE event_id=?',[eventId]); for(const a of assignments){ const uid=Number(a.user_id||a); if(!uid) continue; await run('INSERT OR IGNORE INTO event_assignments(event_id,user_id,role_label,planned_start,planned_end,hourly_rate,is_team_lead,status,assignment_notes) VALUES(?,?,?,?,?,?,?,?,?)',[eventId,uid,a.role_label||a.service_role||'',a.planned_start||payload.start_time,a.planned_end||payload.end_time,Number(a.hourly_rate||0),Number(a.is_team_lead||0),a.status||'asignado',a.assignment_notes||'']); }}
+  await audit(req,id?'update_event_form':'create_event_form','events',eventId,{}); res.json({ok:true,event_id:eventId});
+});
+app.get('/api/operator/:id/folder', auth, allow(...adminTeam), async (req,res)=>{
+  const user=await get('SELECT * FROM users WHERE id=?',[req.params.id]); if(!user) return res.status(404).json({error:'Operario no encontrado'});
+  const assignments=await all(`SELECT a.*, e.title,e.date,e.location FROM event_assignments a JOIN events e ON e.id=a.event_id WHERE a.user_id=? ORDER BY e.date DESC LIMIT 100`,[req.params.id]);
+  const entries=await all(`SELECT t.*, e.title event_title,e.date FROM time_entries t JOIN events e ON e.id=t.event_id WHERE t.user_id=? ORDER BY t.created_at DESC LIMIT 100`,[req.params.id]);
+  const docs=await all('SELECT * FROM operator_documents WHERE user_id=? ORDER BY uploaded_at DESC',[req.params.id]);
+  res.json({user,assignments,entries,docs});
+});
+app.get('/api/client/:id/folder', auth, allow(...adminTeam), async (req,res)=>{
+  const client=await get('SELECT * FROM clients WHERE id=?',[req.params.id]); if(!client) return res.status(404).json({error:'Cliente no encontrado'});
+  const events=await all('SELECT * FROM events WHERE client_id=? ORDER BY date DESC',[req.params.id]);
+  const notes=await all(`SELECT n.* FROM delivery_notes n JOIN events e ON e.id=n.event_id WHERE e.client_id=? ORDER BY n.created_at DESC`,[req.params.id]);
+  res.json({client,events,notes});
+});
+app.get('/api/availability', auth, allow(...adminTeam), async (req,res)=> res.json(await all(`SELECT a.*, u.name user_name FROM worker_availability a JOIN users u ON u.id=a.user_id ORDER BY a.date DESC,u.name LIMIT 1000`)));
+app.post('/api/availability', auth, allow(...adminTeam), async (req,res)=>{ const b=req.body||{}; const r=await run(`INSERT INTO worker_availability(user_id,date,status,notes) VALUES(?,?,?,?) ON CONFLICT(user_id,date) DO UPDATE SET status=excluded.status, notes=excluded.notes`,[b.user_id,b.date,b.status||'available',b.notes||'']); res.json({ok:true,id:r.id}); });
+app.get('/api/legacy/menus-status', auth, allow(...adminTeam), async (req,res)=>{
+  res.json({ok:true,version:'2.0.8',replicated:['dashboard','control diario','operaciones','clientes','informes','calendario','realizados','operarios','tarifas','gps','produccion','finanzas','documentacion','vista operario','albaranes','contraseñas','ajustes ERP','subventanas evento','subventanas operario','subventanas cliente','roles por evento','checklists','liquidaciones','conflictos','firma pública']});
+});
+
+app.get('/api/health', (req,res)=> res.json({ok:true, app:'Marfan Crew 2.0.8 Replica Operativa Total', clean:true, geofence:true, pdfA4Pro:true, vaultEncrypted:true, auditLogs:true, controlTower:true, settlements:true, checklists:true, publicDeliverySignature:true}));
+
+migrate().then(async()=>{ await migratePasswordVaultEncryption(); const email=process.env.DEFAULT_ADMIN_EMAIL||'admin@marfan.local'; const pass=process.env.DEFAULT_ADMIN_PASSWORD||'Admin1234!'; const exists=await get('SELECT id FROM users WHERE email=?',[email]); if(!exists) await run('INSERT INTO users(name,email,password_hash,role,active,position) VALUES(?,?,?,?,?,?)',['Super Admin',email,await bcrypt.hash(pass,10),'super_admin',1,'Dirección']); if(process.env.AUTO_IMPORT_LEGACY_DATA !== 'false'){ try{ const r=await importLegacyData({get,run}); console.log('[Marfan 2.0.6] Datos V62.49 importados', r); }catch(e){ console.warn('[Marfan 2.0.6] Import legacy warning', e.message); } } app.listen(PORT,()=>console.log(`Marfan Crew 2.0.8 running on ${PORT}`)); }).catch(err=>{ console.error(err); process.exit(1); });

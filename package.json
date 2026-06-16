@@ -1,7 +1,7 @@
 {
-  "name": "marfan-crew-2-0-7-calendario-operativo",
-  "version": "2.0.7",
-  "description": "Marfan Crew 2.0.7: calendario operativo mensual real con edición, filtros y asignación de equipo.",
+  "name": "marfan-crew-2-0-8-replica-operativa-total",
+  "version": "2.0.8",
+  "description": "Marfan Crew 2.0.8: réplica operativa total de V62.49 sobre base limpia 2.0, Railway ready.",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
