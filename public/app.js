@@ -10526,3 +10526,25 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
     }
   }catch(e){}
 })();
+
+
+// ---------- V62.52 FRONTEND STABILITY HELPERS ----------
+window.MARFAN_VERSION = '62.52.0';
+window.v6252CheckAssignmentConflicts = async function(payload){
+  const r = await fetch('/api/v6252/check-assignment-conflicts', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload || {})
+  });
+  return r.json();
+};
+window.v6252SafeAssign = async function(payload){
+  const r = await fetch('/api/v6252/assignments/save-safe', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload || {})
+  });
+  return r.json();
+};
+console.log('Marfan Crew V62.52 Stability & Routing Fix cargado');
+// ---------- END V62.52 FRONTEND STABILITY HELPERS ----------

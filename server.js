@@ -69,6 +69,150 @@ const { google } = require('googleapis');
 
 const app = express();
 
+
+// ---------- V62.52 STABILITY & ROUTING FIX ----------
+const V6252_VERSION = '62.52.0';
+
+function v6252Json(res, data, status){
+  try { res.status(status || 200).json(data); }
+  catch(e) {
+    try {
+      res.writeHead(status || 200, {'Content-Type':'application/json; charset=utf-8'});
+      res.end(JSON.stringify(data));
+    } catch(_) {}
+  }
+}
+
+function v6252ToMs(date, time){
+  const d = String(date || '').slice(0,10) || new Date().toISOString().slice(0,10);
+  const t = String(time || '00:00').slice(0,5);
+  const parts = t.split(':').map(Number);
+  const h = parts[0] || 0;
+  const m = parts[1] || 0;
+  return new Date(d + 'T00:00:00').getTime() + ((h * 60 + m) * 60000);
+}
+
+function v6252Overlap(a1,a2,b1,b2){ return a1 < b2 && b1 < a2; }
+
+function v6252FindAssignmentConflicts(eventId, userId, date, startTime, endTime){
+  try {
+    if (!global.db && typeof db === 'undefined') return [];
+    const database = (typeof db !== 'undefined') ? db : global.db;
+    let ns = v6252ToMs(date, startTime);
+    let ne = v6252ToMs(date, endTime);
+    if (ne <= ns) ne += 24 * 60 * 60 * 1000;
+
+    let rows = [];
+    try {
+      rows = database.prepare(`
+        SELECT a.*, e.name AS event_name, e.event_date, e.start_time AS event_start_time, e.end_time AS event_end_time
+        FROM assignments a
+        LEFT JOIN events e ON e.id = a.event_id
+        WHERE a.user_id = ? AND a.event_id != ?
+      `).all(userId, eventId || 0);
+    } catch(e) {
+      try {
+        rows = database.prepare(`
+          SELECT a.*, e.name AS event_name, e.event_date, e.start_time AS event_start_time, e.end_time AS event_end_time
+          FROM assignments a
+          LEFT JOIN events e ON e.id = a.event_id
+          WHERE a.user_id = ?
+        `).all(userId).filter(r => Number(r.event_id) !== Number(eventId || 0));
+      } catch(_) { rows = []; }
+    }
+
+    return rows.filter(r => {
+      const rd = r.event_date || date;
+      const rs = r.planned_start || r.start_time || r.event_start_time || startTime;
+      const re = r.planned_end || r.end_time || r.event_end_time || endTime;
+      let as = v6252ToMs(rd, rs);
+      let ae = v6252ToMs(rd, re);
+      if (ae <= as) ae += 24 * 60 * 60 * 1000;
+      return v6252Overlap(ns, ne, as, ae);
+    });
+  } catch(e) {
+    console.error('[V62.52] conflict check error:', e.message);
+    return [];
+  }
+}
+
+function v6252EnsureAuditTable(){
+  try {
+    const database = (typeof db !== 'undefined') ? db : global.db;
+    database.exec(`CREATE TABLE IF NOT EXISTS audit_logs_v6252 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      action TEXT DEFAULT '',
+      entity TEXT DEFAULT '',
+      entity_id TEXT DEFAULT '',
+      detail TEXT DEFAULT '',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );`);
+  } catch(e) {}
+}
+
+function v6252Audit(action, entity, entityId, detail){
+  try {
+    v6252EnsureAuditTable();
+    const database = (typeof db !== 'undefined') ? db : global.db;
+    database.prepare(`INSERT INTO audit_logs_v6252 (action,entity,entity_id,detail) VALUES (?,?,?,?)`)
+      .run(action || '', entity || '', String(entityId || ''), typeof detail === 'string' ? detail : JSON.stringify(detail || {}));
+  } catch(e) {}
+}
+
+try {
+  app.get('/health', (req,res)=>{
+    let dbStatus = 'unknown';
+    try {
+      const database = (typeof db !== 'undefined') ? db : global.db;
+      if (database) { database.prepare('SELECT 1').get(); dbStatus = 'ok'; }
+    } catch(e) { dbStatus = 'error: ' + e.message; }
+    res.json({
+      ok: true,
+      app: 'Marfan Crew Hours',
+      version: V6252_VERSION,
+      db: dbStatus,
+      node: process.version,
+      time: new Date().toISOString()
+    });
+  });
+
+  app.get('/api/v6252/health', (req,res)=>{
+    res.json({ok:true, version:V6252_VERSION, message:'Stability & Routing Fix activo'});
+  });
+
+  app.post('/api/v6252/check-assignment-conflicts', (req,res)=>{
+    try {
+      const b = req.body || {};
+      const conflicts = v6252FindAssignmentConflicts(
+        Number(b.event_id || 0),
+        Number(b.user_id || 0),
+        b.event_date || b.date || '',
+        b.start_time || b.planned_start || '',
+        b.end_time || b.planned_end || ''
+      );
+      res.json({ok:true, available: conflicts.length === 0, conflicts});
+    } catch(e) {
+      res.status(500).json({ok:false, error:e.message});
+    }
+  });
+
+  app.get('/api/v6252/audit-logs', (req,res)=>{
+    try {
+      v6252EnsureAuditTable();
+      const database = (typeof db !== 'undefined') ? db : global.db;
+      const rows = database.prepare('SELECT * FROM audit_logs_v6252 ORDER BY id DESC LIMIT 200').all();
+      res.json({ok:true, rows});
+    } catch(e) {
+      res.status(500).json({ok:false,error:e.message});
+    }
+  });
+} catch(e) {
+  console.error('[V62.52] route install error:', e.message);
+}
+// ---------- END V62.52 STABILITY & ROUTING FIX ----------
+
+
+
 // ---------- V55.2 PERSISTENT RECOVERY LOCK ----------
 // En Railway, el Volume debe estar montado en /data.
 // Esta versión fuerza DB y backups a /data para que las actualizaciones NO borren información.
@@ -8996,6 +9140,59 @@ app.get('/api/v6250/persistent-status', requireAdmin, (req,res)=>{
     res.json({ok:true, version:'62.50', db_path:dbPath, data_dir:process.env.DATA_DIR||global.DATA_DIR_V627||'', exists, size});
   }catch(e){ res.status(500).json({ok:false,error:e.message}); }
 });
+
+
+
+// ---------- V62.52 PROTECTED ASSIGNMENT SAVE ----------
+try {
+  app.post('/api/v6252/assignments/save-safe', (req,res)=>{
+    try {
+      const b = req.body || {};
+      const eventId = Number(b.event_id || 0);
+      const userId = Number(b.user_id || 0);
+      if (!eventId || !userId) return res.status(400).json({ok:false,error:'Falta event_id o user_id'});
+
+      const database = (typeof db !== 'undefined') ? db : global.db;
+      const event = database.prepare('SELECT * FROM events WHERE id=?').get(eventId);
+      if (!event) return res.status(404).json({ok:false,error:'Evento no encontrado'});
+
+      const date = b.event_date || event.event_date || event.date || '';
+      const start = b.planned_start || b.start_time || event.start_time || '';
+      const end = b.planned_end || b.end_time || event.end_time || '';
+      const conflicts = v6252FindAssignmentConflicts(eventId, userId, date, start, end);
+      if (conflicts.length) {
+        v6252Audit('assignment_blocked_overlap','assignments',eventId,{user_id:userId,conflicts});
+        return res.status(409).json({
+          ok:false,
+          error:'Operario no disponible: ya está asignado en un horario que se pisa.',
+          conflicts
+        });
+      }
+
+      try {
+        database.prepare(`INSERT INTO assignments (event_id,user_id,service_role,planned_start,planned_end,status,is_team_lead)
+          VALUES (?,?,?,?,?,?,?)`).run(
+          eventId,
+          userId,
+          b.service_role || b.role || '',
+          start,
+          end,
+          b.status || 'asignado',
+          Number(b.is_team_lead || 0)
+        );
+      } catch(e) {
+        database.prepare(`INSERT INTO assignments (event_id,user_id) VALUES (?,?)`).run(eventId,userId);
+      }
+
+      v6252Audit('assignment_created_safe','assignments',eventId,{user_id:userId});
+      res.json({ok:true});
+    } catch(e) {
+      res.status(500).json({ok:false,error:e.message});
+    }
+  });
+} catch(e) {}
+// ---------- END V62.52 PROTECTED ASSIGNMENT SAVE ----------
+
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
