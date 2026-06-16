@@ -1,7 +1,7 @@
 {
   "name": "marfan-crew-2-0-4-enterprise-operations",
-  "version": "2.0.4",
-  "description": "Marfan Crew 2.0.4 limpia con operativa V62.49 replicada: calendarios, fichajes GPS, albaranes, informes, finanzas, passwords y datos reales.",
+  "version": "2.0.4-a4-pdf",
+  "description": "Marfan Crew 2.0.4 Enterprise Operations con PDF A4 profesional de albaranes.",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
@@ -17,7 +17,8 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "sqlite3": "^5.1.7",
-    "uuid": "^11.0.3"
+    "uuid": "^11.0.3",
+    "pdfkit": "^0.15.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"

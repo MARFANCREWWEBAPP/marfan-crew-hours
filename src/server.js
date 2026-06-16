@@ -199,6 +199,99 @@ app.get('/api/event-delivery-notes', auth, allow(...adminTeam), async (req,res)=
 app.get('/api/event-delivery-notes/:id', auth, allow(...adminTeam), async (req,res)=> res.json(await get('SELECT * FROM delivery_notes WHERE id=?',[req.params.id])));
 app.post('/api/event-delivery-notes/:id/client-sign', auth, async (req,res)=>{ await run('UPDATE delivery_notes SET client_signed=1 WHERE id=?',[req.params.id]); res.json({ok:true}); });
 
+
+// ---------- V2.0.4 A4 PDF PRO ----------
+function safeText(v){ return String(v ?? '').replace(/[\r\n]+/g,' ').trim(); }
+async function getDeliveryNoteFull(noteId){
+  const note=await get(`SELECT dn.*, e.title event_title,e.event_code,e.location,e.address,e.google_maps_link,e.date,e.start_time,e.end_time,e.load_in_time,e.load_out_time,e.service_type,e.notes event_notes,e.access_notes,e.parking_notes,e.material_notes,e.crew_notes,e.production_notes,e.budget,e.external_cost,e.transport_cost,e.other_cost,e.lat,e.lng,COALESCE(c.name,e.client_name,dn.client_name) client_name,c.legal_name,c.cif,c.contact_name,c.email client_email,c.phone client_phone,c.address client_address,c.province client_province FROM delivery_notes dn LEFT JOIN events e ON e.id=dn.event_id LEFT JOIN clients c ON c.id=e.client_id WHERE dn.id=?`,[noteId]);
+  if(!note) return null;
+  const entries=await all(`SELECT t.*, u.name user_name,u.dni,u.phone,u.hourly_rate,u.position,u.operator_role_name,a.role_label,a.hourly_rate assignment_rate,a.planned_start,a.planned_end,a.is_team_lead FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN event_assignments a ON a.event_id=t.event_id AND a.user_id=t.user_id WHERE t.event_id=? ORDER BY u.name,t.check_in`,[note.event_id]);
+  return {note,entries};
+}
+function drawLine(doc,y){ doc.moveTo(40,y).lineTo(555,y).strokeColor('#e5e7eb').lineWidth(1).stroke(); }
+function drawKV(doc,label,value,x,y,w=230){ doc.font('Helvetica-Bold').fontSize(8).fillColor('#6b7280').text(label,x,y,{width:w}); doc.font('Helvetica').fontSize(10).fillColor('#111827').text(safeText(value)||'-',x,y+11,{width:w}); }
+function moneyEUR(v){ return new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR'}).format(Number(v||0)); }
+app.get('/api/event-delivery-notes/:id/pdf', auth, allow(...adminTeam), async (req,res)=>{
+  try{
+    const PDFDocument = require('pdfkit');
+    const data = await getDeliveryNoteFull(req.params.id);
+    if(!data) return res.status(404).json({error:'Albarán no encontrado'});
+    const {note,entries}=data;
+    const settingsRows=await all('SELECT key,value FROM settings');
+    const st=Object.fromEntries(settingsRows.map(r=>[r.key,r.value]));
+    const doc = new PDFDocument({size:'A4', margin:40, info:{Title:`Albarán ${note.number||note.id}`, Author:st.company_name||'MARFAN CREW'}});
+    const filename = `albaran-${safeText(note.number||note.id).replace(/[^a-zA-Z0-9-_]/g,'-')}.pdf`;
+    res.setHeader('Content-Type','application/pdf');
+    res.setHeader('Content-Disposition',`attachment; filename="${filename}"`);
+    doc.pipe(res);
+
+    doc.roundedRect(40,35,515,78,16).fill('#f5f5f7');
+    doc.fillColor('#111827').font('Helvetica-Bold').fontSize(22).text(st.company_name || 'MARFAN CREW',60,55);
+    doc.font('Helvetica').fontSize(9).fillColor('#4b5563').text(st.hq_address || 'Calle Ciro Alegría 89, Málaga',60,82);
+    doc.font('Helvetica-Bold').fontSize(16).fillColor('#111827').text('ALBARÁN DE SERVICIO',360,55,{width:170,align:'right'});
+    doc.font('Helvetica').fontSize(10).fillColor('#374151').text(safeText(note.number || `ALB-${note.id}`),360,80,{width:170,align:'right'});
+    doc.fontSize(9).text(`Fecha emisión: ${new Date().toLocaleDateString('es-ES')}`,360,96,{width:170,align:'right'});
+
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#111827').text('Cliente',40,135);
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#111827').text('Evento',310,135);
+    drawKV(doc,'Nombre comercial',note.client_name,40,155);
+    drawKV(doc,'Razón social',note.legal_name,40,195);
+    drawKV(doc,'CIF/NIF',note.cif,40,235,110);
+    drawKV(doc,'Contacto',`${note.contact_name||''} ${note.client_phone||''}`,160,235,120);
+    drawKV(doc,'Evento',note.event_title,310,155);
+    drawKV(doc,'Fecha / horario',`${note.event_date||note.date||''} · ${note.start_time||''} - ${note.end_time||''}`,310,195);
+    drawKV(doc,'Lugar',note.location || note.address,310,235);
+    drawLine(doc,278);
+
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#111827').text('Detalle de operarios y fichajes',40,295);
+    let y=318;
+    const head=['Operario','Rol','Entrada','Salida','Norm.','Noct.','Firma'];
+    const widths=[120,80,70,70,45,45,85];
+    let x=40;
+    doc.roundedRect(40,y-6,515,22,6).fill('#111827');
+    doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8);
+    head.forEach((h,i)=>{ doc.text(h,x+4,y,{width:widths[i]-6}); x+=widths[i]; });
+    y+=25;
+    doc.font('Helvetica').fontSize(8).fillColor('#111827');
+    let totalHours=0,totalNight=0;
+    for(const r of entries){
+      if(y>705){ doc.addPage(); y=55; }
+      const h=hoursBetween(r.check_in,r.check_out,r.break_minutes); const nh=nightHoursApprox(r.check_in,r.check_out); totalHours+=h; totalNight+=nh;
+      x=40;
+      const vals=[r.user_name, r.role_label||r.operator_role_name||r.position||'', r.check_in?new Date(r.check_in).toLocaleString('es-ES',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'}):'-', r.check_out?new Date(r.check_out).toLocaleString('es-ES',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'}):'-', Math.max(0,h-nh).toFixed(2), nh.toFixed(2), r.client_signature_name||''];
+      vals.forEach((v,i)=>{ doc.text(safeText(v),x+4,y,{width:widths[i]-6}); x+=widths[i]; });
+      y+=20; drawLine(doc,y-5);
+    }
+    if(!entries.length){ doc.fillColor('#6b7280').text('No hay fichajes registrados para este evento.',44,y); y+=25; }
+
+    y=Math.max(y+16,565);
+    doc.roundedRect(40,y,250,90,12).strokeColor('#d1d5db').stroke();
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#111827').text('Resumen de horas',58,y+16);
+    doc.font('Helvetica').fontSize(9).fillColor('#374151').text(`Horas normales: ${Number(note.normal_hours || Math.max(0,totalHours-totalNight)).toFixed(2)}`,58,y+38);
+    doc.text(`Horas nocturnas: ${Number(note.night_hours || totalNight).toFixed(2)}`,58,y+54);
+    doc.text(`Dietas: ${moneyEUR(note.diets || 0)} · Km: ${Number(note.km || 0).toFixed(2)}`,58,y+70);
+
+    doc.roundedRect(305,y,250,90,12).fill('#f9fafb').strokeColor('#d1d5db').stroke();
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#111827').text('Resumen económico',323,y+16);
+    doc.font('Helvetica').fontSize(9).fillColor('#374151').text(`Base imponible: ${moneyEUR(note.grand_total || note.budget || 0)}`,323,y+38,{width:210,align:'right'});
+    doc.text(`IVA ${st.vat_percent || 21}% incluido: ${moneyEUR(note.grand_total_vat || 0)}`,323,y+56,{width:210,align:'right'});
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#111827').text(`TOTAL: ${moneyEUR(note.grand_total_vat || note.grand_total || 0)}`,323,y+72,{width:210,align:'right'});
+
+    y+=115;
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#111827').text('Validación cliente',40,y);
+    doc.font('Helvetica').fontSize(9).fillColor('#374151').text(`Nombre: ${safeText(entries.find(e=>e.client_signature_name)?.client_signature_name || '')}`,40,y+20,{width:240});
+    doc.text(`DNI: ${safeText(entries.find(e=>e.client_signature_dni)?.client_signature_dni || '')}`,40,y+37,{width:240});
+    doc.moveTo(310,y+48).lineTo(540,y+48).strokeColor('#111827').stroke();
+    doc.fontSize(8).fillColor('#6b7280').text('Firma cliente',390,y+54);
+
+    doc.fontSize(7).fillColor('#6b7280').text('Documento generado automáticamente desde Marfan Crew 2.0.4. Formato A4 profesional para control interno y validación de servicio.',40,802,{width:515,align:'center'});
+    doc.end();
+  }catch(e){
+    console.error('[PDF A4]', e);
+    res.status(500).json({error:'No se pudo generar el PDF A4', detail:e.message});
+  }
+});
+
 app.get('/api/reports/weekly-events', auth, allow(...adminTeam), async (req,res)=>{
   const rows=await all(`SELECT strftime('%Y-W%W',date) week, COUNT(*) events, COALESCE(SUM(budget),0) budget FROM events GROUP BY week ORDER BY week DESC LIMIT 26`); res.json(rows);
 });

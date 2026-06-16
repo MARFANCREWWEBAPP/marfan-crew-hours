@@ -45,3 +45,16 @@ Pueden entrar con teléfono o email. Contraseña inicial:
 ```txt
 Marfan1234*
 ```
+
+## V2.0.4 PDF A4 PRO
+
+Esta revisión mantiene la base V2.0.4 y añade generación real de PDF A4 profesional para albaranes.
+
+### Nuevo
+- Botón `Descargar PDF A4` dentro de Albaranes.
+- Endpoint seguro: `GET /api/event-delivery-notes/:id/pdf`.
+- PDF A4 con cliente, evento, operarios, fichajes, horas normales, horas nocturnas, dietas, km, IVA, total y validación cliente.
+- Dependencia nueva: `pdfkit`.
+
+### Railway
+Railway instalará `pdfkit` automáticamente al desplegar porque está en `package.json`.
