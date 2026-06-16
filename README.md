@@ -1,4 +1,4 @@
-# Marfan Crew 2.0.4 Enterprise Operations
+# Marfan Crew 2.0.5 Enterprise Operations
 
 Versión limpia 2.0 con operativa replicada desde V62.49 sin `express-session` y preparada para Railway.
 
@@ -46,9 +46,9 @@ Pueden entrar con teléfono o email. Contraseña inicial:
 Marfan1234*
 ```
 
-## V2.0.4 PDF A4 PRO
+## V2.0.5 PDF A4 PRO
 
-Esta revisión mantiene la base V2.0.4 y añade generación real de PDF A4 profesional para albaranes.
+Esta revisión mantiene la base V2.0.5 y añade generación real de PDF A4 profesional para albaranes.
 
 ### Nuevo
 - Botón `Descargar PDF A4` dentro de Albaranes.

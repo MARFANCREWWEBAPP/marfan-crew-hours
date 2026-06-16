@@ -1,7 +1,7 @@
 {
-  "name": "marfan-crew-2-0-4-enterprise-operations",
-  "version": "2.0.4-a4-pdf",
-  "description": "Marfan Crew 2.0.4 Enterprise Operations con PDF A4 profesional de albaranes.",
+  "name": "marfan-crew-2-0-5-enterprise-fix",
+  "version": "2.0.5",
+  "description": "Marfan Crew 2.0.5 Enterprise Fix post-auditoría: geocerca, firma, PDF A4 Pro, auditoría y documentación.",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

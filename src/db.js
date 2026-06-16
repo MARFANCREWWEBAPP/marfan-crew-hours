@@ -232,9 +232,58 @@ async function migrate() {
     client_signed INTEGER DEFAULT 0,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )`);
+  await addCol('delivery_notes','signature_name','TEXT DEFAULT ""');
+  await addCol('delivery_notes','signature_dni','TEXT DEFAULT ""');
+  await addCol('delivery_notes','signature_data_url','TEXT DEFAULT ""');
+  await addCol('delivery_notes','signed_at','TEXT DEFAULT ""');
+  await addCol('delivery_notes','locked','INTEGER DEFAULT 0');
+  await addCol('delivery_notes','vat_percent','REAL DEFAULT 21');
+  await addCol('delivery_notes','internal_notes','TEXT DEFAULT ""');
+  await run(`CREATE TABLE IF NOT EXISTS delivery_note_lines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    delivery_note_id INTEGER NOT NULL,
+    event_id INTEGER,
+    user_id INTEGER,
+    worker_name TEXT DEFAULT '',
+    role_label TEXT DEFAULT '',
+    check_in TEXT DEFAULT '',
+    check_out TEXT DEFAULT '',
+    break_minutes INTEGER DEFAULT 0,
+    normal_hours REAL DEFAULT 0,
+    night_hours REAL DEFAULT 0,
+    day_rate REAL DEFAULT 0,
+    night_rate REAL DEFAULT 0,
+    diet REAL DEFAULT 0,
+    km REAL DEFAULT 0,
+    line_total REAL DEFAULT 0,
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(delivery_note_id) REFERENCES delivery_notes(id) ON DELETE CASCADE
+  )`);
+  await addCol('time_entries','admin_corrected','INTEGER DEFAULT 0');
+  await addCol('time_entries','correction_reason','TEXT DEFAULT ""');
+  await addCol('time_entries','corrected_by','INTEGER DEFAULT NULL');
+  await addCol('time_entries','corrected_at','TEXT DEFAULT ""');
+  await addCol('time_entries','gps_distance_in_m','REAL DEFAULT NULL');
+  await addCol('time_entries','gps_distance_out_m','REAL DEFAULT NULL');
+  await addCol('documents','filename','TEXT DEFAULT ""');
+  await addCol('documents','original_name','TEXT DEFAULT ""');
+  await addCol('documents','path','TEXT DEFAULT ""');
+  await addCol('documents','url','TEXT DEFAULT ""');
+  await addCol('documents','mime_type','TEXT DEFAULT ""');
+  await addCol('documents','size','INTEGER DEFAULT 0');
+  await run(`CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    action TEXT NOT NULL,
+    entity TEXT DEFAULT '',
+    entity_id TEXT DEFAULT '',
+    details TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
   await run(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
   await run(`INSERT OR IGNORE INTO settings(key,value) VALUES
-    ('km_rate','0.28'),('diet_amount','15'),('night_start','22:00'),('night_end','07:00'),('vat_percent','21'),('company_name','MARFAN CREW'),('hq_address','Calle Ciro Alegría 89, Málaga')`);
+    ('km_rate','0.28'),('diet_amount','15'),('night_start','22:00'),('night_end','07:00'),('vat_percent','21'),('company_name','MARFAN CREW'),('company_legal_name','MARFAN CREW'),('company_cif',''),('company_email',''),('company_phone',''),('hq_address','Calle Ciro Alegría 89, Málaga'),('geofence_radius_m','250'),('invoice_prefix','ALB')`);
   const defaults = [['Auxiliar montaje',12,15],['Jefe equipo',16,20],['Runner',12,15],['Carretilla',18,22],['Limpieza',11,14]];
   for (const r of defaults) await run('INSERT OR IGNORE INTO rates(id,role,day_rate,night_rate,active) VALUES((SELECT id FROM rates WHERE role=?),?,?,?,1)', [r[0], r[0], r[1], r[2]]).catch(()=>{});
 }
