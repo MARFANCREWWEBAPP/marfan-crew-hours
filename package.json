@@ -1,7 +1,7 @@
 {
-  "name": "marfan-crew-2-0-5-enterprise-fix",
-  "version": "2.0.5",
-  "description": "Marfan Crew 2.0.5 Enterprise Fix post-auditoría: geocerca, firma, PDF A4 Pro, auditoría y documentación.",
+  "name": "marfan-crew-2-0-6-operativa-real",
+  "version": "2.0.6",
+  "description": "Marfan Crew 2.0.6 Operativa Real: control total de personal, planificación, fichajes, albaranes, liquidaciones y alertas.",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

@@ -278,6 +278,9 @@ app.post('/api/event-delivery-notes/generate', auth, allow(...adminTeam), async 
 app.get('/api/event-delivery-notes', auth, allow(...adminTeam), async (req,res)=> res.json(await all('SELECT * FROM delivery_notes ORDER BY created_at DESC')));
 app.get('/api/event-delivery-notes/:id', auth, allow(...adminTeam), async (req,res)=> res.json(await get('SELECT * FROM delivery_notes WHERE id=?',[req.params.id])));
 app.post('/api/event-delivery-notes/:id/client-sign', auth, async (req,res)=>{ const b=req.body||{}; const note=await get('SELECT * FROM delivery_notes WHERE id=?',[req.params.id]); if(!note) return res.status(404).json({error:'Albarán no encontrado'}); if(note.locked) return res.status(409).json({error:'El albarán ya está firmado y bloqueado'}); await run('UPDATE delivery_notes SET client_signed=1, locked=1, signature_name=?, signature_dni=?, signature_data_url=?, signed_at=datetime("now") WHERE id=?',[b.signature_name||b.client_signature_name||'',b.signature_dni||b.client_signature_dni||'',b.signature_data_url||'',req.params.id]); await audit(req,'sign_delivery_note','delivery_notes',req.params.id,{name:b.signature_name}); res.json({ok:true}); });
+app.post('/api/event-delivery-notes/:id/public-token', auth, allow(...adminTeam), async (req,res)=>{ const token=crypto.randomBytes(24).toString('hex'); const expires=new Date(Date.now()+7*86400000).toISOString(); await run('UPDATE delivery_notes SET public_token=?, public_token_expires_at=? WHERE id=?',[token,expires,req.params.id]); await audit(req,'create_public_delivery_token','delivery_notes',req.params.id,{}); res.json({url:`/public-delivery.html?token=${token}`, token, expires_at:expires}); });
+app.get('/api/public/delivery/:token', async (req,res)=>{ const note=await get('SELECT * FROM delivery_notes WHERE public_token=? AND (public_token_expires_at="" OR public_token_expires_at>datetime("now"))',[req.params.token]); if(!note) return res.status(404).json({error:'Albarán no disponible'}); const lines=await all('SELECT * FROM delivery_note_lines WHERE delivery_note_id=? ORDER BY worker_name',[note.id]); res.json({note,lines}); });
+app.post('/api/public/delivery/:token/sign', async (req,res)=>{ const b=req.body||{}; const note=await get('SELECT * FROM delivery_notes WHERE public_token=? AND (public_token_expires_at="" OR public_token_expires_at>datetime("now"))',[req.params.token]); if(!note) return res.status(404).json({error:'Albarán no disponible'}); if(note.locked) return res.status(409).json({error:'El albarán ya está firmado'}); await run('UPDATE delivery_notes SET client_signed=1, locked=1, signature_name=?, signature_dni=?, signature_data_url=?, client_observations=?, signed_at=datetime("now") WHERE id=?',[b.signature_name||'',b.signature_dni||'',b.signature_data_url||'',b.client_observations||'',note.id]); res.json({ok:true}); });
 app.get('/api/event-delivery-notes/:id/lines', auth, allow(...adminTeam), async (req,res)=> res.json(await all('SELECT * FROM delivery_note_lines WHERE delivery_note_id=? ORDER BY worker_name',[req.params.id])));
 
 
@@ -424,6 +427,112 @@ app.put('/api/time-entries/:id/correct', auth, allow(...adminTeam), async (req,r
 app.get('/api/audit-logs', auth, allow(...adminRoles), async (req,res)=> res.json(await all(`SELECT l.*, u.name user_name FROM audit_logs l LEFT JOIN users u ON u.id=l.user_id ORDER BY l.created_at DESC LIMIT 500`)));
 app.post('/api/documents/upload-json', auth, allow(...adminRoles), async (req,res)=>{ const b=req.body||{}; const uploadDir=path.join(__dirname,'../public/uploads'); fs.mkdirSync(uploadDir,{recursive:true}); let url='', filename='', size=0, mime=b.mime_type||''; if(b.data_url && String(b.data_url).startsWith('data:')){ const m=String(b.data_url).match(/^data:([^;]+);base64,(.*)$/); if(m){ mime=m[1]; const buf=Buffer.from(m[2],'base64'); filename=`doc-${Date.now()}-${String(b.original_name||'archivo').replace(/[^a-zA-Z0-9._-]/g,'-')}`; fs.writeFileSync(path.join(uploadDir,filename),buf); url='/uploads/'+filename; size=buf.length; } } const r=await run('INSERT INTO documents(title,type,owner_type,owner_id,expiry_date,notes,filename,original_name,path,url,mime_type,size) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',[b.title||b.original_name||'Documento',b.type||'',b.owner_type||'',b.owner_id||null,b.expiry_date||'',b.notes||'',filename,b.original_name||'',filename?path.join(uploadDir,filename):'',url,mime,size]); await audit(req,'upload_document','documents',r.id,{title:b.title}); res.status(201).json(await get('SELECT * FROM documents WHERE id=?',[r.id])); });
 
+
+
+// ---------- V2.0.6 OPERATIVA REAL: control total ----------
+function opsParseDateTime(date, time){
+  if(!date) return null;
+  const t = /^\d{2}:\d{2}/.test(String(time||'')) ? String(time).slice(0,5) : '00:00';
+  const d = new Date(`${String(date).slice(0,10)}T${t}:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+function opsOverlaps(aStart,aEnd,bStart,bEnd){ if(!aStart||!aEnd||!bStart||!bEnd) return false; return aStart < bEnd && bStart < aEnd; }
+function opsHoursBetween(checkIn, checkOut, breakMinutes=0){ if(!checkIn||!checkOut) return 0; const a=new Date(checkIn), b=new Date(checkOut); if(!(b>a)) return 0; return Math.max(0, ((b-a)/3600000) - Number(breakMinutes||0)/60); }
+async function buildEventOps(eventId){
+  const ev = await get(`SELECT e.*, COALESCE(c.name,e.client_name) client_name, c.legal_name, c.cif, c.contact_name, c.email client_email, c.phone client_phone FROM events e LEFT JOIN clients c ON c.id=e.client_id WHERE e.id=?`,[eventId]);
+  if(!ev) return null;
+  const assignments = await all(`SELECT a.*, u.name user_name,u.phone,u.role,u.position,u.operator_role_name,u.hourly_rate FROM event_assignments a JOIN users u ON u.id=a.user_id WHERE a.event_id=? ORDER BY COALESCE(a.is_team_lead,0) DESC,u.name`,[eventId]);
+  const entries = await all(`SELECT t.*, u.name user_name FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.event_id=? ORDER BY t.check_in`,[eventId]);
+  const roleLines = await all('SELECT * FROM event_role_lines WHERE event_id=? ORDER BY role_label',[eventId]);
+  const delivery = await get('SELECT * FROM delivery_notes WHERE event_id=? ORDER BY id DESC LIMIT 1',[eventId]);
+  const requiredWorkers = Number(ev.required_workers||0) || roleLines.reduce((sum,r)=>sum+Number(r.quantity||0),0);
+  const teamLeads = assignments.filter(a=>Number(a.is_team_lead||0)).length;
+  const openEntries = entries.filter(e=>e.check_in && !e.check_out).length;
+  const confirmed = assignments.filter(a=>Number(a.confirmed_by_worker||0)).length;
+  const missing = [];
+  if(!ev.client_name && !ev.client_id) missing.push('Cliente sin asignar');
+  if(!ev.address && !ev.location) missing.push('Dirección/lugar incompleto');
+  if(!ev.date || !ev.start_time || !ev.end_time) missing.push('Fecha u horario incompleto');
+  if(!ev.lat || !ev.lng) missing.push('Coordenadas GPS del evento sin configurar');
+  if(requiredWorkers && assignments.length < requiredWorkers) missing.push(`Faltan ${requiredWorkers-assignments.length} operarios asignados`);
+  if(Number(ev.required_team_leads||0) && teamLeads < Number(ev.required_team_leads)) missing.push(`Falta jefe de equipo (${teamLeads}/${ev.required_team_leads})`);
+  if(openEntries) missing.push(`${openEntries} fichaje(s) abierto(s)`);
+  const signed = !!(delivery && delivery.locked);
+  const progress = Math.round(((missing.length ? 0 : 1) + (assignments.length?1:0) + (entries.length?1:0) + (signed?1:0)) / 4 * 100);
+  return {event:ev, assignments, entries, roleLines, delivery, requiredWorkers, assigned:assignments.length, confirmed, teamLeads, openEntries, signedDelivery:signed, missing, progress};
+}
+
+app.get('/api/ops/events/:id', auth, allow(...adminTeam), async (req,res)=>{ const out=await buildEventOps(req.params.id); if(!out) return res.status(404).json({error:'Evento no encontrado'}); res.json(out); });
+app.put('/api/ops/events/:id/requirements', auth, allow(...adminTeam), async (req,res)=>{ const b=req.body||{}; await run('UPDATE events SET required_workers=?, required_team_leads=?, operational_status=? WHERE id=?',[Number(b.required_workers||0),Number(b.required_team_leads||0),b.operational_status||'',req.params.id]); await audit(req,'update_event_requirements','events',req.params.id,b); res.json(await buildEventOps(req.params.id)); });
+app.get('/api/ops/control-tower', auth, allow(...adminTeam), async (req,res)=>{
+  const from=req.query.from || new Date(Date.now()-7*86400000).toISOString().slice(0,10);
+  const to=req.query.to || new Date(Date.now()+45*86400000).toISOString().slice(0,10);
+  const events=await all(`SELECT e.id FROM events e WHERE e.date BETWEEN ? AND ? ORDER BY e.date,e.start_time`,[from,to]);
+  const rows=[]; for(const e of events){ const o=await buildEventOps(e.id); if(o) rows.push({id:o.event.id,title:o.event.title,date:o.event.date,start_time:o.event.start_time,client_name:o.event.client_name,status:o.event.status,assigned:o.assigned,required:o.requiredWorkers,confirmed:o.confirmed,openEntries:o.openEntries,signedDelivery:o.signedDelivery,progress:o.progress,missing:o.missing}); }
+  const alerts=rows.flatMap(r=>r.missing.map(m=>({event_id:r.id,event_title:r.title,date:r.date,level:m.includes('abierto')?'danger':'warning',message:m})));
+  res.json({from,to,events:rows,alerts});
+});
+app.get('/api/ops/conflicts', auth, allow(...adminTeam), async (req,res)=>{
+  const rows=await all(`SELECT a.*, e.title,e.date,e.start_time,e.end_time,u.name user_name FROM event_assignments a JOIN events e ON e.id=a.event_id JOIN users u ON u.id=a.user_id ORDER BY u.id,e.date,e.start_time`);
+  const conflicts=[];
+  for(let i=0;i<rows.length;i++) for(let j=i+1;j<rows.length;j++){
+    const A=rows[i], B=rows[j]; if(A.user_id!==B.user_id || A.date!==B.date) continue;
+    const as=opsParseDateTime(A.date,A.planned_start||A.start_time), ae=opsParseDateTime(A.date,A.planned_end||A.end_time), bs=opsParseDateTime(B.date,B.planned_start||B.start_time), be=opsParseDateTime(B.date,B.planned_end||B.end_time);
+    if(opsOverlaps(as,ae,bs,be)) conflicts.push({user_id:A.user_id,user_name:A.user_name,event_a:A.title,event_a_id:A.event_id,event_b:B.title,event_b_id:B.event_id,date:A.date});
+  }
+  res.json(conflicts);
+});
+app.post('/api/events/:id/assignments-pro', auth, allow(...adminTeam), async (req,res)=>{
+  const items=Array.isArray(req.body.assignments)?req.body.assignments:[];
+  const ev=await get('SELECT * FROM events WHERE id=?',[req.params.id]); if(!ev) return res.status(404).json({error:'Evento no encontrado'});
+  await run('DELETE FROM event_assignments WHERE event_id=?',[req.params.id]);
+  for(const a of items){ if(!a.user_id) continue; await run(`INSERT OR IGNORE INTO event_assignments(event_id,user_id,role_label,planned_start,planned_end,planned_hours,hourly_rate,is_team_lead,status,assignment_notes) VALUES(?,?,?,?,?,?,?,?,?,?)`,[req.params.id,a.user_id,a.role_label||'',a.planned_start||ev.start_time,a.planned_end||ev.end_time,a.planned_hours||0,a.hourly_rate||0,a.is_team_lead?1:0,a.status||'asignado',a.assignment_notes||'']); }
+  await audit(req,'save_assignments_pro','events',req.params.id,{count:items.length});
+  res.json(await buildEventOps(req.params.id));
+});
+app.post('/api/my-assignments/:assignmentId/confirm', auth, async (req,res)=>{
+  const a=await get('SELECT * FROM event_assignments WHERE id=? AND user_id=?',[req.params.assignmentId,req.user.id]); if(!a) return res.status(404).json({error:'Asignación no encontrada'});
+  await run('UPDATE event_assignments SET confirmed_by_worker=1, confirmed_at=datetime("now") WHERE id=?',[req.params.assignmentId]);
+  await audit(req,'confirm_assignment','event_assignments',req.params.assignmentId,{}); res.json({ok:true});
+});
+app.get('/api/my-assignments', auth, async (req,res)=> res.json(await all(`SELECT a.*, e.title,e.date,e.start_time,e.end_time,e.location,e.address,e.google_maps_link,e.lat,e.lng,COALESCE(c.name,e.client_name) client_name FROM event_assignments a JOIN events e ON e.id=a.event_id LEFT JOIN clients c ON c.id=e.client_id WHERE a.user_id=? ORDER BY e.date,e.start_time`,[req.user.id])));
+app.post('/api/events/:id/checklist/defaults', auth, allow(...adminTeam), async (req,res)=>{
+  const defaults=['Cliente confirmado','Dirección y carga/descarga confirmada','Personal asignado','Jefe de equipo asignado','Material/EPIs revisados','Fichajes cerrados','Albarán firmado','PDF descargado/enviado'];
+  for(const item of defaults) await run('INSERT INTO event_checklists(event_id,item,required) VALUES(?,?,1)',[req.params.id,item]).catch(()=>{});
+  res.json(await all('SELECT * FROM event_checklists WHERE event_id=? ORDER BY id',[req.params.id]));
+});
+app.get('/api/events/:id/checklist', auth, allow(...adminTeam), async (req,res)=> res.json(await all('SELECT * FROM event_checklists WHERE event_id=? ORDER BY id',[req.params.id])));
+app.put('/api/checklist/:id', auth, allow(...adminTeam), async (req,res)=>{ const b=req.body||{}; await run('UPDATE event_checklists SET status=?, notes=?, completed_by=?, completed_at=CASE WHEN ?="done" THEN datetime("now") ELSE "" END WHERE id=?',[b.status||'pending',b.notes||'',req.user.id,b.status||'pending',req.params.id]); await audit(req,'update_checklist','event_checklists',req.params.id,{status:b.status}); res.json({ok:true}); });
+app.get('/api/settlements/preview', auth, allow(...adminTeam), async (req,res)=>{
+  const from=req.query.from || new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().slice(0,10);
+  const to=req.query.to || new Date().toISOString().slice(0,10);
+  const entries=await all(`SELECT t.*, u.name user_name,u.hourly_rate,u.default_day_rate,u.default_night_rate,u.operator_role_name,e.title event_title,e.date FROM time_entries t JOIN users u ON u.id=t.user_id JOIN events e ON e.id=t.event_id WHERE e.date BETWEEN ? AND ? AND t.check_in IS NOT NULL AND t.check_out IS NOT NULL ORDER BY u.name,e.date`,[from,to]);
+  const map={}; const settings=await getSettingsMap(); const diet=Number(settings.diet_amount||15);
+  for(const t of entries){ const h=opsHoursBetween(t.check_in,t.check_out,t.break_minutes); const nh=nightHoursExact(t.check_in,t.check_out); const normal=Math.max(0,h-nh); const dayRate=Number(t.default_day_rate||t.hourly_rate||0); const nightRate=Number(t.default_night_rate||dayRate||0); if(!map[t.user_id]) map[t.user_id]={user_id:t.user_id,user_name:t.user_name,normal_hours:0,night_hours:0,diets:0,amount:0,entries:0}; map[t.user_id].normal_hours+=normal; map[t.user_id].night_hours+=nh; if(h>=6) map[t.user_id].diets+=diet; map[t.user_id].amount+=normal*dayRate + nh*nightRate + (h>=6?diet:0); map[t.user_id].entries++; }
+  res.json({from,to,rows:Object.values(map).map(r=>({...r,normal_hours:+r.normal_hours.toFixed(2),night_hours:+r.night_hours.toFixed(2),amount:+r.amount.toFixed(2)}))});
+});
+app.post('/api/settlements/create', auth, allow(...adminRoles), async (req,res)=>{
+  const from=req.body.from, to=req.body.to; if(!from||!to) return res.status(400).json({error:'Indica periodo'});
+  const entries=await all(`SELECT t.*, u.name user_name,u.hourly_rate,u.default_day_rate,u.default_night_rate,e.date FROM time_entries t JOIN users u ON u.id=t.user_id JOIN events e ON e.id=t.event_id WHERE e.date BETWEEN ? AND ? AND t.check_in IS NOT NULL AND t.check_out IS NOT NULL`,[from,to]);
+  const settings=await getSettingsMap(); const diet=Number(settings.diet_amount||15); const map={};
+  for(const t of entries){ const h=opsHoursBetween(t.check_in,t.check_out,t.break_minutes); const nh=nightHoursExact(t.check_in,t.check_out); const normal=Math.max(0,h-nh); const dayRate=Number(t.default_day_rate||t.hourly_rate||0); const nightRate=Number(t.default_night_rate||dayRate||0); const k=t.user_id; if(!map[k]) map[k]={normal:0,night:0,diets:0,amount:0}; map[k].normal+=normal; map[k].night+=nh; if(h>=6) map[k].diets+=diet; map[k].amount+=normal*dayRate+nh*nightRate+(h>=6?diet:0); }
+  const created=[]; for(const [uid,r] of Object.entries(map)){ const out=await run('INSERT INTO payroll_settlements(user_id,period_start,period_end,normal_hours,night_hours,diets,amount,status) VALUES(?,?,?,?,?,?,?,?)',[uid,from,to,+r.normal.toFixed(2),+r.night.toFixed(2),+r.diets.toFixed(2),+r.amount.toFixed(2),'draft']); created.push(out.id); }
+  await audit(req,'create_settlements','payroll_settlements','batch',{from,to,count:created.length}); res.json({ok:true,created});
+});
+app.get('/api/settlements', auth, allow(...adminTeam), async (req,res)=> res.json(await all(`SELECT s.*, u.name user_name FROM payroll_settlements s JOIN users u ON u.id=s.user_id ORDER BY s.created_at DESC LIMIT 500`)));
+app.get('/api/reports/ops-csv', auth, allow(...adminTeam), async (req,res)=>{
+  const rows=await all(`SELECT e.date,e.title,COALESCE(c.name,e.client_name) client, u.name worker,t.check_in,t.check_out,t.break_minutes,t.gps_distance_in_m,t.gps_distance_out_m FROM time_entries t JOIN events e ON e.id=t.event_id JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=e.client_id ORDER BY e.date DESC`);
+  const escCsv=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
+  const csv=['Fecha,Evento,Cliente,Operario,Entrada,Salida,Descanso,Distancia entrada,Distancia salida',...rows.map(r=>[r.date,r.title,r.client,r.worker,r.check_in,r.check_out,r.break_minutes,r.gps_distance_in_m,r.gps_distance_out_m].map(escCsv).join(','))].join('\n');
+  res.setHeader('Content-Type','text/csv; charset=utf-8'); res.setHeader('Content-Disposition','attachment; filename="marfan-operativa.csv"'); res.send('\ufeff'+csv);
+});
+app.post('/api/events/:id/close', auth, allow(...adminTeam), async (req,res)=>{
+  const ops=await buildEventOps(req.params.id); if(!ops) return res.status(404).json({error:'Evento no encontrado'});
+  const settings=await getSettingsMap(); const hard=[]; if(ops.openEntries) hard.push('Hay fichajes abiertos'); if(settings.close_requires_signed_delivery==='1' && !ops.signedDelivery) hard.push('Falta albarán firmado');
+  if(hard.length) return res.status(409).json({error:'No se puede cerrar el evento', blocking:hard});
+  await run('UPDATE events SET status="done", operational_status="cerrado", closed_at=datetime("now"), closed_by=?, close_notes=? WHERE id=?',[req.user.id,req.body?.notes||'',req.params.id]); await audit(req,'close_event','events',req.params.id,{notes:req.body?.notes||''}); res.json({ok:true});
+});
+
 app.get('/api/backup/export', auth, allow('super_admin'), async (req,res)=>{
   const data={exported_at:new Date().toISOString(), users:await all('SELECT * FROM users'), clients:await all('SELECT * FROM clients'), events:await all('SELECT * FROM events'), assignments:await all('SELECT * FROM event_assignments'), time_entries:await all('SELECT * FROM time_entries'), rates:await all('SELECT * FROM rates'), documents:await all('SELECT * FROM documents'), delivery_notes:await all('SELECT * FROM delivery_notes'), settings:await all('SELECT * FROM settings')};
   res.setHeader('Content-Disposition','attachment; filename="marfan-backup.json"'); res.json(data);
@@ -437,6 +546,6 @@ app.get('/api/pdf-template/:type/:id', auth, async (req,res)=>{
   res.status(404).json({error:'Tipo no soportado'});
 });
 
-app.get('/api/health', (req,res)=> res.json({ok:true, app:'Marfan Crew 2.0.5 Enterprise Fix', clean:true, geofence:true, pdfA4Pro:true, vaultEncrypted:true, auditLogs:true}));
+app.get('/api/health', (req,res)=> res.json({ok:true, app:'Marfan Crew 2.0.6 Operativa Real', clean:true, geofence:true, pdfA4Pro:true, vaultEncrypted:true, auditLogs:true, controlTower:true, settlements:true, checklists:true, publicDeliverySignature:true}));
 
-migrate().then(async()=>{ await migratePasswordVaultEncryption(); const email=process.env.DEFAULT_ADMIN_EMAIL||'admin@marfan.local'; const pass=process.env.DEFAULT_ADMIN_PASSWORD||'Admin1234!'; const exists=await get('SELECT id FROM users WHERE email=?',[email]); if(!exists) await run('INSERT INTO users(name,email,password_hash,role,active,position) VALUES(?,?,?,?,?,?)',['Super Admin',email,await bcrypt.hash(pass,10),'super_admin',1,'Dirección']); if(process.env.AUTO_IMPORT_LEGACY_DATA !== 'false'){ try{ const r=await importLegacyData({get,run}); console.log('[Marfan 2.0.5] Datos V62.49 importados', r); }catch(e){ console.warn('[Marfan 2.0.5] Import legacy warning', e.message); } } app.listen(PORT,()=>console.log(`Marfan Crew 2.0.5 running on ${PORT}`)); }).catch(err=>{ console.error(err); process.exit(1); });
+migrate().then(async()=>{ await migratePasswordVaultEncryption(); const email=process.env.DEFAULT_ADMIN_EMAIL||'admin@marfan.local'; const pass=process.env.DEFAULT_ADMIN_PASSWORD||'Admin1234!'; const exists=await get('SELECT id FROM users WHERE email=?',[email]); if(!exists) await run('INSERT INTO users(name,email,password_hash,role,active,position) VALUES(?,?,?,?,?,?)',['Super Admin',email,await bcrypt.hash(pass,10),'super_admin',1,'Dirección']); if(process.env.AUTO_IMPORT_LEGACY_DATA !== 'false'){ try{ const r=await importLegacyData({get,run}); console.log('[Marfan 2.0.6] Datos V62.49 importados', r); }catch(e){ console.warn('[Marfan 2.0.6] Import legacy warning', e.message); } } app.listen(PORT,()=>console.log(`Marfan Crew 2.0.6 running on ${PORT}`)); }).catch(err=>{ console.error(err); process.exit(1); });

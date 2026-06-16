@@ -282,8 +282,64 @@ async function migrate() {
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )`);
   await run(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+
+  // V2.0.6 Operativa Real: campos de control total de evento
+  await addCol('events','required_workers','INTEGER DEFAULT 0');
+  await addCol('events','required_team_leads','INTEGER DEFAULT 0');
+  await addCol('events','closed_at','TEXT DEFAULT ""');
+  await addCol('events','closed_by','INTEGER DEFAULT NULL');
+  await addCol('events','close_notes','TEXT DEFAULT ""');
+  await addCol('event_assignments','confirmed_by_worker','INTEGER DEFAULT 0');
+  await addCol('event_assignments','confirmed_at','TEXT DEFAULT ""');
+  await addCol('event_assignments','assignment_notes','TEXT DEFAULT ""');
+  await addCol('delivery_notes','public_token','TEXT DEFAULT ""');
+  await addCol('delivery_notes','public_token_expires_at','TEXT DEFAULT ""');
+  await addCol('delivery_notes','client_observations','TEXT DEFAULT ""');
+  await addCol('delivery_notes','emailed_at','TEXT DEFAULT ""');
+  await addCol('users','available','INTEGER DEFAULT 1');
+  await addCol('users','default_day_rate','REAL DEFAULT 0');
+  await addCol('users','default_night_rate','REAL DEFAULT 0');
+  await run(`CREATE TABLE IF NOT EXISTS worker_availability (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    status TEXT DEFAULT 'available',
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id,date),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+  await run(`CREATE TABLE IF NOT EXISTS payroll_settlements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    normal_hours REAL DEFAULT 0,
+    night_hours REAL DEFAULT 0,
+    diets REAL DEFAULT 0,
+    km REAL DEFAULT 0,
+    amount REAL DEFAULT 0,
+    status TEXT DEFAULT 'draft',
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    closed_at TEXT DEFAULT '',
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+  await run(`CREATE TABLE IF NOT EXISTS event_checklists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL,
+    item TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',
+    required INTEGER DEFAULT 1,
+    completed_by INTEGER,
+    completed_at TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE
+  )`);
+
   await run(`INSERT OR IGNORE INTO settings(key,value) VALUES
-    ('km_rate','0.28'),('diet_amount','15'),('night_start','22:00'),('night_end','07:00'),('vat_percent','21'),('company_name','MARFAN CREW'),('company_legal_name','MARFAN CREW'),('company_cif',''),('company_email',''),('company_phone',''),('hq_address','Calle Ciro Alegría 89, Málaga'),('geofence_radius_m','250'),('invoice_prefix','ALB')`);
+    ('km_rate','0.28'),('diet_amount','15'),('night_start','22:00'),('night_end','07:00'),('vat_percent','21'),('company_name','MARFAN CREW'),('company_legal_name','MARFAN CREW'),('company_cif',''),('company_email',''),('company_phone',''),('hq_address','Calle Ciro Alegría 89, Málaga'),('geofence_radius_m','250'),('invoice_prefix','ALB'),('min_rest_hours','8'),('default_event_radius_m','250'),('close_requires_signed_delivery','1')`);
   const defaults = [['Auxiliar montaje',12,15],['Jefe equipo',16,20],['Runner',12,15],['Carretilla',18,22],['Limpieza',11,14]];
   for (const r of defaults) await run('INSERT OR IGNORE INTO rates(id,role,day_rate,night_rate,active) VALUES((SELECT id FROM rates WHERE role=?),?,?,?,1)', [r[0], r[0], r[1], r[2]]).catch(()=>{});
 }

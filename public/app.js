@@ -92,3 +92,77 @@ documentacion = function(){ $('#main').innerHTML=header('Documentación PRL','Su
 window.docUploadModal=()=>{ modal(`<h3>Subir documento</h3><form id="f" class="formgrid"><input name="title" placeholder="Título" required><input name="type" placeholder="Tipo"><input name="owner_type" placeholder="Operario / Cliente / Empresa"><input name="owner_id" placeholder="ID propietario"><input name="expiry_date" type="date"><input name="file" type="file"><textarea name="notes" placeholder="Notas"></textarea><button class="blue">Guardar</button><button type="button" class="secondary" onclick="closeModal()">Cancelar</button></form>`); $('#f').onsubmit=async e=>{e.preventDefault(); const fd=new FormData(e.target); const file=fd.get('file'); const b=Object.fromEntries(fd); delete b.file; if(file&&file.size){ b.original_name=file.name; b.data_url=await new Promise(res=>{const r=new FileReader(); r.onload=()=>res(r.result); r.readAsDataURL(file);}); } try{await api('/api/documents/upload-json',{method:'POST',body:JSON.stringify(b)}); closeModal(); await loadBase(); renderShell(); toast('Documento subido')}catch(err){toast(err.message)}}; }
 function auditoria(){ $('#main').innerHTML=header('Auditoría y seguridad','Registro de acciones importantes del sistema.')+`<section class="card">${table(['Fecha','Usuario','Acción','Entidad','ID'],(state.auditLogs||[]).map(l=>[esc(l.created_at),esc(l.user_name||''),esc(l.action),esc(l.entity),esc(l.entity_id)]))}</section>`; }
 window.printPage=()=>window.print();
+
+// ---------- V2.0.6 OPERATIVA REAL UI ----------
+try {
+  pages.splice(1, 0, ['OPERATIVA','torre-control','Torre de control']);
+  pages.splice(2, 0, ['OPERATIVA','conflictos','Conflictos']);
+  pages.splice(3, 0, ['OPERATIVA','liquidaciones','Liquidaciones']);
+} catch(e) {}
+
+const _loadBase206 = loadBase;
+loadBase = async function(){
+  await _loadBase206();
+  [state.controlTower,state.conflicts,state.settlements] = await Promise.all([
+    api('/api/ops/control-tower').catch(()=>({events:[],alerts:[]})),
+    api('/api/ops/conflicts').catch(()=>[]),
+    api('/api/settlements').catch(()=>[])
+  ]);
+};
+
+const _renderPage206 = renderPage;
+renderPage = function(){
+  ({dashboard, 'torre-control':torreControl, conflictos, liquidaciones, calendario, control, gps, 'vista-operario':vistaOperario, clientes, eventos, realizados, operarios, usuarios, tarifas, documentacion, albaranes, finanzas, informes, passwords, ajustes, auditoria}[state.page] || dashboard)();
+};
+
+function torreControl(){
+  const ct = state.controlTower || {events:[],alerts:[]};
+  $('#main').innerHTML = header('Torre de control operativa','Semáforo real: personal, GPS, fichajes, albarán y cierre de evento.', '<button class="blue" onclick="refreshOps()">Actualizar</button> <a class="button secondary" href="/api/reports/ops-csv" target="_blank">Export CSV</a>') +
+  `<div class="grid kpis"><div class="card kpi"><b>${ct.events.length}</b><span>Eventos controlados</span></div><div class="card kpi"><b>${ct.alerts.length}</b><span>Alertas abiertas</span></div><div class="card kpi"><b>${ct.events.filter(e=>e.progress>=100).length}</b><span>Listos/cerrables</span></div></div>
+  <section class="card"><h3>Alertas críticas</h3>${table(['Fecha','Evento','Nivel','Alerta'],(ct.alerts||[]).map(a=>[dateES(a.date),esc(a.event_title),esc(a.level),esc(a.message)]))}</section>
+  <section class="card"><h3>Estado por evento</h3>${table(['Fecha','Evento','Cliente','Personal','Confirmados','Fichajes abiertos','Albarán','Progreso','Acciones'],(ct.events||[]).map(e=>[dateES(e.date),esc(e.title),esc(e.client_name||''),`${e.assigned}/${e.required||'-'}`,e.confirmed||0,e.openEntries,e.signedDelivery?'Firmado':'Pendiente',`${e.progress}%`,`<button class="blue smallbtn" onclick="openOps(${e.id})">Abrir control</button> <button class="secondary smallbtn" onclick="closeEvent(${e.id})">Cerrar</button>`]))}</section>`;
+}
+window.refreshOps = async()=>{ await loadBase(); renderShell(); toast('Torre de control actualizada'); };
+window.openOps = async(id)=>{
+  try{
+    const o = await api(`/api/ops/events/${id}`);
+    modal(`<h3>Control operativo · ${esc(o.event.title)}</h3>
+    <div class="grid kpis"><div class="card kpi"><b>${o.assigned}/${o.requiredWorkers||'-'}</b><span>Personal</span></div><div class="card kpi"><b>${o.confirmed}</b><span>Confirmados</span></div><div class="card kpi"><b>${o.openEntries}</b><span>Fichajes abiertos</span></div><div class="card kpi"><b>${o.progress}%</b><span>Progreso</span></div></div>
+    <section class="card"><h4>Bloqueos / pendientes</h4>${(o.missing||[]).map(x=>`<p class="pill danger">${esc(x)}</p>`).join('')||'<p class="pill">Sin bloqueos importantes</p>'}</section>
+    <section class="card"><h4>Asignados</h4>${table(['Operario','Rol','Inicio','Fin','Confirmado'],(o.assignments||[]).map(a=>[esc(a.user_name),esc(a.role_label||a.operator_role_name||''),esc(a.planned_start),esc(a.planned_end),a.confirmed_by_worker?'Sí':'No']))}</section>
+    <section class="card"><h4>Fichajes</h4>${table(['Operario','Entrada','Salida','GPS entrada','GPS salida'],(o.entries||[]).map(t=>[esc(t.user_name),esc(t.check_in),esc(t.check_out||'Abierto'),t.gps_distance_in_m?`${Math.round(t.gps_distance_in_m)} m`:'-',t.gps_distance_out_m?`${Math.round(t.gps_distance_out_m)} m`:'-']))}</section>
+    <form id="reqForm" class="formgrid"><input name="required_workers" type="number" placeholder="Operarios requeridos" value="${o.requiredWorkers||0}"><input name="required_team_leads" type="number" placeholder="Jefes requeridos" value="${o.event.required_team_leads||0}"><input name="operational_status" placeholder="Estado operativo" value="${esc(o.event.operational_status||'')}"><button class="blue">Guardar requisitos</button><button type="button" class="secondary" onclick="closeModal()">Cerrar</button></form>`);
+    $('#reqForm').onsubmit = async e=>{e.preventDefault(); await api(`/api/ops/events/${id}/requirements`,{method:'PUT',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))}); closeModal(); await loadBase(); renderShell(); toast('Requisitos actualizados');};
+  }catch(e){toast(e.message)}
+};
+window.closeEvent = async(id)=>{ try{ await api(`/api/events/${id}/close`,{method:'POST',body:JSON.stringify({notes:'Cierre desde torre de control'})}); await loadBase(); renderShell(); toast('Evento cerrado'); }catch(e){ toast(e.message); } };
+
+function conflictos(){
+  $('#main').innerHTML = header('Conflictos de planificación','Detecta operarios asignados a eventos solapados en la misma fecha.', '<button class="blue" onclick="refreshOps()">Recalcular</button>') +
+  `<section class="card">${table(['Operario','Fecha','Evento A','Evento B'],(state.conflicts||[]).map(c=>[esc(c.user_name),dateES(c.date),esc(c.event_a),esc(c.event_b)]))}</section>`;
+}
+
+function liquidaciones(){
+  const now = new Date(); const first = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0,10); const today = now.toISOString().slice(0,10);
+  $('#main').innerHTML = header('Liquidaciones de operarios','Previsualiza horas normales/nocturnas, dietas e importes por periodo.', `<button class="blue" onclick="settlementPreview()">Previsualizar</button> <button class="secondary" onclick="createSettlements()">Crear liquidaciones</button>`) +
+  `<section class="card"><div class="formgrid"><input id="settFrom" type="date" value="${first}"><input id="settTo" type="date" value="${today}"></div><div id="settPreview"></div></section>
+  <section class="card"><h3>Liquidaciones creadas</h3>${table(['Fecha','Operario','Periodo','Horas normales','Nocturnas','Dietas','Importe','Estado'],(state.settlements||[]).map(s=>[esc(s.created_at),esc(s.user_name),`${dateES(s.period_start)} - ${dateES(s.period_end)}`,Number(s.normal_hours||0).toFixed(2),Number(s.night_hours||0).toFixed(2),money(s.diets),money(s.amount),esc(s.status)]))}</section>`;
+}
+window.settlementPreview = async()=>{ try{ const from=$('#settFrom').value, to=$('#settTo').value; const r=await api(`/api/settlements/preview?from=${from}&to=${to}`); $('#settPreview').innerHTML=table(['Operario','Fichajes','Horas normales','Nocturnas','Dietas','Importe'],r.rows.map(x=>[esc(x.user_name),x.entries,Number(x.normal_hours||0).toFixed(2),Number(x.night_hours||0).toFixed(2),money(x.diets),money(x.amount)])); }catch(e){toast(e.message)} };
+window.createSettlements = async()=>{ try{ const from=$('#settFrom').value, to=$('#settTo').value; await api('/api/settlements/create',{method:'POST',body:JSON.stringify({from,to})}); await loadBase(); renderShell(); toast('Liquidaciones creadas'); }catch(e){toast(e.message)} };
+
+const _vistaOperario206 = vistaOperario;
+vistaOperario = function(){
+  $('#main').innerHTML = header('Vista operario','Eventos asignados, confirmación y fichaje GPS.') + `<section class="card"><div id="myAssigns">Cargando...</div></section><section class="card"><h3>Mis fichajes</h3><div id="myEntries">Cargando...</div></section>`;
+  api('/api/my-assignments').then(rows=>{$('#myAssigns').innerHTML=table(['Fecha','Hora','Evento','Cliente','Lugar','Estado','Acciones'],rows.map(a=>[dateES(a.date),`${a.planned_start||a.start_time||''}-${a.planned_end||a.end_time||''}`,esc(a.title),esc(a.client_name||''),esc(a.location||a.address||''),a.confirmed_by_worker?'Confirmado':'Pendiente',`${a.confirmed_by_worker?'':`<button class="secondary smallbtn" onclick="confirmAssignment(${a.id})">Confirmar</button>`} <button class="blue smallbtn" onclick="checkIn(${a.event_id})">Entrada</button> <button class="secondary smallbtn" onclick="checkOut(${a.event_id})">Salida</button>`]))}).catch(()=>_vistaOperario206());
+  api('/api/my-time-entries').then(rows=>{$('#myEntries').innerHTML=table(['Evento','Entrada','Salida','Descanso','Corrección'],rows.map(r=>[esc(r.event_title),esc(r.check_in),esc(r.check_out||'Abierto'),r.break_minutes||0,r.admin_corrected?'Sí':'No']))}).catch(()=>{});
+};
+window.confirmAssignment = async(id)=>{ try{ await api(`/api/my-assignments/${id}/confirm`,{method:'POST',body:'{}'}); await loadBase(); renderShell(); toast('Asistencia confirmada'); }catch(e){toast(e.message)} };
+
+window.createPublicToken = async(id)=>{ try{ const r=await api(`/api/event-delivery-notes/${id}/public-token`,{method:'POST',body:'{}'}); prompt('Enlace público para firma del cliente:', location.origin + r.url); }catch(e){toast(e.message)} };
+const _albaranes206 = albaranes;
+albaranes = function(){
+  $('#main').innerHTML=header('Albaranes A4 Pro','Albarán por evento con PDF, firma manuscrita, enlace público y bloqueo tras firma.','<button class="blue" onclick="deliveryModal()">Generar albarán</button>')+`<section class="card">${table(['Número','Fecha','Cliente','Horas normales','Horas nocturnas','Total','IVA incluido','Estado','Acciones'],(state.notes||[]).map(n=>[esc(n.number),dateES(n.event_date),esc(n.client_name),Number(n.normal_hours||0).toFixed(2),Number(n.night_hours||0).toFixed(2),money(n.grand_total),money(n.grand_total_vat),n.locked?'Firmado/bloqueado':'Pendiente',`<button class="blue smallbtn" onclick="downloadDeliveryPDF(${n.id})">PDF A4</button> <button class="secondary smallbtn" onclick="createPublicToken(${n.id})">Link firma</button> ${n.locked?'':`<button class="secondary smallbtn" onclick="signDelivery(${n.id})">Firmar</button>`}`]))}</section>`;
+};
+
+try { document.querySelectorAll('.brand p').forEach(el=>el.textContent='App 2.0.6'); } catch(e) {}
