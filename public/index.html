@@ -1,1 +1,174 @@
-<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Marfan Crew 2.1.1</title><style>body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f7;color:#111}.wrap{max-width:980px;margin:0 auto;padding:60px 24px}.card{background:rgba(255,255,255,.82);border:1px solid rgba(0,0,0,.08);box-shadow:0 20px 60px rgba(0,0,0,.08);border-radius:28px;padding:34px}h1{font-size:42px;margin:0 0 10px}.badge{display:inline-block;background:#111;color:#fff;border-radius:999px;padding:8px 14px;font-size:13px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-top:28px}.item{background:#fff;border-radius:18px;padding:18px;border:1px solid #eee}a{color:#06c}</style></head><body><div class="wrap"><div class="card"><span class="badge">Railway Enterprise Stable</span><h1>Marfan Crew V2.1.1</h1><p>Base estable arrancada correctamente. Esta versión corrige el problema de dependencias y package-lock para Railway.</p><div class="grid"><div class="item"><b>Healthcheck</b><br><a href="/health">/health</a></div><div class="item"><b>API Status</b><br><a href="/api/status">/api/status</a></div><div class="item"><b>Persistencia</b><br>/data preparada</div><div class="item"><b>Siguiente fase</b><br>Migrar módulos V2.1.0 completos sobre esta base estable.</div></div></div></div></body></html>
+
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Marfan Crew V2.1.2</title>
+  <style>
+    :root{--bg:#f5f5f7;--card:rgba(255,255,255,.86);--text:#1d1d1f;--muted:#6e6e73;--line:#d2d2d7;--black:#111;--blue:#0071e3;--red:#ff3b30;--green:#34c759}
+    *{box-sizing:border-box} body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:linear-gradient(180deg,#fff,var(--bg));color:var(--text)}
+    .wrap{max-width:1180px;margin:0 auto;padding:28px}
+    .hero{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:22px}
+    h1{font-size:36px;letter-spacing:-1px;margin:0}.muted{color:var(--muted)}
+    .card{background:var(--card);backdrop-filter:blur(20px);border:1px solid var(--line);border-radius:24px;padding:22px;box-shadow:0 20px 50px rgba(0,0,0,.06);margin-bottom:18px}
+    .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    button,input,select,textarea{font:inherit;border-radius:14px;border:1px solid var(--line);padding:12px;background:#fff}
+    button{background:var(--black);color:#fff;border:none;cursor:pointer;font-weight:700} button.secondary{background:#fff;color:var(--text);border:1px solid var(--line)}
+    button.blue{background:var(--blue)} button.red{background:var(--red)}
+    table{width:100%;border-collapse:collapse} td,th{padding:10px;border-bottom:1px solid var(--line);text-align:left;font-size:14px}
+    .tabs{display:flex;gap:10px;flex-wrap:wrap;margin:16px 0}.tabs button{border-radius:999px;padding:10px 14px}
+    .pill{display:inline-block;border-radius:999px;padding:4px 9px;background:#eee;font-size:12px}.ok{background:#e7f8ed;color:#137333}.bad{background:#ffe8e6;color:#b00020}
+    .hidden{display:none}.login{max-width:460px;margin:70px auto}.login h1{text-align:center}.choice{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    @media(max-width:800px){.grid,.grid2{grid-template-columns:1fr}.hero{display:block}.wrap{padding:16px}}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <section id="login" class="login card">
+    <h1>Marfan Crew</h1>
+    <p class="muted" style="text-align:center">V2.1.2 Railway Production Base</p>
+    <div class="choice">
+      <button class="blue" onclick="setMode('admin')">Login Administrador</button>
+      <button class="secondary" onclick="setMode('operator')">Login Operario</button>
+    </div>
+    <h3 id="loginTitle">Login Administrador</h3>
+    <input id="loginUser" placeholder="Email o teléfono" style="width:100%;margin-bottom:10px" value="admin@marfan.local"/>
+    <input id="loginPass" placeholder="Contraseña" type="password" style="width:100%;margin-bottom:10px" value="Admin1234!"/>
+    <button onclick="doLogin()" style="width:100%">Entrar</button>
+    <p id="loginMsg" class="muted"></p>
+  </section>
+
+  <section id="app" class="hidden">
+    <div class="hero">
+      <div>
+        <h1>Marfan Crew</h1>
+        <p class="muted">Base estable Railway · Persistencia /data · Control solapamientos</p>
+      </div>
+      <button class="secondary" onclick="logout()">Cerrar sesión</button>
+    </div>
+
+    <div class="grid" id="kpis"></div>
+
+    <div class="tabs">
+      <button onclick="show('dashboard')">Dashboard</button>
+      <button onclick="show('users')">Operarios</button>
+      <button onclick="show('events')">Eventos</button>
+      <button onclick="show('assign')">Asignar</button>
+      <button onclick="show('system')">Sistema</button>
+    </div>
+
+    <div id="dashboard" class="view card">
+      <h2>Torre de control</h2>
+      <p>Esta versión está pensada para arrancar sí o sí en Railway y conservar datos en el volumen.</p>
+      <button onclick="loadData()">Actualizar datos</button>
+    </div>
+
+    <div id="users" class="view card hidden">
+      <h2>Operarios / Jefes de equipo</h2>
+      <div class="grid2">
+        <input id="uName" placeholder="Nombre"/>
+        <input id="uPhone" placeholder="Teléfono"/>
+        <input id="uEmail" placeholder="Email"/>
+        <select id="uRole"><option value="operator">Operario</option><option value="team_lead">Jefe de equipo</option><option value="admin">Admin</option></select>
+      </div><br>
+      <button onclick="createUser()">Crear usuario</button>
+      <div id="usersTable"></div>
+    </div>
+
+    <div id="events" class="view card hidden">
+      <h2>Eventos</h2>
+      <div class="grid2">
+        <input id="eTitle" placeholder="Nombre evento"/>
+        <input id="eDate" type="date"/>
+        <input id="eStart" type="time" value="09:00"/>
+        <input id="eEnd" type="time" value="14:00"/>
+        <input id="eLocation" placeholder="Ubicación"/>
+      </div><br>
+      <button onclick="createEvent()">Crear evento</button>
+      <div id="eventsTable"></div>
+    </div>
+
+    <div id="assign" class="view card hidden">
+      <h2>Asignación con bloqueo de solapamientos</h2>
+      <div class="grid2">
+        <select id="aEvent" onchange="loadAvailable()"></select>
+        <select id="aUser"></select>
+        <select id="aRole"><option>operario</option><option>jefe de equipo</option><option>limpieza</option><option>auxiliar</option></select>
+      </div><br>
+      <button onclick="assignUser()">Asignar operario</button>
+      <p class="muted">Si el horario se pisa con otro evento, el backend bloquea el guardado.</p>
+      <div id="assignTable"></div>
+    </div>
+
+    <div id="system" class="view card hidden">
+      <h2>Sistema</h2>
+      <button onclick="health()">Probar /health</button>
+      <button onclick="backup()">Crear backup</button>
+      <pre id="systemOut"></pre>
+    </div>
+  </section>
+</div>
+
+<script>
+let mode = 'admin', token = localStorage.getItem('m_token'), db = null;
+function setMode(m){
+  mode=m;
+  document.getElementById('loginTitle').textContent = m==='admin'?'Login Administrador':'Login Operario';
+  document.getElementById('loginUser').value = m==='admin'?'admin@marfan.local':'600000000';
+  document.getElementById('loginPass').value = m==='admin'?'Admin1234!':'Marfan1234*';
+}
+async function api(url, opts={}){
+  opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers||{});
+  if(token) opts.headers.Authorization = 'Bearer '+token;
+  const r = await fetch(url, opts);
+  return r.json();
+}
+async function doLogin(){
+  const out = await api('/api/login',{method:'POST',body:JSON.stringify({mode,login:loginUser.value,password:loginPass.value})});
+  if(!out.ok){ loginMsg.textContent=out.error; return; }
+  token=out.token; localStorage.setItem('m_token',token);
+  login.classList.add('hidden'); app.classList.remove('hidden'); await loadData();
+}
+function logout(){localStorage.removeItem('m_token'); location.reload()}
+function show(id){document.querySelectorAll('.view').forEach(v=>v.classList.add('hidden'));document.getElementById(id).classList.remove('hidden'); if(id==='assign') loadAvailable();}
+async function loadData(){
+  const out = await api('/api/data');
+  if(!out.ok){return}
+  db=out.db; render();
+}
+function render(){
+  kpis.innerHTML = ['users','clients','events','assignments'].map(k=>`<div class="card"><h2>${db[k]?.length||0}</h2><p class="muted">${k}</p></div>`).join('');
+  usersTable.innerHTML = table(db.users, ['name','role','phone','email','active']);
+  eventsTable.innerHTML = table(db.events, ['title','date','start_time','end_time','location','status']);
+  aEvent.innerHTML = db.events.map(e=>`<option value="${e.id}">${e.date} · ${e.start_time}-${e.end_time} · ${e.title}</option>`).join('');
+  assignTable.innerHTML = table(db.assignments, ['event_id','user_id','role','start_time','end_time','status']);
+}
+function table(rows, cols){
+  return `<table><thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${(rows||[]).map(r=>`<tr>${cols.map(c=>`<td>${r[c]??''}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+async function createUser(){
+  const out = await api('/api/users',{method:'POST',body:JSON.stringify({name:uName.value,phone:uPhone.value,email:uEmail.value,role:uRole.value,is_team_lead:uRole.value==='team_lead'})});
+  await loadData();
+}
+async function createEvent(){
+  const out = await api('/api/events',{method:'POST',body:JSON.stringify({title:eTitle.value,date:eDate.value,start_time:eStart.value,end_time:eEnd.value,location:eLocation.value})});
+  await loadData();
+}
+async function loadAvailable(){
+  if(!aEvent.value) return;
+  const ev = db.events.find(e=>e.id===aEvent.value);
+  const out = await api('/api/available-users',{method:'POST',body:JSON.stringify({event_id:ev.id,date:ev.date,start_time:ev.start_time,end_time:ev.end_time})});
+  aUser.innerHTML = out.users.map(u=>`<option value="${u.id}" ${!u.available?'disabled':''}>${u.name} · ${u.role} ${u.available?'':'NO DISPONIBLE'}</option>`).join('');
+}
+async function assignUser(){
+  const out = await api('/api/assignments',{method:'POST',body:JSON.stringify({event_id:aEvent.value,user_id:aUser.value,role:aRole.value,is_team_lead:aRole.value==='jefe de equipo'})});
+  if(!out.ok) alert(out.error);
+  await loadData(); await loadAvailable();
+}
+async function health(){ systemOut.textContent = JSON.stringify(await api('/health'),null,2); }
+async function backup(){ systemOut.textContent = JSON.stringify(await api('/api/backup',{method:'POST'}),null,2); }
+if(token){ login.classList.add('hidden'); app.classList.remove('hidden'); loadData(); }
+</script>
+</body>
+</html>
