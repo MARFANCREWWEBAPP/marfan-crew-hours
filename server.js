@@ -70,7 +70,7 @@ const { google } = require('googleapis');
 const app = express();
 
 // ---------- V62.53 STABLE PRODUCTION PATCH ----------
-const V6253_VERSION = '62.53.0';
+const V6253_VERSION = '62.54.0';
 
 function v6253Database(){
   try { if (typeof db !== 'undefined') return db; } catch(e) {}
@@ -9171,6 +9171,61 @@ app.get('/api/v6250/persistent-status', requireAdmin, (req,res)=>{
     res.json({ok:true, version:'62.50', db_path:dbPath, data_dir:process.env.DATA_DIR||global.DATA_DIR_V627||'', exists, size});
   }catch(e){ res.status(500).json({ok:false,error:e.message}); }
 });
+
+
+// ---------- V62.54 VISUAL SOLAPAMIENTOS API ----------
+try {
+  app.get('/api/v6254/health', (req,res)=>{
+    res.json({ok:true, version:'62.54.0', message:'Visual Solapamientos activo'});
+  });
+
+  app.post('/api/v6254/check-assignment-conflicts', (req,res)=>{
+    try {
+      const b = req.body || {};
+      const fn = (typeof v6253FindAssignmentConflicts === 'function') ? v6253FindAssignmentConflicts : null;
+      if (!fn) return res.status(500).json({ok:false,error:'Motor de solapamientos no disponible'});
+      const conflicts = fn(
+        Number(b.event_id || 0),
+        Number(b.user_id || 0),
+        b.event_date || b.date || '',
+        b.start_time || b.planned_start || '',
+        b.end_time || b.planned_end || ''
+      );
+      res.json({ok:true, available: conflicts.length === 0, conflicts});
+    } catch(e) {
+      res.status(500).json({ok:false,error:e.message});
+    }
+  });
+
+  app.post('/api/v6254/available-workers', (req,res)=>{
+    try {
+      const b = req.body || {};
+      const database = (typeof v6253Database === 'function') ? v6253Database() : (typeof db !== 'undefined' ? db : null);
+      if (!database) return res.status(500).json({ok:false,error:'DB no disponible'});
+      const fn = (typeof v6253FindAssignmentConflicts === 'function') ? v6253FindAssignmentConflicts : null;
+      if (!fn) return res.status(500).json({ok:false,error:'Motor de solapamientos no disponible'});
+
+      let users = [];
+      try {
+        users = database.prepare(`SELECT id, first_name, last_name, nickname, phone, email, role, active FROM users WHERE COALESCE(active,1)!=0 AND COALESCE(role,'')!='admin' ORDER BY first_name,last_name,nickname`).all();
+      } catch(e) {
+        try { users = database.prepare(`SELECT * FROM users WHERE COALESCE(role,'')!='admin'`).all(); } catch(_) { users = []; }
+      }
+
+      const rows = users.map(u => {
+        const conflicts = fn(Number(b.event_id || 0), Number(u.id || 0), b.event_date || b.date || '', b.start_time || b.planned_start || '', b.end_time || b.planned_end || '');
+        return Object.assign({}, u, { available: conflicts.length === 0, conflicts, availability_label: conflicts.length ? 'NO DISPONIBLE' : 'DISPONIBLE' });
+      });
+
+      res.json({ok:true, workers: rows});
+    } catch(e) {
+      res.status(500).json({ok:false,error:e.message});
+    }
+  });
+} catch(e) {
+  console.error('[V62.54] visual overlap routes error:', e.message);
+}
+// ---------- END V62.54 VISUAL SOLAPAMIENTOS API ----------
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

@@ -1,6 +1,6 @@
 {
-  "name": "marfan-crew-hours-v62-53-stable-production",
-  "version": "62.53.0",
+  "name": "marfan-crew-hours-v62-54-visual-solapamientos",
+  "version": "62.54.0",
   "description": "V62.51 Railway Build Fix sobre V62.50",
   "main": "server.js",
   "scripts": {

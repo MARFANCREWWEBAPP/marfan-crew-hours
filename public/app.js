@@ -10551,3 +10551,57 @@ window.v6253BackupNow = async function(){
 };
 console.log('Marfan Crew V62.53 Stable Production cargado');
 // ---------- END V62.53 STABLE PRODUCTION FRONTEND HELPERS ----------
+
+
+// ---------- V62.54 VISUAL SOLAPAMIENTOS FRONTEND ----------
+window.MARFAN_VERSION = '62.54.0';
+
+window.v6254CheckAssignmentConflicts = async function(payload){
+  const r = await fetch('/api/v6254/check-assignment-conflicts', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload || {})
+  });
+  return r.json();
+};
+
+window.v6254AvailableWorkers = async function(payload){
+  const r = await fetch('/api/v6254/available-workers', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload || {})
+  });
+  return r.json();
+};
+
+window.v6254RenderConflictBox = function(container, result){
+  try {
+    if(!container) return;
+    if(!result || !result.ok){
+      container.innerHTML = '<div class="v6254-box v6254-warn">No se pudo comprobar disponibilidad.</div>';
+      return;
+    }
+    if(result.available){
+      container.innerHTML = '<div class="v6254-box v6254-ok">✅ Operario disponible para este horario.</div>';
+      return;
+    }
+    const rows = (result.conflicts || []).map(c => {
+      const ev = c.event_name || c.name || ('Evento #' + (c.event_id || ''));
+      const start = c.planned_start || c.start_time || c.event_start_time || '';
+      const end = c.planned_end || c.end_time || c.event_end_time || '';
+      return '<li><b>' + ev + '</b> · ' + start + ' - ' + end + '</li>';
+    }).join('');
+    container.innerHTML = '<div class="v6254-box v6254-bad"><b>⛔ Operario NO disponible.</b><br>Se pisa con:<ul>' + rows + '</ul></div>';
+  } catch(e) { console.error(e); }
+};
+
+(function(){
+  if(document.getElementById('v6254-style')) return;
+  const style = document.createElement('style');
+  style.id = 'v6254-style';
+  style.textContent = '.v6254-box{margin:10px 0;padding:12px 14px;border-radius:14px;font-weight:700;border:1px solid rgba(0,0,0,.08)}.v6254-ok{background:#e8f8ee;color:#137333}.v6254-bad{background:#ffe8e6;color:#b00020}.v6254-warn{background:#fff5d6;color:#8a5a00}.v6254-worker-bad{opacity:.45;filter:grayscale(1)}.v6254-worker-pill{display:inline-block;border-radius:999px;padding:3px 8px;font-size:11px;margin-left:6px}';
+  document.head.appendChild(style);
+})();
+
+console.log('Marfan Crew V62.54 Visual Solapamientos cargado');
+// ---------- END V62.54 VISUAL SOLAPAMIENTOS FRONTEND ----------
