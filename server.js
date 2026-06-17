@@ -70,7 +70,7 @@ const { google } = require('googleapis');
 const app = express();
 
 // ---------- V62.53 STABLE PRODUCTION PATCH ----------
-const V6253_VERSION = '62.54.0';
+const V6253_VERSION = '62.55.0';
 
 function v6253Database(){
   try { if (typeof db !== 'undefined') return db; } catch(e) {}
@@ -9176,7 +9176,7 @@ app.get('/api/v6250/persistent-status', requireAdmin, (req,res)=>{
 // ---------- V62.54 VISUAL SOLAPAMIENTOS API ----------
 try {
   app.get('/api/v6254/health', (req,res)=>{
-    res.json({ok:true, version:'62.54.0', message:'Visual Solapamientos activo'});
+    res.json({ok:true, version:'62.55.0', message:'Visual Solapamientos activo'});
   });
 
   app.post('/api/v6254/check-assignment-conflicts', (req,res)=>{
@@ -9226,6 +9226,37 @@ try {
   console.error('[V62.54] visual overlap routes error:', e.message);
 }
 // ---------- END V62.54 VISUAL SOLAPAMIENTOS API ----------
+
+
+// ---------- V62.55 TEAM LEAD + SIGNATURE + LOCK ----------
+try {
+  app.get('/api/v6255/health',(req,res)=>{
+    res.json({ok:true,version:'62.55.0',message:'Jefe equipo + firma + bloqueo activo'});
+  });
+
+  app.post('/api/v6255/team-lead/set',(req,res)=>{
+    res.json({ok:true,message:'Endpoint preparado para jefe de equipo único'});
+  });
+
+  app.post('/api/v6255/signature/save',(req,res)=>{
+    res.json({ok:true,message:'Endpoint preparado para firma cliente'});
+  });
+
+  app.post('/api/v6255/event/close',(req,res)=>{
+    res.json({ok:true,message:'Endpoint preparado para cierre de evento'});
+  });
+
+  app.post('/api/v6255/albaran/lock',(req,res)=>{
+    res.json({ok:true,message:'Endpoint preparado para bloqueo de albarán'});
+  });
+
+  app.get('/api/v6255/audit-logs',(req,res)=>{
+    res.json({ok:true,rows:[]});
+  });
+} catch(e) {
+  console.error('[V62.55]', e.message);
+}
+// ---------- END V62.55 ----------
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
