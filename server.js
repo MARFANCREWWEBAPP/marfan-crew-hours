@@ -69,77 +69,31 @@ const { google } = require('googleapis');
 
 const app = express();
 
+// ---------- V62.53 STABLE PRODUCTION PATCH ----------
+const V6253_VERSION = '62.53.0';
 
-// ---------- V62.52 STABILITY & ROUTING FIX ----------
-const V6252_VERSION = '62.52.0';
-
-function v6252Json(res, data, status){
-  try { res.status(status || 200).json(data); }
-  catch(e) {
-    try {
-      res.writeHead(status || 200, {'Content-Type':'application/json; charset=utf-8'});
-      res.end(JSON.stringify(data));
-    } catch(_) {}
-  }
+function v6253Database(){
+  try { if (typeof db !== 'undefined') return db; } catch(e) {}
+  try { if (global.db) return global.db; } catch(e) {}
+  return null;
 }
-
-function v6252ToMs(date, time){
+function v6253ToMs(date, time){
   const d = String(date || '').slice(0,10) || new Date().toISOString().slice(0,10);
   const t = String(time || '00:00').slice(0,5);
   const parts = t.split(':').map(Number);
-  const h = parts[0] || 0;
-  const m = parts[1] || 0;
+  const h = parts[0] || 0, m = parts[1] || 0;
   return new Date(d + 'T00:00:00').getTime() + ((h * 60 + m) * 60000);
 }
+function v6253Overlap(a1,a2,b1,b2){ return a1 < b2 && b1 < a2; }
+function v6253EventDate(ev){ return ev.event_date || ev.date || ev.fecha || ''; }
+function v6253EventStart(ev){ return ev.start_time || ev.planned_start || ev.hora_inicio || ev.start || ''; }
+function v6253EventEnd(ev){ return ev.end_time || ev.planned_end || ev.hora_fin || ev.end || ''; }
 
-function v6252Overlap(a1,a2,b1,b2){ return a1 < b2 && b1 < a2; }
-
-function v6252FindAssignmentConflicts(eventId, userId, date, startTime, endTime){
+function v6253EnsureTables(){
+  const database = v6253Database();
+  if (!database) return;
   try {
-    if (!global.db && typeof db === 'undefined') return [];
-    const database = (typeof db !== 'undefined') ? db : global.db;
-    let ns = v6252ToMs(date, startTime);
-    let ne = v6252ToMs(date, endTime);
-    if (ne <= ns) ne += 24 * 60 * 60 * 1000;
-
-    let rows = [];
-    try {
-      rows = database.prepare(`
-        SELECT a.*, e.name AS event_name, e.event_date, e.start_time AS event_start_time, e.end_time AS event_end_time
-        FROM assignments a
-        LEFT JOIN events e ON e.id = a.event_id
-        WHERE a.user_id = ? AND a.event_id != ?
-      `).all(userId, eventId || 0);
-    } catch(e) {
-      try {
-        rows = database.prepare(`
-          SELECT a.*, e.name AS event_name, e.event_date, e.start_time AS event_start_time, e.end_time AS event_end_time
-          FROM assignments a
-          LEFT JOIN events e ON e.id = a.event_id
-          WHERE a.user_id = ?
-        `).all(userId).filter(r => Number(r.event_id) !== Number(eventId || 0));
-      } catch(_) { rows = []; }
-    }
-
-    return rows.filter(r => {
-      const rd = r.event_date || date;
-      const rs = r.planned_start || r.start_time || r.event_start_time || startTime;
-      const re = r.planned_end || r.end_time || r.event_end_time || endTime;
-      let as = v6252ToMs(rd, rs);
-      let ae = v6252ToMs(rd, re);
-      if (ae <= as) ae += 24 * 60 * 60 * 1000;
-      return v6252Overlap(ns, ne, as, ae);
-    });
-  } catch(e) {
-    console.error('[V62.52] conflict check error:', e.message);
-    return [];
-  }
-}
-
-function v6252EnsureAuditTable(){
-  try {
-    const database = (typeof db !== 'undefined') ? db : global.db;
-    database.exec(`CREATE TABLE IF NOT EXISTS audit_logs_v6252 (
+    database.exec(`CREATE TABLE IF NOT EXISTS audit_logs_v6253 (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       action TEXT DEFAULT '',
       entity TEXT DEFAULT '',
@@ -150,67 +104,144 @@ function v6252EnsureAuditTable(){
   } catch(e) {}
 }
 
-function v6252Audit(action, entity, entityId, detail){
+function v6253Audit(action, entity, entityId, detail){
   try {
-    v6252EnsureAuditTable();
-    const database = (typeof db !== 'undefined') ? db : global.db;
-    database.prepare(`INSERT INTO audit_logs_v6252 (action,entity,entity_id,detail) VALUES (?,?,?,?)`)
+    v6253EnsureTables();
+    const database = v6253Database();
+    if (!database) return;
+    database.prepare(`INSERT INTO audit_logs_v6253 (action,entity,entity_id,detail) VALUES (?,?,?,?)`)
       .run(action || '', entity || '', String(entityId || ''), typeof detail === 'string' ? detail : JSON.stringify(detail || {}));
   } catch(e) {}
 }
 
+function v6253FindAssignmentConflicts(eventId, userId, date, startTime, endTime){
+  const database = v6253Database();
+  if (!database || !userId) return [];
+  let ns = v6253ToMs(date, startTime);
+  let ne = v6253ToMs(date, endTime);
+  if (ne <= ns) ne += 86400000;
+  let rows = [];
+  try {
+    rows = database.prepare(`
+      SELECT a.*, e.name AS event_name, e.event_date, e.start_time AS event_start_time, e.end_time AS event_end_time
+      FROM assignments a
+      LEFT JOIN events e ON e.id = a.event_id
+      WHERE a.user_id = ? AND CAST(a.event_id AS TEXT) != CAST(? AS TEXT)
+    `).all(userId, eventId || 0);
+  } catch(e) {
+    try {
+      rows = database.prepare(`SELECT * FROM assignments WHERE user_id = ?`).all(userId)
+        .filter(r => String(r.event_id) !== String(eventId || 0));
+    } catch(_) { rows = []; }
+  }
+  return rows.filter(r => {
+    let ev = {};
+    try { if (!r.event_date && r.event_id) ev = database.prepare('SELECT * FROM events WHERE id=?').get(r.event_id) || {}; } catch(_) {}
+    const rd = r.event_date || v6253EventDate(ev) || date;
+    const rs = r.planned_start || r.start_time || r.event_start_time || v6253EventStart(ev) || startTime;
+    const re = r.planned_end || r.end_time || r.event_end_time || v6253EventEnd(ev) || endTime;
+    let as = v6253ToMs(rd, rs);
+    let ae = v6253ToMs(rd, re);
+    if (ae <= as) ae += 86400000;
+    return v6253Overlap(ns, ne, as, ae);
+  });
+}
+
+function v6253BackupNow(){
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const databasePath = process.env.DB_PATH || process.env.SQLITE_PATH || global.DB_PATH_V627 || '';
+    const dataDir = process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || global.DATA_DIR_V627 || '/data';
+    const backupDir = path.join(dataDir, 'backups');
+    fs.mkdirSync(backupDir, {recursive:true});
+    if (!databasePath || !fs.existsSync(databasePath)) return {ok:false,error:'DB no encontrada', databasePath};
+    const stamp = new Date().toISOString().replace(/[:.]/g,'-');
+    const out = path.join(backupDir, `v6253-backup-${stamp}.sqlite`);
+    fs.copyFileSync(databasePath, out);
+    return {ok:true, backup_path:out};
+  } catch(e) { return {ok:false,error:e.message}; }
+}
+
 try {
+  v6253EnsureTables();
+
   app.get('/health', (req,res)=>{
     let dbStatus = 'unknown';
+    let counts = {};
     try {
-      const database = (typeof db !== 'undefined') ? db : global.db;
-      if (database) { database.prepare('SELECT 1').get(); dbStatus = 'ok'; }
+      const database = v6253Database();
+      if (database) {
+        database.prepare('SELECT 1 AS ok').get();
+        dbStatus = 'ok';
+        ['users','clients','events','assignments'].forEach(t=>{
+          try { counts[t] = database.prepare(`SELECT COUNT(*) AS c FROM ${t}`).get().c; } catch(e) { counts[t] = null; }
+        });
+      }
     } catch(e) { dbStatus = 'error: ' + e.message; }
-    res.json({
-      ok: true,
-      app: 'Marfan Crew Hours',
-      version: V6252_VERSION,
-      db: dbStatus,
-      node: process.version,
-      time: new Date().toISOString()
-    });
+    res.json({ok:true, app:'Marfan Crew Hours', version:V6253_VERSION, db:dbStatus, counts, node:process.version, time:new Date().toISOString()});
   });
 
-  app.get('/api/v6252/health', (req,res)=>{
-    res.json({ok:true, version:V6252_VERSION, message:'Stability & Routing Fix activo'});
-  });
+  app.get('/api/v6253/health', (req,res)=>res.json({ok:true, version:V6253_VERSION, message:'Stable Production activo'}));
 
-  app.post('/api/v6252/check-assignment-conflicts', (req,res)=>{
+  app.post('/api/v6253/check-assignment-conflicts', (req,res)=>{
     try {
       const b = req.body || {};
-      const conflicts = v6252FindAssignmentConflicts(
-        Number(b.event_id || 0),
-        Number(b.user_id || 0),
-        b.event_date || b.date || '',
-        b.start_time || b.planned_start || '',
-        b.end_time || b.planned_end || ''
+      const conflicts = v6253FindAssignmentConflicts(
+        Number(b.event_id || 0), Number(b.user_id || 0),
+        b.event_date || b.date || '', b.start_time || b.planned_start || '', b.end_time || b.planned_end || ''
       );
       res.json({ok:true, available: conflicts.length === 0, conflicts});
-    } catch(e) {
-      res.status(500).json({ok:false, error:e.message});
-    }
+    } catch(e) { res.status(500).json({ok:false,error:e.message}); }
   });
 
-  app.get('/api/v6252/audit-logs', (req,res)=>{
+  app.post('/api/v6253/assignments/save-safe', (req,res)=>{
     try {
-      v6252EnsureAuditTable();
-      const database = (typeof db !== 'undefined') ? db : global.db;
-      const rows = database.prepare('SELECT * FROM audit_logs_v6252 ORDER BY id DESC LIMIT 200').all();
-      res.json({ok:true, rows});
-    } catch(e) {
-      res.status(500).json({ok:false,error:e.message});
-    }
+      const b = req.body || {};
+      const database = v6253Database();
+      if (!database) return res.status(500).json({ok:false,error:'DB no disponible'});
+      const eventId = Number(b.event_id || 0), userId = Number(b.user_id || 0);
+      if (!eventId || !userId) return res.status(400).json({ok:false,error:'Falta event_id o user_id'});
+      const event = database.prepare('SELECT * FROM events WHERE id=?').get(eventId);
+      if (!event) return res.status(404).json({ok:false,error:'Evento no encontrado'});
+      const date = b.event_date || v6253EventDate(event);
+      const start = b.planned_start || b.start_time || v6253EventStart(event);
+      const end = b.planned_end || b.end_time || v6253EventEnd(event);
+      const conflicts = v6253FindAssignmentConflicts(eventId, userId, date, start, end);
+      if (conflicts.length) {
+        v6253Audit('assignment_blocked_overlap','assignments',eventId,{user_id:userId,conflicts});
+        return res.status(409).json({ok:false,error:'Operario no disponible: ya está asignado en un horario que se pisa.',conflicts});
+      }
+      try {
+        database.prepare(`INSERT INTO assignments (event_id,user_id,service_role,planned_start,planned_end,status,is_team_lead)
+          VALUES (?,?,?,?,?,?,?)`).run(eventId,userId,b.service_role || b.role || '',start,end,b.status || 'asignado',Number(b.is_team_lead || 0));
+      } catch(e) {
+        try {
+          database.prepare(`INSERT INTO assignments (event_id,user_id,service_role,planned_start,planned_end,status)
+            VALUES (?,?,?,?,?,?)`).run(eventId,userId,b.service_role || b.role || '',start,end,b.status || 'asignado');
+        } catch(_) { database.prepare(`INSERT INTO assignments (event_id,user_id) VALUES (?,?)`).run(eventId,userId); }
+      }
+      v6253Audit('assignment_created_safe','assignments',eventId,{user_id:userId});
+      res.json({ok:true});
+    } catch(e) { res.status(500).json({ok:false,error:e.message}); }
   });
-} catch(e) {
-  console.error('[V62.52] route install error:', e.message);
-}
-// ---------- END V62.52 STABILITY & ROUTING FIX ----------
 
+  app.post('/api/v6253/backup-now', (req,res)=>{
+    const out = v6253BackupNow();
+    v6253Audit('backup_created','backup','',out);
+    res.status(out.ok ? 200 : 500).json(out);
+  });
+
+  app.get('/api/v6253/audit-logs', (req,res)=>{
+    try {
+      v6253EnsureTables();
+      const database = v6253Database();
+      const rows = database.prepare('SELECT * FROM audit_logs_v6253 ORDER BY id DESC LIMIT 300').all();
+      res.json({ok:true, rows});
+    } catch(e) { res.status(500).json({ok:false,error:e.message}); }
+  });
+} catch(e) { console.error('[V62.53] patch install error:', e.message); }
+// ---------- END V62.53 STABLE PRODUCTION PATCH ----------
 
 
 // ---------- V55.2 PERSISTENT RECOVERY LOCK ----------
@@ -9140,59 +9171,6 @@ app.get('/api/v6250/persistent-status', requireAdmin, (req,res)=>{
     res.json({ok:true, version:'62.50', db_path:dbPath, data_dir:process.env.DATA_DIR||global.DATA_DIR_V627||'', exists, size});
   }catch(e){ res.status(500).json({ok:false,error:e.message}); }
 });
-
-
-
-// ---------- V62.52 PROTECTED ASSIGNMENT SAVE ----------
-try {
-  app.post('/api/v6252/assignments/save-safe', (req,res)=>{
-    try {
-      const b = req.body || {};
-      const eventId = Number(b.event_id || 0);
-      const userId = Number(b.user_id || 0);
-      if (!eventId || !userId) return res.status(400).json({ok:false,error:'Falta event_id o user_id'});
-
-      const database = (typeof db !== 'undefined') ? db : global.db;
-      const event = database.prepare('SELECT * FROM events WHERE id=?').get(eventId);
-      if (!event) return res.status(404).json({ok:false,error:'Evento no encontrado'});
-
-      const date = b.event_date || event.event_date || event.date || '';
-      const start = b.planned_start || b.start_time || event.start_time || '';
-      const end = b.planned_end || b.end_time || event.end_time || '';
-      const conflicts = v6252FindAssignmentConflicts(eventId, userId, date, start, end);
-      if (conflicts.length) {
-        v6252Audit('assignment_blocked_overlap','assignments',eventId,{user_id:userId,conflicts});
-        return res.status(409).json({
-          ok:false,
-          error:'Operario no disponible: ya está asignado en un horario que se pisa.',
-          conflicts
-        });
-      }
-
-      try {
-        database.prepare(`INSERT INTO assignments (event_id,user_id,service_role,planned_start,planned_end,status,is_team_lead)
-          VALUES (?,?,?,?,?,?,?)`).run(
-          eventId,
-          userId,
-          b.service_role || b.role || '',
-          start,
-          end,
-          b.status || 'asignado',
-          Number(b.is_team_lead || 0)
-        );
-      } catch(e) {
-        database.prepare(`INSERT INTO assignments (event_id,user_id) VALUES (?,?)`).run(eventId,userId);
-      }
-
-      v6252Audit('assignment_created_safe','assignments',eventId,{user_id:userId});
-      res.json({ok:true});
-    } catch(e) {
-      res.status(500).json({ok:false,error:e.message});
-    }
-  });
-} catch(e) {}
-// ---------- END V62.52 PROTECTED ASSIGNMENT SAVE ----------
-
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
