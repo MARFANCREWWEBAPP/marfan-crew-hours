@@ -1,6 +1,6 @@
 {
-  "name": "marfan-crew-hours-v62-56-albaran-a4-pro",
-  "version": "62.56.0",
+  "name": "marfan-crew-hours-v62-58-centro-control-live",
+  "version": "62.58.0",
   "description": "V62.51 Railway Build Fix sobre V62.50",
   "main": "server.js",
   "scripts": {
