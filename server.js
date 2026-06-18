@@ -70,7 +70,7 @@ const { google } = require('googleapis');
 const app = express();
 
 // ---------- V62.53 STABLE PRODUCTION PATCH ----------
-const V6253_VERSION = '62.64.0';
+const V6253_VERSION = '62.65.0';
 
 function v6253Database(){
   try { if (typeof db !== 'undefined') return db; } catch(e) {}
@@ -938,7 +938,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version: '62.64.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version: '62.65.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -3212,7 +3212,7 @@ app.get('/api/v6216-auto-restore-status', requireAdmin, (req,res)=>{
   try{
     res.json({
       ok:true,
-      version: '62.64.0',
+      version: '62.65.0',
       status:global.V6216_RESTORE_STATUS || null,
       db_path:v6216DbPath(),
       data_dir:v6216DataDir(),
@@ -3885,7 +3885,7 @@ function v6223ExportUsersJson(){
     const users = db.prepare('SELECT * FROM users ORDER BY id').all();
     const stamp = new Date().toISOString().replace(/[:.]/g,'-');
     const out = p.join(v6223JsonDir(), `users-${stamp}.json`);
-    f.writeFileSync(out, JSON.stringify({version: '62.64.0', created_at:new Date().toISOString(), users}, null, 2));
+    f.writeFileSync(out, JSON.stringify({version: '62.65.0', created_at:new Date().toISOString(), users}, null, 2));
     v6223KeepLastFiles(v6223JsonDir(), 'users-', 10);
     return {ok:true,path:out,count:users.length};
   }catch(e){ return {ok:false,error:e.message}; }
@@ -3999,7 +3999,7 @@ app.get('/api/v6223-persistence-status', requireAdmin, (req,res)=>{
     try{ snapshots = db.prepare("SELECT COUNT(*) AS c FROM event_snapshots_v6218").get().c || 0; }catch(e){}
     res.json({
       ok:true,
-      version: '62.64.0',
+      version: '62.65.0',
       data_dir:v6223DataDir(),
       users,
       events,
@@ -9176,7 +9176,7 @@ app.get('/api/v6250/persistent-status', requireAdmin, (req,res)=>{
 // ---------- V62.54 VISUAL SOLAPAMIENTOS API ----------
 try {
   app.get('/api/v6254/health', (req,res)=>{
-    res.json({ok:true, version:'62.64.0', message:'Visual Solapamientos activo'});
+    res.json({ok:true, version:'62.65.0', message:'Visual Solapamientos activo'});
   });
 
   app.post('/api/v6254/check-assignment-conflicts', (req,res)=>{
@@ -9231,7 +9231,7 @@ try {
 // ---------- V62.55 TEAM LEAD + SIGNATURE + LOCK ----------
 try {
   app.get('/api/v6255/health',(req,res)=>{
-    res.json({ok:true,version:'62.64.0',message:'Jefe equipo + firma + bloqueo activo'});
+    res.json({ok:true,version:'62.65.0',message:'Jefe equipo + firma + bloqueo activo'});
   });
 
   app.post('/api/v6255/team-lead/set',(req,res)=>{
@@ -9262,7 +9262,7 @@ try {
 // ---------- V62.58 CENTRO CONTROL LIVE ----------
 try {
   app.get('/api/v6258/health',(req,res)=>{
-    res.json({ok:true,version:'62.64.0',message:'Centro Control Live activo'});
+    res.json({ok:true,version:'62.65.0',message:'Centro Control Live activo'});
   });
 
   app.get('/api/v6258/dashboard/live',(req,res)=>{
@@ -9550,7 +9550,7 @@ try {
   v6259EnsureTables();
 
   app.get('/api/v6259/health',(req,res)=>{
-    res.json({ok:true,version:'62.64.0',message:'Dashboard CEO + Inteligencia Operativa activo'});
+    res.json({ok:true,version:'62.65.0',message:'Dashboard CEO + Inteligencia Operativa activo'});
   });
 
   app.get('/api/v6259/dashboard/ceo',(req,res)=>{
@@ -9589,7 +9589,7 @@ try {
 // ---------- V62.60 CENTRO OPERATIVO LIVE ----------
 try {
   app.get('/api/v6260/health',(req,res)=>{
-    res.json({ok:true,version:'62.64.0',message:'Centro Operativo Live activo'});
+    res.json({ok:true,version:'62.65.0',message:'Centro Operativo Live activo'});
   });
 
   app.get('/api/v6260/dashboard',(req,res)=>{
@@ -9798,7 +9798,7 @@ try {
   v6261EnsureTables();
 
   app.get('/api/v6261/health',(req,res)=>{
-    res.json({ok:true,version:'62.64.0',message:'Disponibilidad + Planificador activo'});
+    res.json({ok:true,version:'62.65.0',message:'Disponibilidad + Planificador activo'});
   });
 
   app.get('/api/v6261/availability',(req,res)=>{
@@ -9923,7 +9923,7 @@ function v6263Dashboard(){
   const cost = todayAssignments.length * 5 * 12;
   return {
     ok:true,
-    version:'62.64.0',
+    version:'62.65.0',
     cards:{
       events_today:todayEvents.length,
       clients_total:clients.length,
@@ -9949,7 +9949,7 @@ function v6263Alerts(eventsToday, assignmentsToday){
   return out;
 }
 try {
-  app.get('/api/v6263/health',(req,res)=>res.json({ok:true,version:'62.64.0',message:'Integración real UI activa'}));
+  app.get('/api/v6263/health',(req,res)=>res.json({ok:true,version:'62.65.0',message:'Integración real UI activa'}));
   app.get('/api/v6263/dashboard',(req,res)=>res.json(v6263Dashboard()));
   app.get('/api/v6263/centro-operativo',(req,res)=>res.json(v6263Dashboard()));
   app.get('/api/v6263/disponibilidad',(req,res)=>{
@@ -9973,9 +9973,56 @@ try {
 
 // ---------- V62.64 UI CORE FIX API ----------
 try {
-  app.get('/api/v6264/health',(req,res)=>res.json({ok:true,version:'62.64.0',message:'UI Core Fix activo'}));
+  app.get('/api/v6264/health',(req,res)=>res.json({ok:true,version:'62.65.0',message:'UI Core Fix activo'}));
 } catch(e) {}
 // ---------- END V62.64 ----------
+
+
+// ---------- V62.65 OPERARIOS PRO + EXPEDIENTE RRHH ----------
+function v6265Db(){ try { if (typeof db !== 'undefined') return db; } catch(e) {} try { if (global.db) return global.db; } catch(e) {} return null; }
+function v6265All(sql, params){ const database=v6265Db(); try { return database.prepare(sql).all(...(params||[])); } catch(e) { return []; } }
+function v6265Get(sql, params){ const database=v6265Db(); try { return database.prepare(sql).get(...(params||[])); } catch(e) { return null; } }
+function v6265Run(sql, params){ const database=v6265Db(); try { return database.prepare(sql).run(...(params||[])); } catch(e) { return null; } }
+function v6265EnsureTables(){
+  const database=v6265Db(); if(!database) return;
+  try { database.exec(`CREATE TABLE IF NOT EXISTS worker_notes_v6265 (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,note_type TEXT DEFAULT '',note TEXT DEFAULT '',created_by TEXT DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP);`); } catch(e) {}
+  try { database.exec(`CREATE TABLE IF NOT EXISTS worker_alerts_v6265 (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,level TEXT DEFAULT 'warning',type TEXT DEFAULT '',message TEXT DEFAULT '',resolved INTEGER DEFAULT 0,created_at TEXT DEFAULT CURRENT_TIMESTAMP);`); } catch(e) {}
+}
+function v6265WorkerName(u){ return [u.first_name,u.last_name].filter(Boolean).join(' ') || u.nickname || u.name || u.email || u.phone || ('Operario #' + u.id); }
+function v6265Workers(){ return v6265All(`SELECT * FROM users WHERE COALESCE(role,'')!='admin' ORDER BY first_name,last_name,nickname,email,phone`); }
+function v6265WorkerDocuments(userId){
+  let docs=[];
+  try { docs=v6265All(`SELECT * FROM documents WHERE user_id=? OR worker_id=? OR operator_id=? ORDER BY id DESC`,[userId,userId,userId]); } catch(e) {}
+  if(!docs.length){ try { docs=v6265All(`SELECT * FROM hr_documents WHERE user_id=? OR worker_id=? OR operator_id=? ORDER BY id DESC`,[userId,userId,userId]); } catch(e) {} }
+  return docs;
+}
+function v6265WorkerAssignments(userId){ return v6265All(`SELECT a.*, e.name AS event_name, e.title AS event_title, e.event_date, e.date, e.start_time AS event_start, e.end_time AS event_end FROM assignments a LEFT JOIN events e ON e.id=a.event_id WHERE a.user_id=? ORDER BY COALESCE(e.event_date,e.date,'') DESC LIMIT 150`,[userId]); }
+function v6265WorkerCheckins(userId){ return v6265All(`SELECT * FROM checkins WHERE user_id=? ORDER BY COALESCE(created_at,at,'') DESC LIMIT 200`,[userId]); }
+function v6265WorkerAvailability(userId){ return v6265All(`SELECT * FROM worker_availability_v6261 WHERE user_id=? ORDER BY date DESC LIMIT 100`,[userId]); }
+function v6265WorkerStats(userId){
+  const assignments=v6265WorkerAssignments(userId), checkins=v6265WorkerCheckins(userId), docs=v6265WorkerDocuments(userId);
+  const now=new Date(), today=now.toISOString().slice(0,10), month=now.toISOString().slice(0,7);
+  const expired=docs.filter(d=>{ const v=d.valid_to||d.expiry_date||d.expires_at||d.end_date||''; return v && String(v).slice(0,10)<today; });
+  const near=docs.filter(d=>{ const v=d.valid_to||d.expiry_date||d.expires_at||d.end_date||''; if(!v) return false; const diff=(new Date(String(v).slice(0,10)).getTime()-now.getTime())/86400000; return diff>=0 && diff<=30; });
+  return { assignments_total:assignments.length, assignments_month:assignments.filter(a=>String(a.event_date||a.date||'').slice(0,7)===month).length, checkins_total:checkins.length, documents_total:docs.length, documents_expired:expired.length, documents_near_expiry:near.length, availability_blocks:v6265WorkerAvailability(userId).length };
+}
+function v6265Profile(userId){
+  const user=v6265Get(`SELECT * FROM users WHERE id=?`,[userId]); if(!user) return null;
+  return { user, name:v6265WorkerName(user), stats:v6265WorkerStats(userId), documents:v6265WorkerDocuments(userId), assignments:v6265WorkerAssignments(userId), checkins:v6265WorkerCheckins(userId), availability:v6265WorkerAvailability(userId), notes:v6265All(`SELECT * FROM worker_notes_v6265 WHERE user_id=? ORDER BY id DESC LIMIT 100`,[userId]), alerts:v6265All(`SELECT * FROM worker_alerts_v6265 WHERE user_id=? AND COALESCE(resolved,0)=0 ORDER BY id DESC LIMIT 100`,[userId]) };
+}
+function v6265GlobalAlerts(){
+  const alerts=[]; v6265Workers().forEach(w=>{ const p=v6265Profile(w.id); if(!p) return; if(p.stats.documents_expired>0) alerts.push({level:'critical',user_id:w.id,name:p.name,message:'Documentación caducada'}); if(p.stats.documents_near_expiry>0) alerts.push({level:'warning',user_id:w.id,name:p.name,message:'Documentación próxima a caducar'}); if(!w.phone) alerts.push({level:'warning',user_id:w.id,name:p.name,message:'Operario sin teléfono'}); }); return alerts;
+}
+try {
+  v6265EnsureTables();
+  app.get('/api/v6265/health',(req,res)=>res.json({ok:true,version:'62.65.0',message:'Operarios Pro + Expediente RRHH activo'}));
+  app.get('/api/v6265/workers',(req,res)=>res.json({ok:true,workers:v6265Workers().map(w=>({id:w.id,name:v6265WorkerName(w),phone:w.phone||'',email:w.email||'',role:w.role||'',active:w.active,stats:v6265WorkerStats(w.id)}))}));
+  app.get('/api/v6265/worker/:userId/profile',(req,res)=>{ const p=v6265Profile(req.params.userId); if(!p) return res.status(404).json({ok:false,error:'Operario no encontrado'}); res.json({ok:true,profile:p}); });
+  app.post('/api/v6265/worker/:userId/note',(req,res)=>{ v6265EnsureTables(); const b=req.body||{}; v6265Run(`INSERT INTO worker_notes_v6265 (user_id,note_type,note,created_by) VALUES (?,?,?,?)`,[req.params.userId,b.note_type||'general',b.note||'',b.created_by||'admin']); res.json({ok:true}); });
+  app.post('/api/v6265/worker/:userId/alert',(req,res)=>{ v6265EnsureTables(); const b=req.body||{}; v6265Run(`INSERT INTO worker_alerts_v6265 (user_id,level,type,message) VALUES (?,?,?,?)`,[req.params.userId,b.level||'warning',b.type||'manual',b.message||'']); res.json({ok:true}); });
+  app.get('/api/v6265/alerts',(req,res)=>res.json({ok:true,alerts:v6265GlobalAlerts()}));
+} catch(e) { console.error('[V62.65]', e.message); }
+// ---------- END V62.65 ----------
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
