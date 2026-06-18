@@ -70,7 +70,7 @@ const { google } = require('googleapis');
 const app = express();
 
 // ---------- V62.53 STABLE PRODUCTION PATCH ----------
-const V6253_VERSION = '62.65.0';
+const V6253_VERSION = '62.66.0';
 
 function v6253Database(){
   try { if (typeof db !== 'undefined') return db; } catch(e) {}
@@ -938,7 +938,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version: '62.65.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version: '62.66.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -3212,7 +3212,7 @@ app.get('/api/v6216-auto-restore-status', requireAdmin, (req,res)=>{
   try{
     res.json({
       ok:true,
-      version: '62.65.0',
+      version: '62.66.0',
       status:global.V6216_RESTORE_STATUS || null,
       db_path:v6216DbPath(),
       data_dir:v6216DataDir(),
@@ -3885,7 +3885,7 @@ function v6223ExportUsersJson(){
     const users = db.prepare('SELECT * FROM users ORDER BY id').all();
     const stamp = new Date().toISOString().replace(/[:.]/g,'-');
     const out = p.join(v6223JsonDir(), `users-${stamp}.json`);
-    f.writeFileSync(out, JSON.stringify({version: '62.65.0', created_at:new Date().toISOString(), users}, null, 2));
+    f.writeFileSync(out, JSON.stringify({version: '62.66.0', created_at:new Date().toISOString(), users}, null, 2));
     v6223KeepLastFiles(v6223JsonDir(), 'users-', 10);
     return {ok:true,path:out,count:users.length};
   }catch(e){ return {ok:false,error:e.message}; }
@@ -3999,7 +3999,7 @@ app.get('/api/v6223-persistence-status', requireAdmin, (req,res)=>{
     try{ snapshots = db.prepare("SELECT COUNT(*) AS c FROM event_snapshots_v6218").get().c || 0; }catch(e){}
     res.json({
       ok:true,
-      version: '62.65.0',
+      version: '62.66.0',
       data_dir:v6223DataDir(),
       users,
       events,
@@ -9176,7 +9176,7 @@ app.get('/api/v6250/persistent-status', requireAdmin, (req,res)=>{
 // ---------- V62.54 VISUAL SOLAPAMIENTOS API ----------
 try {
   app.get('/api/v6254/health', (req,res)=>{
-    res.json({ok:true, version:'62.65.0', message:'Visual Solapamientos activo'});
+    res.json({ok:true, version:'62.66.0', message:'Visual Solapamientos activo'});
   });
 
   app.post('/api/v6254/check-assignment-conflicts', (req,res)=>{
@@ -9231,7 +9231,7 @@ try {
 // ---------- V62.55 TEAM LEAD + SIGNATURE + LOCK ----------
 try {
   app.get('/api/v6255/health',(req,res)=>{
-    res.json({ok:true,version:'62.65.0',message:'Jefe equipo + firma + bloqueo activo'});
+    res.json({ok:true,version:'62.66.0',message:'Jefe equipo + firma + bloqueo activo'});
   });
 
   app.post('/api/v6255/team-lead/set',(req,res)=>{
@@ -9262,7 +9262,7 @@ try {
 // ---------- V62.58 CENTRO CONTROL LIVE ----------
 try {
   app.get('/api/v6258/health',(req,res)=>{
-    res.json({ok:true,version:'62.65.0',message:'Centro Control Live activo'});
+    res.json({ok:true,version:'62.66.0',message:'Centro Control Live activo'});
   });
 
   app.get('/api/v6258/dashboard/live',(req,res)=>{
@@ -9550,7 +9550,7 @@ try {
   v6259EnsureTables();
 
   app.get('/api/v6259/health',(req,res)=>{
-    res.json({ok:true,version:'62.65.0',message:'Dashboard CEO + Inteligencia Operativa activo'});
+    res.json({ok:true,version:'62.66.0',message:'Dashboard CEO + Inteligencia Operativa activo'});
   });
 
   app.get('/api/v6259/dashboard/ceo',(req,res)=>{
@@ -9589,7 +9589,7 @@ try {
 // ---------- V62.60 CENTRO OPERATIVO LIVE ----------
 try {
   app.get('/api/v6260/health',(req,res)=>{
-    res.json({ok:true,version:'62.65.0',message:'Centro Operativo Live activo'});
+    res.json({ok:true,version:'62.66.0',message:'Centro Operativo Live activo'});
   });
 
   app.get('/api/v6260/dashboard',(req,res)=>{
@@ -9798,7 +9798,7 @@ try {
   v6261EnsureTables();
 
   app.get('/api/v6261/health',(req,res)=>{
-    res.json({ok:true,version:'62.65.0',message:'Disponibilidad + Planificador activo'});
+    res.json({ok:true,version:'62.66.0',message:'Disponibilidad + Planificador activo'});
   });
 
   app.get('/api/v6261/availability',(req,res)=>{
@@ -9923,7 +9923,7 @@ function v6263Dashboard(){
   const cost = todayAssignments.length * 5 * 12;
   return {
     ok:true,
-    version:'62.65.0',
+    version:'62.66.0',
     cards:{
       events_today:todayEvents.length,
       clients_total:clients.length,
@@ -9949,7 +9949,7 @@ function v6263Alerts(eventsToday, assignmentsToday){
   return out;
 }
 try {
-  app.get('/api/v6263/health',(req,res)=>res.json({ok:true,version:'62.65.0',message:'Integración real UI activa'}));
+  app.get('/api/v6263/health',(req,res)=>res.json({ok:true,version:'62.66.0',message:'Integración real UI activa'}));
   app.get('/api/v6263/dashboard',(req,res)=>res.json(v6263Dashboard()));
   app.get('/api/v6263/centro-operativo',(req,res)=>res.json(v6263Dashboard()));
   app.get('/api/v6263/disponibilidad',(req,res)=>{
@@ -9973,7 +9973,7 @@ try {
 
 // ---------- V62.64 UI CORE FIX API ----------
 try {
-  app.get('/api/v6264/health',(req,res)=>res.json({ok:true,version:'62.65.0',message:'UI Core Fix activo'}));
+  app.get('/api/v6264/health',(req,res)=>res.json({ok:true,version:'62.66.0',message:'UI Core Fix activo'}));
 } catch(e) {}
 // ---------- END V62.64 ----------
 
@@ -10015,7 +10015,7 @@ function v6265GlobalAlerts(){
 }
 try {
   v6265EnsureTables();
-  app.get('/api/v6265/health',(req,res)=>res.json({ok:true,version:'62.65.0',message:'Operarios Pro + Expediente RRHH activo'}));
+  app.get('/api/v6265/health',(req,res)=>res.json({ok:true,version:'62.66.0',message:'Operarios Pro + Expediente RRHH activo'}));
   app.get('/api/v6265/workers',(req,res)=>res.json({ok:true,workers:v6265Workers().map(w=>({id:w.id,name:v6265WorkerName(w),phone:w.phone||'',email:w.email||'',role:w.role||'',active:w.active,stats:v6265WorkerStats(w.id)}))}));
   app.get('/api/v6265/worker/:userId/profile',(req,res)=>{ const p=v6265Profile(req.params.userId); if(!p) return res.status(404).json({ok:false,error:'Operario no encontrado'}); res.json({ok:true,profile:p}); });
   app.post('/api/v6265/worker/:userId/note',(req,res)=>{ v6265EnsureTables(); const b=req.body||{}; v6265Run(`INSERT INTO worker_notes_v6265 (user_id,note_type,note,created_by) VALUES (?,?,?,?)`,[req.params.userId,b.note_type||'general',b.note||'',b.created_by||'admin']); res.json({ok:true}); });
@@ -10023,6 +10023,15 @@ try {
   app.get('/api/v6265/alerts',(req,res)=>res.json({ok:true,alerts:v6265GlobalAlerts()}));
 } catch(e) { console.error('[V62.65]', e.message); }
 // ---------- END V62.65 ----------
+
+
+// ---------- V62.66 FIX VER PORTAL SIN TOCAR RAILWAY ----------
+try {
+  app.get('/api/v6266/health',(req,res)=>{
+    res.json({ok:true,version:'62.66.0',message:'Fix Ver Portal activo sin cambios de Railway'});
+  });
+} catch(e) {}
+// ---------- END V62.66 ----------
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
