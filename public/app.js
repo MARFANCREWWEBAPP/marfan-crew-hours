@@ -107,12 +107,16 @@ function label(v){return {
   operario:'Vista operario',
   albaranes:'Albaranes evento',
   passwords:'Contraseñas',
-  config:'Ajustes ERP'
+  config:'Ajustes ERP',
+  centro:'Centro Operativo Live',
+  disponibilidad:'Disponibilidad',
+  planificador:'Planificador Inteligente',
+  portalpro:'Portal Operario Pro'
 }[v]||v}
 function menu(){
   const role = state.user ? state.user.role : '';
   const items = role === 'admin'
-    ? ['dashboard','control','operaciones','clientes','informes','eventos','realizados','operarios','tarifas','gps','produccion','finanzas','documentacion','operario','albaranes','passwords','config']
+    ? ['dashboard','control','centro','disponibilidad','planificador','portalpro','clientes','informes','eventos','realizados','operarios','tarifas','gps','produccion','finanzas','documentacion','operario','albaranes','passwords','config']
     : ['operario'];
   return items.map(v=>`<button class="${state.view===v?'active':''}" onclick="go('${v}')">${label(v)}</button>`).join('')
 }
@@ -138,7 +142,7 @@ async function renderApp(){
   if(state.user && state.user.role !== 'admin') state.view='operario';
   await load();
   document.getElementById('app').innerHTML=`<div class="app"><aside class="side">${logoTag('brand-logo')}<div class="brand">MARFAN CREW</div><div class="muted">${state.user.email||state.user.phone||''}</div><br><div class="nav">${menu()}</div><br><button class="secondary" onclick="logout()">Salir</button></aside><main class="main"><div class="top"><h1>${label(state.view)}</h1><span class="badge">${state.user.role}</span></div><div id="content"></div><div id="modalRoot"></div></main></div>`;
-  const routes={dashboard:viewDashboard,control:viewDailyControl,operaciones:viewOperations,clientes:viewClients,informes:viewReportsV562,eventos:viewCalendar,realizados:viewRealizados,operarios:viewUsers,tarifas:viewRates,gps:viewGpsLive,produccion:viewProductionLive,finanzas:viewFinancePro,documentacion:viewDocuments,operario:viewOperario,albaranes:viewNotes,passwords:viewPasswords,config:viewConfig};
+  const routes={dashboard:viewDashboard,control:viewDailyControl,operaciones:viewOperations,clientes:viewClients,informes:viewReportsV562,eventos:viewCalendar,realizados:viewRealizados,operarios:viewUsers,tarifas:viewRates,gps:viewGpsLive,produccion:viewProductionLive,finanzas:viewFinancePro,documentacion:viewDocuments,operario:viewOperario,albaranes:viewNotes,passwords:viewPasswords,config:viewConfig,centro:viewCentroOperativoV6264,disponibilidad:viewDisponibilidadV6264,planificador:viewPlanificadorV6264,portalpro:viewPortalOperarioProV6264};
   try{ await (routes[state.view]||viewDashboard)(); }
   catch(err){ console.error('VIEW_RENDER_ERROR',err); const c=document.getElementById('content'); if(c)c.innerHTML=`<div class="card"><h3>Error cargando menú</h3><p class="muted">${esc(err.message||err)}</p><button onclick="go('dashboard')">Volver al dashboard</button></div>`; }
 }
@@ -8347,12 +8351,193 @@ async function pushEventToGoogleV614(id){
 // Construye una vez y usa funciones directas del ERP.
 // No toca calendario, Google Sync, login, formularios ni eventos.
 
+
+// ---------- V62.64 UI CORE FIX REAL VIEWS ----------
+window.MARFAN_VERSION = '62.64.0';
+
+function v6264SetTitle(t){
+  try { const h=document.querySelector('main h1,.main h1,h1'); if(h) h.textContent=t; } catch(e){}
+  try { document.title='Marfan Crew · '+t; } catch(e){}
+}
+function v6264Content(){
+  return document.getElementById('content') || document.querySelector('#content') || document.querySelector('main .content') || document.querySelector('main') || document.body;
+}
+async function v6264FetchJson(url){
+  try { const r=await fetch(url); return await r.json(); } catch(e){ return {ok:false,error:e.message}; }
+}
+function v6264Money(n){ return (Number(n||0)).toFixed(2).replace('.',',')+' €'; }
+function v6264Card(label,value){ return `<div class="v6264-kpi"><small>${label}</small><b>${value}</b></div>`; }
+
+function v6264InstallStyle(){
+  if(document.getElementById('v6264-style')) return;
+  const st=document.createElement('style');
+  st.id='v6264-style';
+  st.textContent=`
+    .v6264-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:12px 0}
+    .v6264-card{background:#fff;border:1px solid #e5e5ea;border-radius:20px;padding:18px;margin:14px 0;box-shadow:0 12px 30px rgba(0,0,0,.05)}
+    .v6264-kpi{background:#fff;border:1px solid #e5e5ea;border-radius:18px;padding:16px}
+    .v6264-kpi small{display:block;color:#6e6e73;text-transform:uppercase;font-size:11px;font-weight:900}
+    .v6264-kpi b{font-size:25px}
+    .v6264-btn{background:#000;color:#fff;border:none;border-radius:14px;padding:11px 15px;font-weight:900;cursor:pointer;margin:4px}
+    .v6264-row{display:flex;justify-content:space-between;gap:12px;align-items:center;border-bottom:1px solid #eee;padding:12px 0}
+    .v6264-alert{background:#fff7e6;border:1px solid #ffe1a8;border-radius:14px;padding:12px;margin:8px 0;font-weight:800}
+    .v6264-ok{background:#e8f8ee;border-color:#bdeacb}
+    .v6264-bad{background:#ffe8e6;border-color:#ffc5bf}
+    .v6264-input{width:100%;padding:12px;border:1px solid #ddd;border-radius:14px;margin:6px 0}
+    @media(max-width:900px){.v6264-grid{grid-template-columns:1fr 1fr}.v6264-row{display:block}}
+  `;
+  document.head.appendChild(st);
+}
+v6264InstallStyle();
+
+async function viewCentroOperativoV6264(){
+  v6264SetTitle('Centro Operativo Live');
+  const c=v6264Content();
+  const d=await v6264FetchJson('/api/v6263/centro-operativo');
+  const cards=(d&&d.cards)||{};
+  c.innerHTML=`
+    <div class="v6264-card">
+      <h2>Centro Operativo Live</h2>
+      <p class="muted">Torre de control diaria de eventos, operarios, fichajes y alertas.</p>
+    </div>
+    <div class="v6264-grid">
+      ${v6264Card('Eventos hoy',cards.events_today||0)}
+      ${v6264Card('Asignados hoy',cards.assignments_today||0)}
+      ${v6264Card('Fichados hoy',cards.checked_in_today||0)}
+      ${v6264Card('Pendientes',cards.pending_checkins||0)}
+      ${v6264Card('Ingresos hoy',v6264Money(cards.revenue_today||0))}
+      ${v6264Card('Coste personal',v6264Money(cards.personnel_cost||0))}
+      ${v6264Card('Margen hoy',v6264Money(cards.margin_today||0))}
+      ${v6264Card('Alertas',(d.alerts||[]).length)}
+    </div>
+    <div class="v6264-card">
+      <h2>Eventos de hoy</h2>
+      ${(d.events_today||[]).length ? (d.events_today||[]).map(e=>`
+        <div class="v6264-row">
+          <div><b>${e.name||e.title||'Evento'}</b><br><span class="muted">${e.event_date||e.date||''} · ${e.start_time||''}-${e.end_time||''}</span></div>
+          <button class="v6264-btn" onclick="go('eventos')">Ver calendario</button>
+        </div>`).join('') : '<p>No hay eventos hoy.</p>'}
+    </div>
+    <div class="v6264-card">
+      <h2>Alertas operativas</h2>
+      ${(d.alerts||[]).length ? (d.alerts||[]).map(a=>`<div class="v6264-alert">⚠️ ${a.message}</div>`).join('') : '<div class="v6264-alert v6264-ok">Sin alertas críticas.</div>'}
+    </div>`;
+}
+
+async function viewDisponibilidadV6264(){
+  v6264SetTitle('Disponibilidad y Vacaciones');
+  const c=v6264Content();
+  const d=await v6264FetchJson('/api/v6261/availability');
+  c.innerHTML=`
+    <div class="v6264-card">
+      <h2>Disponibilidad y Vacaciones</h2>
+      <p class="muted">Bloquea vacaciones, bajas, restricciones y días no disponibles de operarios.</p>
+    </div>
+    <div class="v6264-card">
+      <h3>Nueva no disponibilidad</h3>
+      <div class="v6264-grid">
+        <input id="v6264-av-user" class="v6264-input" placeholder="ID operario">
+        <input id="v6264-av-date" class="v6264-input" type="date">
+        <select id="v6264-av-status" class="v6264-input"><option value="unavailable">No disponible</option><option value="vacaciones">Vacaciones</option><option value="baja">Baja</option><option value="restriccion">Restricción</option></select>
+        <input id="v6264-av-reason" class="v6264-input" placeholder="Motivo">
+      </div>
+      <button class="v6264-btn" onclick="v6264SaveAvailability()">Guardar disponibilidad</button>
+    </div>
+    <div class="v6264-card">
+      <h3>Registros</h3>
+      ${(d.availability||[]).length ? `<table style="width:100%;border-collapse:collapse"><thead><tr><th>Operario</th><th>Fecha</th><th>Estado</th><th>Motivo</th></tr></thead><tbody>${(d.availability||[]).map(x=>`<tr><td>${x.user_id}</td><td>${x.date}</td><td>${x.status}</td><td>${x.reason||''}</td></tr>`).join('')}</tbody></table>` : '<p>No hay registros de disponibilidad.</p>'}
+    </div>`;
+}
+async function v6264SaveAvailability(){
+  const payload={
+    user_id:document.getElementById('v6264-av-user').value,
+    date:document.getElementById('v6264-av-date').value,
+    status:document.getElementById('v6264-av-status').value,
+    reason:document.getElementById('v6264-av-reason').value
+  };
+  const r=await fetch('/api/v6261/availability',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const j=await r.json();
+  if(!j.ok) return alert(j.error||'Error');
+  alert('Disponibilidad guardada');
+  viewDisponibilidadV6264();
+}
+
+async function viewPlanificadorV6264(){
+  v6264SetTitle('Planificador Inteligente');
+  const c=v6264Content();
+  const d=await v6264FetchJson('/api/v6263/planificador/eventos');
+  c.innerHTML=`
+    <div class="v6264-card"><h2>Planificador Inteligente</h2><p class="muted">Genera equipos recomendados según disponibilidad y solapamientos.</p></div>
+    <div class="v6264-card">
+      <h3>Eventos</h3>
+      ${(d.events||[]).length ? (d.events||[]).map(e=>`
+        <div class="v6264-row">
+          <div><b>${e.name||e.title||'Evento'}</b><br><span class="muted">${e.event_date||e.date||''} · ${e.start_time||''}-${e.end_time||''}</span></div>
+          <button class="v6264-btn" onclick="v6264PlanEvent('${e.id}')">Generar equipo</button>
+        </div>`).join('') : '<p>No hay eventos.</p>'}
+    </div>
+    <div id="v6264-plan-result" class="v6264-card"><h3>Resultado</h3><p>Selecciona un evento.</p></div>`;
+}
+async function v6264PlanEvent(eventId){
+  const box=document.getElementById('v6264-plan-result');
+  const d=await v6264FetchJson('/api/v6261/plan/'+encodeURIComponent(eventId));
+  if(!d.ok){box.innerHTML='<h3>Error</h3><p>'+(d.error||'No se pudo generar equipo')+'</p>';return;}
+  box.innerHTML=`<h3>Equipo recomendado</h3><p>Operarios requeridos: <b>${d.required_workers||0}</b></p>
+    ${(d.selected||[]).length ? (d.selected||[]).map(x=>`<div class="v6264-alert v6264-ok">✅ ${x.name} · ${x.reason}</div>`).join('') : '<p>No hay operarios disponibles.</p>'}`;
+}
+
+async function viewPortalOperarioProV6264(){
+  v6264SetTitle('Portal Operario Pro');
+  const c=v6264Content();
+  const d=await v6264FetchJson('/api/v6263/portal-operario/resumen');
+  c.innerHTML=`
+    <div class="v6264-card"><h2>Portal Operario Pro</h2><p class="muted">Vista de próximos servicios, fichajes, solicitudes e incidencias por operario.</p></div>
+    <div class="v6264-card">
+      <h3>Operarios</h3>
+      ${(d.operators||[]).length ? (d.operators||[]).map(u=>`
+        <div class="v6264-row">
+          <div><b>${u.first_name||u.name||u.nickname||u.email||u.phone||('Operario #'+u.id)}</b><br><span class="muted">${u.phone||''} ${u.email||''}</span></div>
+          <button class="v6264-btn" onclick="v6264OpenOperator('${u.id}')">Ver portal</button>
+        </div>`).join('') : '<p>No hay operarios.</p>'}
+    </div>
+    <div id="v6264-op-result" class="v6264-card"><h3>Dashboard operario</h3><p>Selecciona un operario.</p></div>`;
+}
+async function v6264OpenOperator(userId){
+  const box=document.getElementById('v6264-op-result');
+  const d=await v6264FetchJson('/api/v6262/operator/'+encodeURIComponent(userId)+'/dashboard');
+  if(!d.ok){box.innerHTML='<h3>Error</h3><p>'+(d.error||'No disponible')+'</p>';return;}
+  const cards=d.cards||{};
+  box.innerHTML=`
+    <h3>Operario #${userId}</h3>
+    <div class="v6264-grid">
+      ${v6264Card('Próximos eventos',cards.upcoming_events||0)}
+      ${v6264Card('Eventos hoy',cards.today_events||0)}
+      ${v6264Card('Fichajes',cards.checkins||0)}
+      ${v6264Card('Solicitudes pendientes',cards.pending_requests||0)}
+    </div>
+    <h4>Próximos eventos</h4>
+    ${(d.next_events||[]).length ? (d.next_events||[]).map(e=>`<div class="v6264-alert">${e.name||e.title||'Evento'} · ${e.event_date||e.date||''}</div>`).join('') : '<p>Sin eventos asignados.</p>'}`;
+}
+
+// Exponer funciones para el menú v624
+window.viewCentroOperativoV6264=viewCentroOperativoV6264;
+window.viewDisponibilidadV6264=viewDisponibilidadV6264;
+window.viewPlanificadorV6264=viewPlanificadorV6264;
+window.viewPortalOperarioProV6264=viewPortalOperarioProV6264;
+window.v6264SaveAvailability=v6264SaveAvailability;
+window.v6264PlanEvent=v6264PlanEvent;
+window.v6264OpenOperator=v6264OpenOperator;
+// ---------- END V62.64 UI CORE FIX REAL VIEWS ----------
+
 (function(){
   const MENU = [
     {g:'OPERATIVA', l:'Dashboard', k:['dashboard'], f:['viewDashboard','dashboard','showDashboard']},
     {g:'OPERATIVA', l:'Calendario de Eventos', k:['calendario'], f:['viewCalendar','showCalendarV582','showCalendar']},
     {g:'OPERATIVA', l:'Control Diario', k:['control diario'], f:['viewDailyControl','viewControlDiario','showDailyControl']},
     {g:'OPERATIVA', l:'GPS Live', k:['gps'], f:['viewGpsLive','viewGPSLive','showGpsLive']},
+    {g:'OPERATIVA', l:'Centro Operativo Live', k:['centro operativo','centro live'], f:['viewCentroOperativoV6264']},
+    {g:'OPERATIVA', l:'Disponibilidad', k:['disponibilidad','vacaciones'], f:['viewDisponibilidadV6264']},
+    {g:'OPERATIVA', l:'Planificador', k:['planificador'], f:['viewPlanificadorV6264']},
 
     {g:'GESTIÓN', l:'Clientes', k:['cliente'], f:['viewClients','showClients']},
     {g:'GESTIÓN', l:'Operarios', k:['operario'], f:['viewUsers','viewOperators','viewOperarios','showUsers']},
@@ -8363,6 +8548,7 @@ async function pushEventToGoogleV614(id){
     {g:'ADMINISTRACIÓN', l:'Finanzas Pro', k:['finanza'], f:['viewFinancePro','viewFinance','showFinance']},
     {g:'ADMINISTRACIÓN', l:'Informes PDF', k:['informe','pdf'], f:['viewReportsV562','viewReports','viewInformesPDF','showReports']},
     {g:'ADMINISTRACIÓN', l:'Vista Operario', k:['vista operario'], f:['viewWorkerPortal','viewVistaOperario','showWorkerPortal']},
+    {g:'ADMINISTRACIÓN', l:'Portal Operario Pro', k:['portal operario pro'], f:['viewPortalOperarioProV6264']},
     {g:'ADMINISTRACIÓN', l:'Contraseñas', k:['contraseña','contrasena','password'], f:['viewPasswords','viewContrasenas','showPasswords']},
 
     {g:'SISTEMA', l:'Ajustes ERP', k:['ajuste','config','erp'], f:['viewConfig','viewSettings','viewAjustes','showSettings']}
@@ -8498,6 +8684,7 @@ async function pushEventToGoogleV614(id){
         ev.preventDefault();
         ev.stopPropagation();
         active(spec.l); // instantáneo antes de cargar vista
+        try{ const h=document.querySelector('main h1,.main h1,h1'); if(h) h.textContent=spec.l; document.title='Marfan Crew · '+spec.l; }catch(e){}
         callDirect(spec);
       });
       groups[spec.g].appendChild(btn);
@@ -10528,7 +10715,7 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
 })();
 
 // ---------- V62.53 STABLE PRODUCTION FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.63.0';
+window.MARFAN_VERSION = '62.64.0';
 window.v6253CheckAssignmentConflicts = async function(payload){
   const r = await fetch('/api/v6253/check-assignment-conflicts', {
     method:'POST',
@@ -10554,7 +10741,7 @@ console.log('Marfan Crew V62.53 Stable Production cargado');
 
 
 // ---------- V62.54 VISUAL SOLAPAMIENTOS FRONTEND ----------
-window.MARFAN_VERSION = '62.63.0';
+window.MARFAN_VERSION = '62.64.0';
 
 window.v6254CheckAssignmentConflicts = async function(payload){
   const r = await fetch('/api/v6254/check-assignment-conflicts', {
@@ -10608,7 +10795,7 @@ console.log('Marfan Crew V62.54 Visual Solapamientos cargado');
 
 
 // ---------- V62.58 FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.63.0';
+window.MARFAN_VERSION = '62.64.0';
 window.v6258OpenDashboard = function(){
   return fetch('/api/v6258/dashboard/live').then(r=>r.json());
 };
@@ -10617,7 +10804,7 @@ console.log('Marfan Crew V62.58 Centro Control Live cargado');
 
 
 // ---------- V62.59 DASHBOARD CEO FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.63.0';
+window.MARFAN_VERSION = '62.64.0';
 
 window.v6259LoadCeoDashboard = async function(){
   const r = await fetch('/api/v6259/dashboard/ceo');
@@ -10649,7 +10836,7 @@ console.log('Marfan Crew V62.59 Dashboard CEO cargado');
 
 
 // ---------- V62.60 FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.63.0';
+window.MARFAN_VERSION = '62.64.0';
 window.v6260LoadDashboard = async function(){
   const r = await fetch('/api/v6260/dashboard');
   return r.json();
@@ -10667,7 +10854,7 @@ console.log('Marfan Crew V62.60 Centro Operativo Live cargado');
 
 
 // ---------- V62.61 FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.63.0';
+window.MARFAN_VERSION = '62.64.0';
 window.v6261SaveAvailability = async function(payload){
   const r = await fetch('/api/v6261/availability', {
     method:'POST',
@@ -10693,7 +10880,7 @@ console.log('Marfan Crew V62.61 Disponibilidad + Planificador cargado');
 
 
 // ---------- V62.63 INTEGRACION REAL UI FRONTEND ----------
-window.MARFAN_VERSION = '62.63.0';
+window.MARFAN_VERSION = '62.64.0';
 
 (function(){
   if (window.__v6263Installed) return;
@@ -10868,3 +11055,31 @@ window.MARFAN_VERSION = '62.63.0';
   console.log('Marfan Crew V62.63 Integración Real UI cargada');
 })();
 // ---------- END V62.63 INTEGRACION REAL UI FRONTEND ----------
+
+
+// ---------- V62.64 TITLE FIX ----------
+document.addEventListener('click', function(ev){
+  const btn = ev.target && ev.target.closest && ev.target.closest('button,a,.v624-menu-btn,.v623-menu-btn,.v622-menu-btn');
+  if(!btn) return;
+  const txt=(btn.textContent||'').trim();
+  if(!txt) return;
+  const map={
+    'Dashboard':'Dashboard Operativo',
+    'Calendario de Eventos':'Calendario de Eventos',
+    'Control Diario':'Control Diario',
+    'GPS Live':'GPS Live',
+    'Clientes':'Clientes',
+    'Operarios':'Gestión de Operarios',
+    'Documentación':'Documentación RRHH',
+    'Tarifas':'Tarifas y Roles',
+    'Albaranes Evento':'Albaranes Evento',
+    'Finanzas Pro':'Finanzas Pro',
+    'Informes PDF':'Informes PDF Pro',
+    'Vista Operario':'Vista Operario',
+    'Contraseñas':'Accesos y Credenciales',
+    'Ajustes ERP':'Ajustes ERP'
+  };
+  const title=map[txt]||txt;
+  setTimeout(()=>{try{const h=document.querySelector('main h1,.main h1,h1');if(h)h.textContent=title;}catch(e){}},120);
+}, true);
+// ---------- END V62.64 TITLE FIX ----------

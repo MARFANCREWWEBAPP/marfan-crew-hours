@@ -1,6 +1,6 @@
 {
-  "name": "marfan-crew-hours-v62-63-integracion-real-ui",
-  "version": "62.63.0",
+  "name": "marfan-crew-hours-v62-64-ui-core-fix",
+  "version": "62.64.0",
   "description": "V62.51 Railway Build Fix sobre V62.50",
   "main": "server.js",
   "scripts": {
