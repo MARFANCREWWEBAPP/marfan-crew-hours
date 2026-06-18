@@ -10528,7 +10528,7 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
 })();
 
 // ---------- V62.53 STABLE PRODUCTION FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.53.0';
+window.MARFAN_VERSION = '62.63.0';
 window.v6253CheckAssignmentConflicts = async function(payload){
   const r = await fetch('/api/v6253/check-assignment-conflicts', {
     method:'POST',
@@ -10554,7 +10554,7 @@ console.log('Marfan Crew V62.53 Stable Production cargado');
 
 
 // ---------- V62.54 VISUAL SOLAPAMIENTOS FRONTEND ----------
-window.MARFAN_VERSION = '62.54.0';
+window.MARFAN_VERSION = '62.63.0';
 
 window.v6254CheckAssignmentConflicts = async function(payload){
   const r = await fetch('/api/v6254/check-assignment-conflicts', {
@@ -10608,7 +10608,7 @@ console.log('Marfan Crew V62.54 Visual Solapamientos cargado');
 
 
 // ---------- V62.58 FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.59.0';
+window.MARFAN_VERSION = '62.63.0';
 window.v6258OpenDashboard = function(){
   return fetch('/api/v6258/dashboard/live').then(r=>r.json());
 };
@@ -10617,7 +10617,7 @@ console.log('Marfan Crew V62.58 Centro Control Live cargado');
 
 
 // ---------- V62.59 DASHBOARD CEO FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.59.0';
+window.MARFAN_VERSION = '62.63.0';
 
 window.v6259LoadCeoDashboard = async function(){
   const r = await fetch('/api/v6259/dashboard/ceo');
@@ -10649,7 +10649,7 @@ console.log('Marfan Crew V62.59 Dashboard CEO cargado');
 
 
 // ---------- V62.60 FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.61.0';
+window.MARFAN_VERSION = '62.63.0';
 window.v6260LoadDashboard = async function(){
   const r = await fetch('/api/v6260/dashboard');
   return r.json();
@@ -10667,7 +10667,7 @@ console.log('Marfan Crew V62.60 Centro Operativo Live cargado');
 
 
 // ---------- V62.61 FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.61.0';
+window.MARFAN_VERSION = '62.63.0';
 window.v6261SaveAvailability = async function(payload){
   const r = await fetch('/api/v6261/availability', {
     method:'POST',
@@ -10690,3 +10690,181 @@ window.v6261EventAvailability = async function(eventId){
 };
 console.log('Marfan Crew V62.61 Disponibilidad + Planificador cargado');
 // ---------- END V62.61 ----------
+
+
+// ---------- V62.63 INTEGRACION REAL UI FRONTEND ----------
+window.MARFAN_VERSION = '62.63.0';
+
+(function(){
+  if (window.__v6263Installed) return;
+  window.__v6263Installed = true;
+
+  const STYLE_ID = 'v6263-style';
+  if(!document.getElementById(STYLE_ID)){
+    const st = document.createElement('style');
+    st.id = STYLE_ID;
+    st.textContent = `
+      .v6263-card{background:#fff;border:1px solid #e5e5ea;border-radius:18px;padding:18px;margin:12px 0;box-shadow:0 10px 28px rgba(0,0,0,.05)}
+      .v6263-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:12px 0}
+      .v6263-kpi{background:#fff;border:1px solid #e5e5ea;border-radius:16px;padding:14px}
+      .v6263-kpi small{display:block;color:#6e6e73;font-weight:800;text-transform:uppercase;font-size:11px}
+      .v6263-kpi b{font-size:26px}
+      .v6263-btn{background:#000;color:#fff;border:none;border-radius:14px;padding:12px 16px;font-weight:900;cursor:pointer;margin-right:8px}
+      .v6263-pill{display:inline-block;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:900;background:#f2f2f7;margin-left:8px}
+      .v6263-alert{padding:10px;border-radius:12px;background:#fff4e5;margin:8px 0;font-weight:800}
+      @media(max-width:900px){.v6263-grid{grid-template-columns:1fr 1fr}}
+    `;
+    document.head.appendChild(st);
+  }
+
+  function findMain(){
+    return document.querySelector('main') || document.querySelector('.main') || document.querySelector('#app') || document.body;
+  }
+
+  function setTitle(t){
+    const h = document.querySelector('h1');
+    if(h) h.textContent = t;
+    document.title = 'Marfan Crew · ' + t;
+  }
+
+  async function getJson(url){
+    const r = await fetch(url);
+    return r.json();
+  }
+
+  function money(n){ return (Number(n||0)).toFixed(2).replace('.', ',') + ' €'; }
+
+  window.v6263ShowCentroOperativo = async function(){
+    setTitle('Centro Operativo Live');
+    const main = findMain();
+    const d = await getJson('/api/v6263/centro-operativo');
+    const c = d.cards || {};
+    main.innerHTML = `
+      <h1>Centro Operativo Live</h1>
+      <div class="v6263-grid">
+        <div class="v6263-kpi"><small>Eventos hoy</small><b>${c.events_today||0}</b></div>
+        <div class="v6263-kpi"><small>Asignados hoy</small><b>${c.assignments_today||0}</b></div>
+        <div class="v6263-kpi"><small>Fichados hoy</small><b>${c.checked_in_today||0}</b></div>
+        <div class="v6263-kpi"><small>Pendientes</small><b>${c.pending_checkins||0}</b></div>
+        <div class="v6263-kpi"><small>Ingresos hoy</small><b>${money(c.revenue_today)}</b></div>
+        <div class="v6263-kpi"><small>Coste personal</small><b>${money(c.personnel_cost)}</b></div>
+        <div class="v6263-kpi"><small>Margen</small><b>${money(c.margin_today)}</b></div>
+        <div class="v6263-kpi"><small>Alertas</small><b>${(d.alerts||[]).length}</b></div>
+      </div>
+      <div class="v6263-card">
+        <h2>Torre de control</h2>
+        ${(d.events_today||[]).length ? (d.events_today||[]).map(e=>`
+          <div class="v6263-alert">🟢 ${e.name||e.title||'Evento'} <span class="v6263-pill">${e.event_date||e.date||''}</span></div>
+        `).join('') : '<p>No hay eventos hoy.</p>'}
+      </div>
+      <div class="v6263-card">
+        <h2>Alertas operativas</h2>
+        ${(d.alerts||[]).length ? (d.alerts||[]).map(a=>`<div class="v6263-alert">⚠️ ${a.message}</div>`).join('') : '<p>Sin alertas críticas.</p>'}
+      </div>
+    `;
+  };
+
+  window.v6263ShowDisponibilidad = async function(){
+    setTitle('Disponibilidad y Vacaciones');
+    const main = findMain();
+    const d = await getJson('/api/v6263/disponibilidad');
+    main.innerHTML = `
+      <h1>Disponibilidad y Vacaciones</h1>
+      <div class="v6263-card">
+        <h2>Bloqueos de disponibilidad</h2>
+        ${(d.availability||[]).length ? `
+          <table style="width:100%;border-collapse:collapse">
+          <thead><tr><th>Operario</th><th>Fecha</th><th>Estado</th><th>Motivo</th><th>Horario</th></tr></thead>
+          <tbody>${d.availability.map(x=>`<tr><td>${x.user_id}</td><td>${x.date}</td><td>${x.status}</td><td>${x.reason||''}</td><td>${x.start_time||''}-${x.end_time||''}</td></tr>`).join('')}</tbody>
+          </table>` : '<p>No hay vacaciones/no disponibilidad registradas.</p>'}
+      </div>
+      <div class="v6263-card">
+        <h2>Nueva no disponibilidad</h2>
+        <p>Esta pantalla ya está visible. La conexión de guardado usa el endpoint V62.61.</p>
+      </div>
+    `;
+  };
+
+  window.v6263ShowPlanificador = async function(){
+    setTitle('Planificador Inteligente');
+    const main = findMain();
+    const d = await getJson('/api/v6263/planificador/eventos');
+    main.innerHTML = `
+      <h1>Planificador Inteligente</h1>
+      <div class="v6263-card">
+        <h2>Eventos para generar equipo</h2>
+        ${(d.events||[]).length ? (d.events||[]).map(e=>`
+          <div class="v6263-alert">
+            ${e.name||e.title||'Evento'} <span class="v6263-pill">${e.event_date||e.date||''}</span>
+            <button class="v6263-btn" onclick="v6263PlanEvent('${e.id}')">Generar equipo</button>
+          </div>
+        `).join('') : '<p>No hay eventos.</p>'}
+      </div>
+      <div id="v6263-plan-result" class="v6263-card"><h2>Resultado</h2><p>Selecciona un evento.</p></div>
+    `;
+  };
+
+  window.v6263PlanEvent = async function(eventId){
+    const box = document.getElementById('v6263-plan-result');
+    if(!box) return;
+    let d;
+    try { d = await getJson('/api/v6261/plan/' + encodeURIComponent(eventId)); }
+    catch(e){ d = {ok:false,error:e.message}; }
+    if(!d.ok){ box.innerHTML = '<h2>Error</h2><p>'+ (d.error||'No se pudo generar') +'</p>'; return; }
+    box.innerHTML = `
+      <h2>Equipo recomendado</h2>
+      <p>Necesarios: <b>${d.required_workers||0}</b></p>
+      ${(d.selected||[]).map(x=>`<div class="v6263-alert">✅ ${x.name} <span class="v6263-pill">${x.reason}</span></div>`).join('') || '<p>Sin candidatos disponibles.</p>'}
+    `;
+  };
+
+  window.v6263ShowPortalOperario = async function(){
+    setTitle('Portal Operario Pro');
+    const main = findMain();
+    const d = await getJson('/api/v6263/portal-operario/resumen');
+    main.innerHTML = `
+      <h1>Portal Operario Pro</h1>
+      <div class="v6263-card">
+        <h2>Operarios con portal</h2>
+        ${(d.operators||[]).length ? (d.operators||[]).map(u=>`
+          <div class="v6263-alert">${u.first_name||u.name||u.nickname||u.email||u.phone||('Operario #'+u.id)}
+          <button class="v6263-btn" onclick="v6263OpenOperatorDashboard('${u.id}')">Ver portal</button></div>
+        `).join('') : '<p>No hay operarios.</p>'}
+      </div>
+      <div id="v6263-operator-result" class="v6263-card"><h2>Resumen</h2><p>Selecciona un operario.</p></div>
+    `;
+  };
+
+  window.v6263OpenOperatorDashboard = async function(userId){
+    const box = document.getElementById('v6263-operator-result');
+    if(!box) return;
+    let d;
+    try { d = await getJson('/api/v6262/operator/' + encodeURIComponent(userId) + '/dashboard'); }
+    catch(e){ d = {ok:false,error:e.message}; }
+    box.innerHTML = `
+      <h2>Dashboard operario #${userId}</h2>
+      <pre style="white-space:pre-wrap;background:#f5f5f7;border-radius:12px;padding:12px">${JSON.stringify(d,null,2)}</pre>
+    `;
+  };
+
+  function addNavButton(label, fnName){
+    const nav = document.querySelector('aside') || document.querySelector('.sidebar') || document.querySelector('nav');
+    if(!nav || document.querySelector('[data-v6263="'+fnName+'"]')) return;
+    const btn = document.createElement('button');
+    btn.textContent = label;
+    btn.dataset.v6263 = fnName;
+    btn.style.cssText = 'display:block;width:100%;margin:6px 0;padding:10px 12px;border-radius:12px;border:none;background:#111;color:#fff;font-weight:900;text-align:left;cursor:pointer';
+    btn.onclick = function(){ window[fnName](); };
+    nav.appendChild(btn);
+  }
+
+  setTimeout(()=>{
+    addNavButton('Centro Operativo Live', 'v6263ShowCentroOperativo');
+    addNavButton('Disponibilidad', 'v6263ShowDisponibilidad');
+    addNavButton('Planificador', 'v6263ShowPlanificador');
+    addNavButton('Portal Operario Pro', 'v6263ShowPortalOperario');
+  }, 800);
+
+  console.log('Marfan Crew V62.63 Integración Real UI cargada');
+})();
+// ---------- END V62.63 INTEGRACION REAL UI FRONTEND ----------
