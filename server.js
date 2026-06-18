@@ -70,7 +70,7 @@ const { google } = require('googleapis');
 const app = express();
 
 // ---------- V62.53 STABLE PRODUCTION PATCH ----------
-const V6253_VERSION = '62.66.0';
+const V6253_VERSION = '2.0.0';
 
 function v6253Database(){
   try { if (typeof db !== 'undefined') return db; } catch(e) {}
@@ -938,7 +938,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version: '62.66.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version: '2.0.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -3212,7 +3212,7 @@ app.get('/api/v6216-auto-restore-status', requireAdmin, (req,res)=>{
   try{
     res.json({
       ok:true,
-      version: '62.66.0',
+      version: '2.0.0',
       status:global.V6216_RESTORE_STATUS || null,
       db_path:v6216DbPath(),
       data_dir:v6216DataDir(),
@@ -3885,7 +3885,7 @@ function v6223ExportUsersJson(){
     const users = db.prepare('SELECT * FROM users ORDER BY id').all();
     const stamp = new Date().toISOString().replace(/[:.]/g,'-');
     const out = p.join(v6223JsonDir(), `users-${stamp}.json`);
-    f.writeFileSync(out, JSON.stringify({version: '62.66.0', created_at:new Date().toISOString(), users}, null, 2));
+    f.writeFileSync(out, JSON.stringify({version: '2.0.0', created_at:new Date().toISOString(), users}, null, 2));
     v6223KeepLastFiles(v6223JsonDir(), 'users-', 10);
     return {ok:true,path:out,count:users.length};
   }catch(e){ return {ok:false,error:e.message}; }
@@ -3999,7 +3999,7 @@ app.get('/api/v6223-persistence-status', requireAdmin, (req,res)=>{
     try{ snapshots = db.prepare("SELECT COUNT(*) AS c FROM event_snapshots_v6218").get().c || 0; }catch(e){}
     res.json({
       ok:true,
-      version: '62.66.0',
+      version: '2.0.0',
       data_dir:v6223DataDir(),
       users,
       events,
@@ -9176,7 +9176,7 @@ app.get('/api/v6250/persistent-status', requireAdmin, (req,res)=>{
 // ---------- V62.54 VISUAL SOLAPAMIENTOS API ----------
 try {
   app.get('/api/v6254/health', (req,res)=>{
-    res.json({ok:true, version:'62.66.0', message:'Visual Solapamientos activo'});
+    res.json({ok:true, version:'2.0.0', message:'Visual Solapamientos activo'});
   });
 
   app.post('/api/v6254/check-assignment-conflicts', (req,res)=>{
@@ -9231,7 +9231,7 @@ try {
 // ---------- V62.55 TEAM LEAD + SIGNATURE + LOCK ----------
 try {
   app.get('/api/v6255/health',(req,res)=>{
-    res.json({ok:true,version:'62.66.0',message:'Jefe equipo + firma + bloqueo activo'});
+    res.json({ok:true,version:'2.0.0',message:'Jefe equipo + firma + bloqueo activo'});
   });
 
   app.post('/api/v6255/team-lead/set',(req,res)=>{
@@ -9262,7 +9262,7 @@ try {
 // ---------- V62.58 CENTRO CONTROL LIVE ----------
 try {
   app.get('/api/v6258/health',(req,res)=>{
-    res.json({ok:true,version:'62.66.0',message:'Centro Control Live activo'});
+    res.json({ok:true,version:'2.0.0',message:'Centro Control Live activo'});
   });
 
   app.get('/api/v6258/dashboard/live',(req,res)=>{
@@ -9550,7 +9550,7 @@ try {
   v6259EnsureTables();
 
   app.get('/api/v6259/health',(req,res)=>{
-    res.json({ok:true,version:'62.66.0',message:'Dashboard CEO + Inteligencia Operativa activo'});
+    res.json({ok:true,version:'2.0.0',message:'Dashboard CEO + Inteligencia Operativa activo'});
   });
 
   app.get('/api/v6259/dashboard/ceo',(req,res)=>{
@@ -9589,7 +9589,7 @@ try {
 // ---------- V62.60 CENTRO OPERATIVO LIVE ----------
 try {
   app.get('/api/v6260/health',(req,res)=>{
-    res.json({ok:true,version:'62.66.0',message:'Centro Operativo Live activo'});
+    res.json({ok:true,version:'2.0.0',message:'Centro Operativo Live activo'});
   });
 
   app.get('/api/v6260/dashboard',(req,res)=>{
@@ -9798,7 +9798,7 @@ try {
   v6261EnsureTables();
 
   app.get('/api/v6261/health',(req,res)=>{
-    res.json({ok:true,version:'62.66.0',message:'Disponibilidad + Planificador activo'});
+    res.json({ok:true,version:'2.0.0',message:'Disponibilidad + Planificador activo'});
   });
 
   app.get('/api/v6261/availability',(req,res)=>{
@@ -9923,7 +9923,7 @@ function v6263Dashboard(){
   const cost = todayAssignments.length * 5 * 12;
   return {
     ok:true,
-    version:'62.66.0',
+    version:'2.0.0',
     cards:{
       events_today:todayEvents.length,
       clients_total:clients.length,
@@ -9949,7 +9949,7 @@ function v6263Alerts(eventsToday, assignmentsToday){
   return out;
 }
 try {
-  app.get('/api/v6263/health',(req,res)=>res.json({ok:true,version:'62.66.0',message:'Integración real UI activa'}));
+  app.get('/api/v6263/health',(req,res)=>res.json({ok:true,version:'2.0.0',message:'Integración real UI activa'}));
   app.get('/api/v6263/dashboard',(req,res)=>res.json(v6263Dashboard()));
   app.get('/api/v6263/centro-operativo',(req,res)=>res.json(v6263Dashboard()));
   app.get('/api/v6263/disponibilidad',(req,res)=>{
@@ -9973,7 +9973,7 @@ try {
 
 // ---------- V62.64 UI CORE FIX API ----------
 try {
-  app.get('/api/v6264/health',(req,res)=>res.json({ok:true,version:'62.66.0',message:'UI Core Fix activo'}));
+  app.get('/api/v6264/health',(req,res)=>res.json({ok:true,version:'2.0.0',message:'UI Core Fix activo'}));
 } catch(e) {}
 // ---------- END V62.64 ----------
 
@@ -10015,7 +10015,7 @@ function v6265GlobalAlerts(){
 }
 try {
   v6265EnsureTables();
-  app.get('/api/v6265/health',(req,res)=>res.json({ok:true,version:'62.66.0',message:'Operarios Pro + Expediente RRHH activo'}));
+  app.get('/api/v6265/health',(req,res)=>res.json({ok:true,version:'2.0.0',message:'Operarios Pro + Expediente RRHH activo'}));
   app.get('/api/v6265/workers',(req,res)=>res.json({ok:true,workers:v6265Workers().map(w=>({id:w.id,name:v6265WorkerName(w),phone:w.phone||'',email:w.email||'',role:w.role||'',active:w.active,stats:v6265WorkerStats(w.id)}))}));
   app.get('/api/v6265/worker/:userId/profile',(req,res)=>{ const p=v6265Profile(req.params.userId); if(!p) return res.status(404).json({ok:false,error:'Operario no encontrado'}); res.json({ok:true,profile:p}); });
   app.post('/api/v6265/worker/:userId/note',(req,res)=>{ v6265EnsureTables(); const b=req.body||{}; v6265Run(`INSERT INTO worker_notes_v6265 (user_id,note_type,note,created_by) VALUES (?,?,?,?)`,[req.params.userId,b.note_type||'general',b.note||'',b.created_by||'admin']); res.json({ok:true}); });
@@ -10028,10 +10028,168 @@ try {
 // ---------- V62.66 FIX VER PORTAL SIN TOCAR RAILWAY ----------
 try {
   app.get('/api/v6266/health',(req,res)=>{
-    res.json({ok:true,version:'62.66.0',message:'Fix Ver Portal activo sin cambios de Railway'});
+    res.json({ok:true,version:'2.0.0',message:'Fix Ver Portal activo sin cambios de Railway'});
   });
 } catch(e) {}
 // ---------- END V62.66 ----------
+
+
+// ---------- MARFAN 2 OPERARIO PRO COMPLETO ----------
+function m2Db(){
+  try { if (typeof db !== 'undefined') return db; } catch(e) {}
+  try { if (global.db) return global.db; } catch(e) {}
+  return null;
+}
+function m2All(sql, params){
+  const database = m2Db();
+  try { return database.prepare(sql).all(...(params || [])); } catch(e) { return []; }
+}
+function m2Get(sql, params){
+  const database = m2Db();
+  try { return database.prepare(sql).get(...(params || [])); } catch(e) { return null; }
+}
+function m2Run(sql, params){
+  const database = m2Db();
+  try { return database.prepare(sql).run(...(params || [])); } catch(e) { return null; }
+}
+function m2EnsureTables(){
+  const database = m2Db();
+  if(!database) return;
+  try {
+    database.exec(`CREATE TABLE IF NOT EXISTS operator_incidents_m2 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      event_id INTEGER,
+      type TEXT DEFAULT '',
+      description TEXT DEFAULT '',
+      lat TEXT DEFAULT '',
+      lng TEXT DEFAULT '',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );`);
+  } catch(e) {}
+  try {
+    database.exec(`CREATE TABLE IF NOT EXISTS operator_requests_m2 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      type TEXT DEFAULT '',
+      start_date TEXT DEFAULT '',
+      end_date TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      status TEXT DEFAULT 'pendiente',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );`);
+  } catch(e) {}
+}
+function m2Name(u){
+  return [u.first_name,u.last_name].filter(Boolean).join(' ') || u.nickname || u.name || u.email || u.phone || ('Operario #' + u.id);
+}
+function m2Profile(userId){
+  const id = String(userId || '').replace(/[^0-9]/g,'');
+  const user = m2Get(`SELECT * FROM users WHERE id=?`, [id]);
+  if(!user) return null;
+
+  let assignments = m2All(`
+    SELECT a.*, e.name AS event_name, e.title AS event_title, e.location, e.address,
+           e.event_date, e.date, e.start_time AS event_start, e.end_time AS event_end,
+           e.client AS event_client, e.client_name
+    FROM assignments a
+    LEFT JOIN events e ON e.id = a.event_id
+    WHERE a.user_id=?
+    ORDER BY COALESCE(e.event_date,e.date,'') DESC
+    LIMIT 200
+  `,[id]);
+
+  const checkins = m2All(`SELECT * FROM checkins WHERE user_id=? ORDER BY COALESCE(created_at,at,'') DESC LIMIT 200`,[id]);
+
+  let docs = m2All(`SELECT * FROM documents WHERE user_id=? OR worker_id=? OR operator_id=? ORDER BY id DESC`, [id,id,id]);
+  if(!docs.length) docs = m2All(`SELECT * FROM hr_documents WHERE user_id=? OR worker_id=? OR operator_id=? ORDER BY id DESC`, [id,id,id]);
+
+  const availability = m2All(`SELECT * FROM worker_availability_v6261 WHERE user_id=? ORDER BY date DESC LIMIT 100`,[id]);
+  const incidents = m2All(`SELECT * FROM operator_incidents_m2 WHERE user_id=? ORDER BY id DESC LIMIT 100`,[id]);
+  const requests = m2All(`SELECT * FROM operator_requests_m2 WHERE user_id=? ORDER BY id DESC LIMIT 100`,[id]);
+
+  const today = new Date().toISOString().slice(0,10);
+  const month = today.slice(0,7);
+
+  const todayEvents = assignments.filter(a => String(a.event_date || a.date || '').slice(0,10) === today);
+  const monthEvents = assignments.filter(a => String(a.event_date || a.date || '').slice(0,7) === month);
+
+  const expiredDocs = docs.filter(d => {
+    const v = d.valid_to || d.expiry_date || d.expires_at || d.end_date || '';
+    return v && String(v).slice(0,10) < today;
+  });
+  const nearDocs = docs.filter(d => {
+    const v = d.valid_to || d.expiry_date || d.expires_at || d.end_date || '';
+    if(!v) return false;
+    const diff = (new Date(String(v).slice(0,10)).getTime() - new Date(today).getTime()) / 86400000;
+    return diff >= 0 && diff <= 30;
+  });
+
+  const activeEvent = todayEvents[0] || null;
+
+  return {
+    user,
+    name:m2Name(user),
+    active_event:activeEvent,
+    stats:{
+      services_total:assignments.length,
+      services_today:todayEvents.length,
+      services_month:monthEvents.length,
+      checkins_total:checkins.length,
+      documents_total:docs.length,
+      documents_expired:expiredDocs.length,
+      documents_near_expiry:nearDocs.length,
+      availability_blocks:availability.length,
+      incidents_total:incidents.length,
+      requests_pending:requests.filter(r=>r.status==='pendiente').length
+    },
+    events:assignments,
+    checkins,
+    documents:docs,
+    availability,
+    incidents,
+    requests
+  };
+}
+
+try {
+  m2EnsureTables();
+
+  app.get('/api/m2/health',(req,res)=>{
+    res.json({ok:true,version:'2.0.0',message:'Operario Pro Completo activo'});
+  });
+
+  app.get('/api/m2/operators',(req,res)=>{
+    const users = m2All(`SELECT id, first_name, last_name, nickname, name, phone, email, role, active FROM users WHERE COALESCE(role,'')!='admin' ORDER BY first_name,last_name,nickname,email,phone`);
+    res.json({ok:true,operators:users.map(u=>({id:u.id,name:m2Name(u),phone:u.phone||'',email:u.email||'',role:u.role||'',active:u.active}))});
+  });
+
+  app.get('/api/m2/operator/:userId/portal',(req,res)=>{
+    const profile = m2Profile(req.params.userId);
+    if(!profile) return res.status(404).json({ok:false,error:'Operario no encontrado'});
+    res.json({ok:true,profile});
+  });
+
+  app.post('/api/m2/operator/:userId/request',(req,res)=>{
+    m2EnsureTables();
+    const b = req.body || {};
+    m2Run(`INSERT INTO operator_requests_m2 (user_id,type,start_date,end_date,notes,status) VALUES (?,?,?,?,?,'pendiente')`,
+      [req.params.userId,b.type||'no_disponible',b.start_date||'',b.end_date||'',b.notes||'']);
+    res.json({ok:true});
+  });
+
+  app.post('/api/m2/operator/:userId/incident',(req,res)=>{
+    m2EnsureTables();
+    const b = req.body || {};
+    m2Run(`INSERT INTO operator_incidents_m2 (user_id,event_id,type,description,lat,lng) VALUES (?,?,?,?,?,?)`,
+      [req.params.userId,b.event_id||'',b.type||'',b.description||'',b.lat||'',b.lng||'']);
+    res.json({ok:true});
+  });
+
+} catch(e){
+  console.error('[MARFAN 2]', e.message);
+}
+// ---------- END MARFAN 2 ----------
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

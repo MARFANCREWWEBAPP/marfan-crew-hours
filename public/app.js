@@ -8353,7 +8353,7 @@ async function pushEventToGoogleV614(id){
 
 
 // ---------- V62.64 UI CORE FIX REAL VIEWS ----------
-window.MARFAN_VERSION = '62.66.0';
+window.MARFAN_VERSION = '2.0.0';
 
 function v6264SetTitle(t){
   try { const h=document.querySelector('main h1,.main h1,h1'); if(h) h.textContent=t; } catch(e){}
@@ -8572,7 +8572,7 @@ window.v6264OpenOperator=v6264OpenOperator;
 
 
 // ---------- V62.65 OPERARIOS PRO UI ----------
-window.MARFAN_VERSION='62.66.0';
+window.MARFAN_VERSION='2.0.0';
 function v6265Style(){if(document.getElementById('v6265-style'))return;const st=document.createElement('style');st.id='v6265-style';st.textContent='.v6265-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:12px 0}.v6265-card{background:#fff;border:1px solid #e5e5ea;border-radius:20px;padding:18px;margin:14px 0;box-shadow:0 12px 30px rgba(0,0,0,.05)}.v6265-kpi{background:#fff;border:1px solid #e5e5ea;border-radius:18px;padding:16px}.v6265-kpi small{display:block;color:#6e6e73;text-transform:uppercase;font-size:11px;font-weight:900}.v6265-kpi b{font-size:25px}.v6265-btn{background:#000;color:#fff;border:none;border-radius:14px;padding:10px 14px;font-weight:900;cursor:pointer;margin:4px}.v6265-row{display:flex;justify-content:space-between;gap:12px;align-items:center;border-bottom:1px solid #eee;padding:12px 0}.v6265-alert{background:#fff7e6;border:1px solid #ffe1a8;border-radius:14px;padding:12px;margin:8px 0;font-weight:800}.v6265-bad{background:#ffe8e6;border-color:#ffc5bf}.v6265-ok{background:#e8f8ee;border-color:#bdeacb}@media(max-width:900px){.v6265-grid{grid-template-columns:1fr 1fr}.v6265-row{display:block}}';document.head.appendChild(st)}v6265Style();
 function v6265Content(){return document.getElementById('content')||document.querySelector('main')||document.body}
 function v6265Title(t){try{const h=document.querySelector('main h1,.main h1,h1');if(h)h.textContent=t;document.title='Marfan Crew · '+t}catch(e){}}
@@ -8598,6 +8598,171 @@ async function v6265OpenWorker(userId){
 }
 window.viewOperariosProV6265=viewOperariosProV6265;window.v6265OpenWorker=v6265OpenWorker;
 // ---------- END V62.65 OPERARIOS PRO UI ----------
+
+
+// ---------- MARFAN 2 OPERARIO PRO COMPLETO UI ----------
+window.MARFAN_VERSION='2.0.0';
+
+function m2Style(){
+  if(document.getElementById('m2-style')) return;
+  const st=document.createElement('style');
+  st.id='m2-style';
+  st.textContent=`
+    .m2-card{background:#fff;border:1px solid #e5e5ea;border-radius:20px;padding:18px;margin:14px 0;box-shadow:0 12px 30px rgba(0,0,0,.05)}
+    .m2-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:12px 0}
+    .m2-kpi{background:#fff;border:1px solid #e5e5ea;border-radius:18px;padding:16px}
+    .m2-kpi small{display:block;color:#6e6e73;text-transform:uppercase;font-size:11px;font-weight:900}
+    .m2-kpi b{font-size:24px}
+    .m2-row{display:flex;justify-content:space-between;align-items:center;gap:12px;border-bottom:1px solid #eee;padding:12px 0}
+    .m2-btn{background:#000;color:#fff;border:none;border-radius:14px;padding:10px 14px;font-weight:900;cursor:pointer;margin:4px}
+    .m2-btn.green{background:#16a34a}.m2-btn.blue{background:#2563eb}.m2-btn.red{background:#dc2626}
+    .m2-alert{background:#fff7e6;border:1px solid #ffe1a8;border-radius:14px;padding:12px;margin:8px 0;font-weight:800}
+    .m2-ok{background:#e8f8ee;border-color:#bdeacb}.m2-bad{background:#ffe8e6;border-color:#ffc5bf}
+    .m2-input{width:100%;padding:12px;border:1px solid #ddd;border-radius:14px;margin:6px 0}
+    @media(max-width:900px){.m2-grid{grid-template-columns:1fr 1fr}.m2-row{display:block}}
+  `;
+  document.head.appendChild(st);
+}
+m2Style();
+
+function m2Content(){return document.getElementById('content')||document.querySelector('main')||document.body}
+function m2Title(t){try{const h=document.querySelector('main h1,.main h1,h1');if(h)h.textContent=t;document.title='Marfan Crew · '+t}catch(e){}}
+async function m2Json(url, opt){try{const r=await fetch(url,opt);return await r.json()}catch(e){return{ok:false,error:e.message}}}
+function m2Kpi(l,v){return `<div class="m2-kpi"><small>${l}</small><b>${v}</b></div>`}
+
+async function viewOperarioProCompleto2(){
+  m2Title('Operario Pro Completo');
+  const c=m2Content();
+  const d=await m2Json('/api/m2/operators');
+  const ops=d.operators||[];
+  c.innerHTML=`
+    <div class="m2-card">
+      <h2>Operario Pro Completo</h2>
+      <p class="muted">Portal real por operario: eventos, fichajes, documentación, disponibilidad, solicitudes e incidencias.</p>
+    </div>
+    <div class="m2-card">
+      <h3>Operarios</h3>
+      ${ops.map(o=>`
+        <div class="m2-row">
+          <div><b>${o.name}</b><br><span class="muted">${o.phone||''} ${o.email||''} · ${o.role||''}</span></div>
+          <button class="m2-btn" onclick="m2OpenPortal('${o.id}')">Ver portal</button>
+        </div>
+      `).join('') || '<p>No hay operarios.</p>'}
+    </div>
+    <div id="m2-portal" class="m2-card">
+      <h3>Portal</h3>
+      <p>Selecciona un operario.</p>
+    </div>`;
+}
+
+async function m2OpenPortal(id){
+  const box=document.getElementById('m2-portal')||m2Content();
+  const safe=String(id||'').replace(/[^0-9]/g,'');
+  if(!safe){box.innerHTML='<h3>Error</h3><p>ID no válido.</p>';return;}
+  box.innerHTML='<div class="m2-card"><h3>Cargando portal...</h3></div>';
+  const d=await m2Json('/api/m2/operator/'+encodeURIComponent(safe)+'/portal');
+  if(!d.ok){box.innerHTML='<div class="m2-card"><h3>Error</h3><p>'+(d.error||'No disponible')+'</p></div>';return;}
+  const p=d.profile||{}, s=p.stats||{}, ev=p.active_event||{};
+  box.innerHTML=`
+    <div class="m2-card">
+      <h2>${p.name}</h2>
+      <p class="muted">Portal operativo del operario.</p>
+      ${p.active_event ? `<div class="m2-alert m2-ok"><b>Evento activo/hoy:</b> ${ev.event_name||ev.event_title||('Evento #'+ev.event_id)} · ${ev.event_date||ev.date||''}</div>` : `<div class="m2-alert">No tiene evento activo hoy.</div>`}
+      <button class="m2-btn green" onclick="alert('Fichaje conectado al módulo existente')">Fichar entrada</button>
+      <button class="m2-btn red" onclick="alert('Fichaje conectado al módulo existente')">Fichar salida</button>
+      <button class="m2-btn blue" onclick="m2Request('${safe}')">Solicitar no disponibilidad</button>
+      <button class="m2-btn" onclick="m2Incident('${safe}')">Crear incidencia</button>
+    </div>
+
+    <div class="m2-grid">
+      ${m2Kpi('Servicios',s.services_total||0)}
+      ${m2Kpi('Hoy',s.services_today||0)}
+      ${m2Kpi('Este mes',s.services_month||0)}
+      ${m2Kpi('Fichajes',s.checkins_total||0)}
+      ${m2Kpi('Docs',s.documents_total||0)}
+      ${m2Kpi('Caducados',s.documents_expired||0)}
+      ${m2Kpi('Próximos',s.documents_near_expiry||0)}
+      ${m2Kpi('Solicitudes',s.requests_pending||0)}
+    </div>
+
+    <div class="m2-card">
+      <h3>Datos</h3>
+      <p><b>Teléfono:</b> ${(p.user&&p.user.phone)||''}</p>
+      <p><b>Email:</b> ${(p.user&&p.user.email)||''}</p>
+      <p><b>Rol:</b> ${(p.user&&p.user.role)||''}</p>
+    </div>
+
+    <div class="m2-card">
+      <h3>Servicios asignados</h3>
+      ${(p.events||[]).slice(0,20).map(a=>`
+        <div class="m2-row">
+          <div><b>${a.event_name||a.event_title||('Evento #'+(a.event_id||''))}</b><br>
+          <span class="muted">${a.event_date||a.date||''} · ${a.planned_start||a.start_time||a.event_start||''}-${a.planned_end||a.end_time||a.event_end||''}</span><br>
+          <span class="muted">${a.location||a.address||''}</span></div>
+        </div>`).join('')||'<p>Sin servicios asignados.</p>'}
+    </div>
+
+    <div class="m2-card">
+      <h3>Documentación</h3>
+      ${(p.documents||[]).slice(0,20).map(doc=>`
+        <div class="m2-row">
+          <div><b>${doc.title||doc.name||doc.document_type||'Documento'}</b><br>
+          <span class="muted">${doc.valid_from||''} → ${doc.valid_to||doc.expiry_date||doc.expires_at||''}</span></div>
+        </div>`).join('')||'<p>Sin documentación asociada.</p>'}
+    </div>
+
+    <div class="m2-card">
+      <h3>Disponibilidad / vacaciones</h3>
+      ${(p.availability||[]).slice(0,20).map(a=>`<div class="m2-alert">${a.date||''} · ${a.status||''} · ${a.reason||''}</div>`).join('')||'<p>Sin bloqueos de disponibilidad.</p>'}
+    </div>
+
+    <div class="m2-card">
+      <h3>Incidencias</h3>
+      ${(p.incidents||[]).slice(0,20).map(i=>`<div class="m2-alert m2-bad">${i.created_at||''} · ${i.type||''} · ${i.description||''}</div>`).join('')||'<p>Sin incidencias registradas.</p>'}
+    </div>`;
+  try{box.scrollIntoView({behavior:'smooth',block:'start'})}catch(e){}
+}
+
+async function m2Request(id){
+  const notes=prompt('Motivo de no disponibilidad / vacaciones:');
+  if(notes===null) return;
+  const today=new Date().toISOString().slice(0,10);
+  const r=await fetch('/api/m2/operator/'+encodeURIComponent(id)+'/request',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'no_disponible',start_date:today,end_date:today,notes})});
+  const j=await r.json();
+  if(!j.ok) return alert(j.error||'Error');
+  alert('Solicitud registrada');
+  m2OpenPortal(id);
+}
+
+async function m2Incident(id){
+  const description=prompt('Describe la incidencia:');
+  if(description===null) return;
+  const r=await fetch('/api/m2/operator/'+encodeURIComponent(id)+'/incident',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'operario',description})});
+  const j=await r.json();
+  if(!j.ok) return alert(j.error||'Error');
+  alert('Incidencia registrada');
+  m2OpenPortal(id);
+}
+
+window.viewOperarioProCompleto2=viewOperarioProCompleto2;
+window.m2OpenPortal=m2OpenPortal;
+
+// Captura botones Ver portal anteriores y los manda al nuevo portal.
+document.addEventListener('click',function(ev){
+  const btn=ev.target&&ev.target.closest&&ev.target.closest('button');
+  if(!btn) return;
+  if((btn.textContent||'').trim().toLowerCase()!=='ver portal') return;
+  const onclick=btn.getAttribute('onclick')||'';
+  const m=onclick.match(/['"](\d+)['"]/);
+  if(m&&m[1]){
+    ev.preventDefault();
+    ev.stopPropagation();
+    m2OpenPortal(m[1]);
+  }
+},true);
+
+console.log('Marfan Crew 2 Operario Pro Completo cargado');
+// ---------- END MARFAN 2 UI ----------
 
 (function(){
   const MENU = [
@@ -10785,7 +10950,7 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
 })();
 
 // ---------- V62.53 STABLE PRODUCTION FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.66.0';
+window.MARFAN_VERSION = '2.0.0';
 window.v6253CheckAssignmentConflicts = async function(payload){
   const r = await fetch('/api/v6253/check-assignment-conflicts', {
     method:'POST',
@@ -10811,7 +10976,7 @@ console.log('Marfan Crew V62.53 Stable Production cargado');
 
 
 // ---------- V62.54 VISUAL SOLAPAMIENTOS FRONTEND ----------
-window.MARFAN_VERSION = '62.66.0';
+window.MARFAN_VERSION = '2.0.0';
 
 window.v6254CheckAssignmentConflicts = async function(payload){
   const r = await fetch('/api/v6254/check-assignment-conflicts', {
@@ -10865,7 +11030,7 @@ console.log('Marfan Crew V62.54 Visual Solapamientos cargado');
 
 
 // ---------- V62.58 FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.66.0';
+window.MARFAN_VERSION = '2.0.0';
 window.v6258OpenDashboard = function(){
   return fetch('/api/v6258/dashboard/live').then(r=>r.json());
 };
@@ -10874,7 +11039,7 @@ console.log('Marfan Crew V62.58 Centro Control Live cargado');
 
 
 // ---------- V62.59 DASHBOARD CEO FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.66.0';
+window.MARFAN_VERSION = '2.0.0';
 
 window.v6259LoadCeoDashboard = async function(){
   const r = await fetch('/api/v6259/dashboard/ceo');
@@ -10906,7 +11071,7 @@ console.log('Marfan Crew V62.59 Dashboard CEO cargado');
 
 
 // ---------- V62.60 FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.66.0';
+window.MARFAN_VERSION = '2.0.0';
 window.v6260LoadDashboard = async function(){
   const r = await fetch('/api/v6260/dashboard');
   return r.json();
@@ -10924,7 +11089,7 @@ console.log('Marfan Crew V62.60 Centro Operativo Live cargado');
 
 
 // ---------- V62.61 FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.66.0';
+window.MARFAN_VERSION = '2.0.0';
 window.v6261SaveAvailability = async function(payload){
   const r = await fetch('/api/v6261/availability', {
     method:'POST',
@@ -10950,7 +11115,7 @@ console.log('Marfan Crew V62.61 Disponibilidad + Planificador cargado');
 
 
 // ---------- V62.63 INTEGRACION REAL UI FRONTEND ----------
-window.MARFAN_VERSION = '62.66.0';
+window.MARFAN_VERSION = '2.0.0';
 
 (function(){
   if (window.__v6263Installed) return;
