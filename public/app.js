@@ -8353,7 +8353,7 @@ async function pushEventToGoogleV614(id){
 
 
 // ---------- V62.64 UI CORE FIX REAL VIEWS ----------
-window.MARFAN_VERSION = '62.71.0';
+window.MARFAN_VERSION = '62.65.0';
 
 function v6264SetTitle(t){
   try { const h=document.querySelector('main h1,.main h1,h1'); if(h) h.textContent=t; } catch(e){}
@@ -8497,12 +8497,12 @@ async function viewPortalOperarioProV6264(){
       ${(d.operators||[]).length ? (d.operators||[]).map(u=>`
         <div class="v6264-row">
           <div><b>${u.first_name||u.name||u.nickname||u.email||u.phone||('Operario #'+u.id)}</b><br><span class="muted">${u.phone||''} ${u.email||''}</span></div>
-          <button class="v6264-btn" onclick=\"v6267OpenPortal('${u.id}')\">Ver portal</button>
+          <button class="v6264-btn" onclick="v6264OpenOperator('${u.id}')">Ver portal</button>
         </div>`).join('') : '<p>No hay operarios.</p>'}
     </div>
     <div id="v6264-op-result" class="v6264-card"><h3>Dashboard operario</h3><p>Selecciona un operario.</p></div>`;
 }
-async function v6267OpenPortal(userId){
+async function v6264OpenOperator(userId){
   const box=document.getElementById('v6264-op-result');
   const d=await v6264FetchJson('/api/v6262/operator/'+encodeURIComponent(userId)+'/dashboard');
   if(!d.ok){box.innerHTML='<h3>Error</h3><p>'+(d.error||'No disponible')+'</p>';return;}
@@ -8531,7 +8531,7 @@ window.v6264OpenOperator=v6264OpenOperator;
 
 
 // ---------- V62.65 OPERARIOS PRO UI ----------
-window.MARFAN_VERSION='62.71.0';
+window.MARFAN_VERSION='62.65.0';
 function v6265Style(){if(document.getElementById('v6265-style'))return;const st=document.createElement('style');st.id='v6265-style';st.textContent='.v6265-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:12px 0}.v6265-card{background:#fff;border:1px solid #e5e5ea;border-radius:20px;padding:18px;margin:14px 0;box-shadow:0 12px 30px rgba(0,0,0,.05)}.v6265-kpi{background:#fff;border:1px solid #e5e5ea;border-radius:18px;padding:16px}.v6265-kpi small{display:block;color:#6e6e73;text-transform:uppercase;font-size:11px;font-weight:900}.v6265-kpi b{font-size:25px}.v6265-btn{background:#000;color:#fff;border:none;border-radius:14px;padding:10px 14px;font-weight:900;cursor:pointer;margin:4px}.v6265-row{display:flex;justify-content:space-between;gap:12px;align-items:center;border-bottom:1px solid #eee;padding:12px 0}.v6265-alert{background:#fff7e6;border:1px solid #ffe1a8;border-radius:14px;padding:12px;margin:8px 0;font-weight:800}.v6265-bad{background:#ffe8e6;border-color:#ffc5bf}.v6265-ok{background:#e8f8ee;border-color:#bdeacb}@media(max-width:900px){.v6265-grid{grid-template-columns:1fr 1fr}.v6265-row{display:block}}';document.head.appendChild(st)}v6265Style();
 function v6265Content(){return document.getElementById('content')||document.querySelector('main')||document.body}
 function v6265Title(t){try{const h=document.querySelector('main h1,.main h1,h1');if(h)h.textContent=t;document.title='Marfan Crew · '+t}catch(e){}}
@@ -8543,10 +8543,10 @@ async function viewOperariosProV6265(){
   c.innerHTML=`<div class="v6265-card"><h2>Operarios Pro</h2><p class="muted">Expediente completo, documentación, servicios, fichajes, disponibilidad y alertas por operario.</p></div>
   <div class="v6265-grid">${v6265Kpi('Operarios',workers.length)}${v6265Kpi('Docs caducados',(al.alerts||[]).filter(a=>a.level==='critical').length)}${v6265Kpi('Avisos',(al.alerts||[]).filter(a=>a.level==='warning').length)}${v6265Kpi('Activos',workers.filter(w=>String(w.active)!=='0').length)}</div>
   <div class="v6265-card"><h3>Alertas RRHH</h3>${(al.alerts||[]).length?(al.alerts||[]).map(a=>`<div class="v6265-alert ${a.level==='critical'?'v6265-bad':''}">⚠️ ${a.name}: ${a.message}</div>`).join(''):'<div class="v6265-alert v6265-ok">Sin alertas críticas de RRHH.</div>'}</div>
-  <div class="v6265-card"><h3>Listado de operarios</h3>${workers.map(w=>`<div class="v6265-row"><div><b>${w.name}</b><br><span class="muted">${w.phone||''} ${w.email||''} · ${w.role||''}</span><br><small>Servicios: ${w.stats.assignments_total||0} · Docs: ${w.stats.documents_total||0} · Caducados: ${w.stats.documents_expired||0}</small></div><button class="v6265-btn" onclick=\"v6267OpenPortal('${w.id}')\">Expediente</button></div>`).join('')||'<p>No hay operarios.</p>'}</div>
+  <div class="v6265-card"><h3>Listado de operarios</h3>${workers.map(w=>`<div class="v6265-row"><div><b>${w.name}</b><br><span class="muted">${w.phone||''} ${w.email||''} · ${w.role||''}</span><br><small>Servicios: ${w.stats.assignments_total||0} · Docs: ${w.stats.documents_total||0} · Caducados: ${w.stats.documents_expired||0}</small></div><button class="v6265-btn" onclick="v6265OpenWorker('${w.id}')">Expediente</button></div>`).join('')||'<p>No hay operarios.</p>'}</div>
   <div id="v6265-profile" class="v6265-card"><h3>Expediente</h3><p>Selecciona un operario.</p></div>`;
 }
-async function v6267OpenPortal(userId){
+async function v6265OpenWorker(userId){
   const box=document.getElementById('v6265-profile')||v6265Content(), d=await v6265Json('/api/v6265/worker/'+encodeURIComponent(userId)+'/profile');
   if(!d.ok){box.innerHTML='<h3>Error</h3><p>'+(d.error||'No disponible')+'</p>';return}
   const p=d.profile,s=p.stats||{};
@@ -10744,7 +10744,7 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
 })();
 
 // ---------- V62.53 STABLE PRODUCTION FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.71.0';
+window.MARFAN_VERSION = '62.65.0';
 window.v6253CheckAssignmentConflicts = async function(payload){
   const r = await fetch('/api/v6253/check-assignment-conflicts', {
     method:'POST',
@@ -10770,7 +10770,7 @@ console.log('Marfan Crew V62.53 Stable Production cargado');
 
 
 // ---------- V62.54 VISUAL SOLAPAMIENTOS FRONTEND ----------
-window.MARFAN_VERSION = '62.71.0';
+window.MARFAN_VERSION = '62.65.0';
 
 window.v6254CheckAssignmentConflicts = async function(payload){
   const r = await fetch('/api/v6254/check-assignment-conflicts', {
@@ -10824,7 +10824,7 @@ console.log('Marfan Crew V62.54 Visual Solapamientos cargado');
 
 
 // ---------- V62.58 FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.71.0';
+window.MARFAN_VERSION = '62.65.0';
 window.v6258OpenDashboard = function(){
   return fetch('/api/v6258/dashboard/live').then(r=>r.json());
 };
@@ -10833,7 +10833,7 @@ console.log('Marfan Crew V62.58 Centro Control Live cargado');
 
 
 // ---------- V62.59 DASHBOARD CEO FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.71.0';
+window.MARFAN_VERSION = '62.65.0';
 
 window.v6259LoadCeoDashboard = async function(){
   const r = await fetch('/api/v6259/dashboard/ceo');
@@ -10865,7 +10865,7 @@ console.log('Marfan Crew V62.59 Dashboard CEO cargado');
 
 
 // ---------- V62.60 FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.71.0';
+window.MARFAN_VERSION = '62.65.0';
 window.v6260LoadDashboard = async function(){
   const r = await fetch('/api/v6260/dashboard');
   return r.json();
@@ -10883,7 +10883,7 @@ console.log('Marfan Crew V62.60 Centro Operativo Live cargado');
 
 
 // ---------- V62.61 FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.71.0';
+window.MARFAN_VERSION = '62.65.0';
 window.v6261SaveAvailability = async function(payload){
   const r = await fetch('/api/v6261/availability', {
     method:'POST',
@@ -10909,7 +10909,7 @@ console.log('Marfan Crew V62.61 Disponibilidad + Planificador cargado');
 
 
 // ---------- V62.63 INTEGRACION REAL UI FRONTEND ----------
-window.MARFAN_VERSION = '62.71.0';
+window.MARFAN_VERSION = '62.65.0';
 
 (function(){
   if (window.__v6263Installed) return;
@@ -11044,7 +11044,7 @@ window.MARFAN_VERSION = '62.71.0';
         <h2>Operarios con portal</h2>
         ${(d.operators||[]).length ? (d.operators||[]).map(u=>`
           <div class="v6263-alert">${u.first_name||u.name||u.nickname||u.email||u.phone||('Operario #'+u.id)}
-          <button class="v6263-btn" onclick=\"v6267OpenPortal('${u.id}')\">Ver portal</button></div>
+          <button class="v6263-btn" onclick="v6263OpenOperatorDashboard('${u.id}')">Ver portal</button></div>
         `).join('') : '<p>No hay operarios.</p>'}
       </div>
       <div id="v6263-operator-result" class="v6263-card"><h2>Resumen</h2><p>Selecciona un operario.</p></div>
@@ -11114,237 +11114,3 @@ document.addEventListener('click', function(ev){
 // ---------- END V62.64 TITLE FIX ----------
 
 console.log('Marfan Crew V62.65 Operarios Pro cargado');
-
-
-// ---------- V62.66 FIX VER PORTAL OPERARIO ----------
-window.MARFAN_VERSION = '62.71.0';
-
-function v6266Content(){ return document.getElementById('content') || document.querySelector('main') || document.body; }
-async function v6266Json(url){ try{ const r=await fetch(url); return await r.json(); }catch(e){ return {ok:false,error:e.message}; } }
-function v6266Kpi(label,value){ return `<div class="v6265-kpi"><small>${label}</small><b>${value}</b></div>`; }
-
-window.v6266OpenOperatorPortal = async function(userId){
-  const box = document.getElementById('v6264-op-result') || document.getElementById('v6265-profile') || v6266Content();
-  box.innerHTML = '<div class="v6265-card"><h3>Cargando portal del operario...</h3></div>';
-  const d = await v6266Json('/api/v6265/worker/' + encodeURIComponent(userId) + '/profile');
-
-  if(!d.ok){
-    box.innerHTML = `<div class="v6265-card"><h3>Error abriendo portal</h3><p>${d.error || 'No disponible'}</p></div>`;
-    try{ box.scrollIntoView({behavior:'smooth',block:'start'}); }catch(e){}
-    return;
-  }
-
-  const p = d.profile || {};
-  const s = p.stats || {};
-  box.innerHTML = `
-    <div class="v6265-card">
-      <h2>Portal Operario · ${p.name || ('Operario #' + userId)}</h2>
-      <p class="muted">Resumen operativo, servicios, fichajes, documentación y disponibilidad.</p>
-    </div>
-
-    <div class="v6265-grid">
-      ${v6266Kpi('Servicios',s.assignments_total||0)}
-      ${v6266Kpi('Servicios mes',s.assignments_month||0)}
-      ${v6266Kpi('Fichajes',s.checkins_total||0)}
-      ${v6266Kpi('Docs caducados',s.documents_expired||0)}
-      ${v6266Kpi('Docs próximos',s.documents_near_expiry||0)}
-      ${v6266Kpi('Bloqueos disp.',s.availability_blocks||0)}
-    </div>
-
-    <div class="v6265-card">
-      <h3>Datos del operario</h3>
-      <p><b>Teléfono:</b> ${(p.user && p.user.phone) || ''}</p>
-      <p><b>Email:</b> ${(p.user && p.user.email) || ''}</p>
-      <p><b>Rol:</b> ${(p.user && p.user.role) || ''}</p>
-    </div>
-
-    <div class="v6265-card">
-      <h3>Próximos / últimos servicios</h3>
-      ${(p.assignments||[]).slice(0,15).map(a=>`
-        <div class="v6265-row">
-          <div>
-            <b>${a.event_name || a.event_title || ('Evento #' + a.event_id)}</b><br>
-            <span class="muted">${a.event_date || a.date || ''} · ${a.planned_start || a.start_time || a.event_start || ''}-${a.planned_end || a.end_time || a.event_end || ''}</span>
-          </div>
-        </div>`).join('') || '<p>Sin servicios asignados.</p>'}
-    </div>
-
-    <div class="v6265-card">
-      <h3>Documentación</h3>
-      ${(p.documents||[]).slice(0,20).map(doc=>`
-        <div class="v6265-row">
-          <div>
-            <b>${doc.title || doc.name || doc.document_type || 'Documento'}</b><br>
-            <span class="muted">${doc.valid_from || ''} → ${doc.valid_to || doc.expiry_date || doc.expires_at || ''}</span>
-          </div>
-        </div>`).join('') || '<p>Sin documentación asociada.</p>'}
-    </div>
-
-    <div class="v6265-card">
-      <h3>Disponibilidad / vacaciones</h3>
-      ${(p.availability||[]).slice(0,20).map(a=>`
-        <div class="v6265-alert">${a.date || ''} · ${a.status || ''} · ${a.reason || ''}</div>
-      `).join('') || '<p>Sin bloqueos de disponibilidad.</p>'}
-    </div>
-  `;
-
-  try{ box.scrollIntoView({behavior:'smooth',block:'start'}); }catch(e){}
-};
-
-// Sobrescribe la función antigua del botón Ver portal para que use el motor real V62.65.
-window.v6264OpenOperator = window.v6266OpenOperatorPortal;
-window.v6263OpenOperatorDashboard = window.v6266OpenOperatorPortal;
-
-// Repara botones ya pintados en pantalla aunque vengan con onclick antiguo.
-document.addEventListener('click', function(ev){
-  const btn = ev.target && ev.target.closest && ev.target.closest('button');
-  if(!btn) return;
-  const text = (btn.textContent || '').trim().toLowerCase();
-  if(text !== 'ver portal') return;
-
-  const onclick = btn.getAttribute('onclick') || '';
-  const match = onclick.match(/['"](\d+)['"]/);
-  if(match && match[1]){
-    ev.preventDefault();
-    ev.stopPropagation();
-    window.v6267OpenPortal(match[1]);
-  }
-}, true);
-
-console.log('Marfan Crew V62.66 Fix Portal Operario cargado');
-// ---------- END V62.66 FIX VER PORTAL OPERARIO ----------
-
-
-// ---------- V62.67 FIX PORTAL SAFARI + ID SEGURO ----------
-window.MARFAN_VERSION = '62.71.0';
-
-function v6267Content(){
-  return document.getElementById('v6265-profile') ||
-         document.getElementById('v6264-op-result') ||
-         document.getElementById('v6267-profile') ||
-         document.getElementById('content') ||
-         document.querySelector('main') ||
-         document.body;
-}
-async function v6267Json(url){
-  try{
-    const r = await fetch(url, {headers:{'Accept':'application/json'}});
-    const j = await r.json();
-    return j;
-  }catch(e){
-    return {ok:false,error:e.message};
-  }
-}
-function v6267Kpi(label,value){
-  return `<div class="v6265-kpi"><small>${label}</small><b>${value}</b></div>`;
-}
-function v6267SafeId(raw){
-  const s = String(raw || '').trim();
-  const m = s.match(/\d+/);
-  return m ? m[0] : '';
-}
-function v6267RenderProfile(profile, target){
-  const p = profile || {};
-  const s = p.stats || {};
-  target.innerHTML = `
-    <div class="v6265-card">
-      <h2>Portal Operario · ${p.name || 'Operario'}</h2>
-      <p class="muted">Resumen operativo, servicios, documentación y disponibilidad.</p>
-    </div>
-    <div class="v6265-grid">
-      ${v6267Kpi('Servicios',s.assignments_total||0)}
-      ${v6267Kpi('Servicios mes',s.assignments_month||0)}
-      ${v6267Kpi('Fichajes',s.checkins_total||0)}
-      ${v6267Kpi('Docs caducados',s.documents_expired||0)}
-      ${v6267Kpi('Docs próximos',s.documents_near_expiry||0)}
-      ${v6267Kpi('Bloqueos disp.',s.availability_blocks||0)}
-    </div>
-    <div class="v6265-card">
-      <h3>Datos del operario</h3>
-      <p><b>ID:</b> ${(p.user && p.user.id) || ''}</p>
-      <p><b>Teléfono:</b> ${(p.user && p.user.phone) || ''}</p>
-      <p><b>Email:</b> ${(p.user && p.user.email) || ''}</p>
-      <p><b>Rol:</b> ${(p.user && p.user.role) || ''}</p>
-    </div>
-    <div class="v6265-card">
-      <h3>Servicios</h3>
-      ${(p.assignments||[]).slice(0,15).map(a=>`
-        <div class="v6265-row">
-          <div><b>${a.event_name || a.event_title || ('Evento #' + (a.event_id||''))}</b><br>
-          <span class="muted">${a.event_date || a.date || ''} · ${a.planned_start || a.start_time || a.event_start || ''}-${a.planned_end || a.end_time || a.event_end || ''}</span></div>
-        </div>`).join('') || '<p>Sin servicios asignados.</p>'}
-    </div>
-    <div class="v6265-card">
-      <h3>Documentación</h3>
-      ${(p.documents||[]).slice(0,20).map(doc=>`
-        <div class="v6265-row">
-          <div><b>${doc.title || doc.name || doc.document_type || 'Documento'}</b><br>
-          <span class="muted">${doc.valid_from || ''} → ${doc.valid_to || doc.expiry_date || doc.expires_at || ''}</span></div>
-        </div>`).join('') || '<p>Sin documentación asociada.</p>'}
-    </div>
-    <div class="v6265-card">
-      <h3>Disponibilidad / vacaciones</h3>
-      ${(p.availability||[]).slice(0,20).map(a=>`<div class="v6265-alert">${a.date || ''} · ${a.status || ''} · ${a.reason || ''}</div>`).join('') || '<p>Sin bloqueos de disponibilidad.</p>'}
-    </div>
-  `;
-}
-window.v6267OpenPortal = async function(raw){
-  const target = v6267Content();
-  target.innerHTML = '<div class="v6265-card"><h3>Cargando portal del operario...</h3></div>';
-  const id = v6267SafeId(raw);
-  if(!id){
-    target.innerHTML = '<div class="v6265-card"><h3>Error</h3><p>No se ha podido identificar el ID del operario.</p></div>';
-    return;
-  }
-  const d = await v6267Json('/api/v6267/operator/profile?id=' + encodeURIComponent(id));
-  if(!d.ok){
-    target.innerHTML = `<div class="v6265-card"><h3>Error</h3><p>${d.error || 'No disponible'}</p><p>ID recibido: ${id}</p></div>`;
-    return;
-  }
-  v6267RenderProfile(d.profile, target);
-  try{ target.scrollIntoView({behavior:'smooth',block:'start'}); }catch(e){}
-};
-
-window.v6266OpenOperatorPortal = window.v6267OpenPortal;
-window.v6264OpenOperator = window.v6267OpenPortal;
-window.v6263OpenOperatorDashboard = window.v6267OpenPortal;
-window.v6265OpenWorker = window.v6267OpenPortal;
-
-// Captura cualquier botón "Ver portal", aunque el onclick antiguo esté mal.
-document.addEventListener('click', function(ev){
-  const btn = ev.target && ev.target.closest && ev.target.closest('button');
-  if(!btn) return;
-  const text = (btn.textContent || '').trim().toLowerCase();
-  if(text !== 'ver portal') return;
-
-  ev.preventDefault();
-  ev.stopPropagation();
-
-  let id = btn.getAttribute('data-user-id') || btn.dataset.userId || '';
-  const onclick = btn.getAttribute('onclick') || '';
-  const match = onclick.match(/['"]([^'"]+)['"]/);
-  if(!id && match) id = match[1];
-
-  if(!id){
-    const row = btn.closest('.v6265-row,.v6264-row,tr,li,div');
-    const raw = row ? row.textContent : '';
-    const email = (raw.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)||[])[0] || '';
-    const phone = (raw.match(/\d[\d\s]{6,}/)||[])[0] || '';
-    id = email || phone || raw;
-  }
-
-  window.v6267OpenPortal(id);
-}, true);
-
-// Reescribe botones ya existentes para añadir data-user-id cuando el onclick tenga ID.
-setTimeout(function(){
-  document.querySelectorAll('button').forEach(function(btn){
-    if((btn.textContent||'').trim().toLowerCase() !== 'ver portal') return;
-    const onclick = btn.getAttribute('onclick') || '';
-    const match = onclick.match(/['"]([^'"]+)['"]/);
-    if(match && !btn.dataset.userId) btn.dataset.userId = v6267SafeId(match[1]);
-  });
-}, 1000);
-
-console.log('Marfan Crew V62.67 Fix Portal Safari + ID Seguro cargado');
-// ---------- END V62.67 FIX PORTAL SAFARI + ID SEGURO ----------
