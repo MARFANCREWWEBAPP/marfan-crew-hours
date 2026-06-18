@@ -10608,9 +10608,41 @@ console.log('Marfan Crew V62.54 Visual Solapamientos cargado');
 
 
 // ---------- V62.58 FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.58.0';
+window.MARFAN_VERSION = '62.59.0';
 window.v6258OpenDashboard = function(){
   return fetch('/api/v6258/dashboard/live').then(r=>r.json());
 };
 console.log('Marfan Crew V62.58 Centro Control Live cargado');
 // ---------- END V62.58 ----------
+
+
+// ---------- V62.59 DASHBOARD CEO FRONTEND HELPERS ----------
+window.MARFAN_VERSION = '62.59.0';
+
+window.v6259LoadCeoDashboard = async function(){
+  const r = await fetch('/api/v6259/dashboard/ceo');
+  return r.json();
+};
+
+window.v6259LoadProfitabilityClients = async function(){
+  const r = await fetch('/api/v6259/profitability/clients');
+  return r.json();
+};
+
+window.v6259LoadProfitabilityEvents = async function(){
+  const r = await fetch('/api/v6259/profitability/events');
+  return r.json();
+};
+
+window.v6259LoadRankings = async function(){
+  const r = await fetch('/api/v6259/rankings');
+  return r.json();
+};
+
+window.v6259LoadPredictions = async function(){
+  const r = await fetch('/api/v6259/predictions');
+  return r.json();
+};
+
+console.log('Marfan Crew V62.59 Dashboard CEO cargado');
+// ---------- END V62.59 DASHBOARD CEO FRONTEND HELPERS ----------

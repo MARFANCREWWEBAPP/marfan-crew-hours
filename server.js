@@ -70,7 +70,7 @@ const { google } = require('googleapis');
 const app = express();
 
 // ---------- V62.53 STABLE PRODUCTION PATCH ----------
-const V6253_VERSION = '62.58.0';
+const V6253_VERSION = '62.59.0';
 
 function v6253Database(){
   try { if (typeof db !== 'undefined') return db; } catch(e) {}
@@ -9176,7 +9176,7 @@ app.get('/api/v6250/persistent-status', requireAdmin, (req,res)=>{
 // ---------- V62.54 VISUAL SOLAPAMIENTOS API ----------
 try {
   app.get('/api/v6254/health', (req,res)=>{
-    res.json({ok:true, version:'62.58.0', message:'Visual Solapamientos activo'});
+    res.json({ok:true, version:'62.59.0', message:'Visual Solapamientos activo'});
   });
 
   app.post('/api/v6254/check-assignment-conflicts', (req,res)=>{
@@ -9231,7 +9231,7 @@ try {
 // ---------- V62.55 TEAM LEAD + SIGNATURE + LOCK ----------
 try {
   app.get('/api/v6255/health',(req,res)=>{
-    res.json({ok:true,version:'62.58.0',message:'Jefe equipo + firma + bloqueo activo'});
+    res.json({ok:true,version:'62.59.0',message:'Jefe equipo + firma + bloqueo activo'});
   });
 
   app.post('/api/v6255/team-lead/set',(req,res)=>{
@@ -9262,7 +9262,7 @@ try {
 // ---------- V62.58 CENTRO CONTROL LIVE ----------
 try {
   app.get('/api/v6258/health',(req,res)=>{
-    res.json({ok:true,version:'62.58.0',message:'Centro Control Live activo'});
+    res.json({ok:true,version:'62.59.0',message:'Centro Control Live activo'});
   });
 
   app.get('/api/v6258/dashboard/live',(req,res)=>{
@@ -9303,6 +9303,287 @@ try {
   console.error('[V62.58]', e.message);
 }
 // ---------- END V62.58 ----------
+
+
+// ---------- V62.59 DASHBOARD CEO + INTELIGENCIA OPERATIVA ----------
+function v6259Db(){
+  try { if (typeof db !== 'undefined') return db; } catch(e) {}
+  try { if (global.db) return global.db; } catch(e) {}
+  return null;
+}
+
+function v6259Today(){
+  return new Date().toISOString().slice(0,10);
+}
+
+function v6259Money(n){
+  return Number(n || 0);
+}
+
+function v6259EnsureTables(){
+  const database = v6259Db();
+  if(!database) return;
+  try {
+    database.exec(`CREATE TABLE IF NOT EXISTS kpi_snapshots_v6259 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      snapshot_date TEXT DEFAULT '',
+      events_today INTEGER DEFAULT 0,
+      workers_active INTEGER DEFAULT 0,
+      hours_worked REAL DEFAULT 0,
+      revenue REAL DEFAULT 0,
+      personnel_cost REAL DEFAULT 0,
+      profit REAL DEFAULT 0,
+      profit_margin REAL DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );`);
+  } catch(e) {}
+  try {
+    database.exec(`CREATE TABLE IF NOT EXISTS predictions_v6259 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id INTEGER,
+      recommended_workers INTEGER DEFAULT 0,
+      recommended_team_leads INTEGER DEFAULT 1,
+      recommended_runners INTEGER DEFAULT 0,
+      predicted_cost REAL DEFAULT 0,
+      predicted_margin REAL DEFAULT 0,
+      risk_level TEXT DEFAULT '',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );`);
+  } catch(e) {}
+}
+
+function v6259Count(table, where, params){
+  const database = v6259Db();
+  try {
+    const sql = `SELECT COUNT(*) AS c FROM ${table} ${where || ''}`;
+    return database.prepare(sql).get(...(params || [])).c || 0;
+  } catch(e) { return 0; }
+}
+
+function v6259All(sql, params){
+  const database = v6259Db();
+  try { return database.prepare(sql).all(...(params || [])); } catch(e) { return []; }
+}
+
+function v6259GetDashboard(){
+  const today = v6259Today();
+  const eventsToday = v6259All(`SELECT * FROM events WHERE event_date = ? OR date = ?`, [today, today]);
+  const assignments = v6259All(`SELECT * FROM assignments`);
+  const checkinsToday = v6259All(`SELECT * FROM checkins WHERE substr(created_at,1,10)=? OR substr(at,1,10)=?`, [today, today]);
+
+  const eventIdsToday = new Set(eventsToday.map(e => String(e.id)));
+  const assignedToday = assignments.filter(a => eventIdsToday.has(String(a.event_id)));
+  const workersAssigned = new Set(assignedToday.map(a => String(a.user_id))).size;
+  const workersActive = new Set(checkinsToday.map(c => String(c.user_id))).size;
+
+  let revenueToday = 0;
+  eventsToday.forEach(e => {
+    revenueToday += v6259Money(e.budget || e.total || e.revenue || e.estimated_revenue || 0);
+  });
+
+  // Estimación conservadora: si no hay costes calculados, usa 12€/h por asignación y 5h media.
+  let personnelCost = 0;
+  assignedToday.forEach(a => {
+    const st = String(a.planned_start || a.start_time || '09:00').slice(0,5);
+    const en = String(a.planned_end || a.end_time || '14:00').slice(0,5);
+    const toMin = (t)=>{ const p=t.split(':').map(Number); return (p[0]||0)*60+(p[1]||0); };
+    let mins = toMin(en) - toMin(st);
+    if(mins <= 0) mins += 24*60;
+    const price = Number(a.hourly_rate || a.price_hour || 12);
+    personnelCost += (mins/60) * price;
+  });
+
+  const profit = revenueToday - personnelCost;
+  const margin = revenueToday > 0 ? (profit / revenueToday) * 100 : 0;
+
+  const unsignedEvents = eventsToday.filter(e => {
+    const s = String(e.status || e.operational_status || '').toLowerCase();
+    return !s.includes('firm') && !s.includes('cerrado_firmado');
+  }).length;
+
+  const alerts = [];
+  eventsToday.forEach(e => {
+    const evAssignments = assignedToday.filter(a => String(a.event_id) === String(e.id));
+    if(!evAssignments.some(a => Number(a.is_team_lead || 0) === 1)) {
+      alerts.push({level:'critical', type:'missing_team_lead', event_id:e.id, message:'Evento sin jefe de equipo'});
+    }
+    if(evAssignments.length === 0) {
+      alerts.push({level:'critical', type:'missing_staff', event_id:e.id, message:'Evento sin personal asignado'});
+    }
+    const status = String(e.status || e.operational_status || '').toLowerCase();
+    if(status && !status.includes('firm') && !status.includes('cerrado')) {
+      alerts.push({level:'warning', type:'unsigned_event', event_id:e.id, message:'Evento pendiente de firma/cierre'});
+    }
+  });
+
+  if(revenueToday > 0 && margin < 25) {
+    alerts.push({level:'critical', type:'low_margin', message:'Margen diario bajo'});
+  }
+
+  return {
+    ok:true,
+    date:today,
+    today:{
+      events_today: eventsToday.length,
+      workers_assigned: workersAssigned,
+      workers_active: workersActive,
+      pending_checkins: Math.max(0, workersAssigned - workersActive),
+      unsigned_events: unsignedEvents
+    },
+    economics:{
+      revenue_today: revenueToday,
+      personnel_cost: personnelCost,
+      profit_today: profit,
+      profit_margin: margin
+    },
+    alerts,
+    recommendations: v6259Recommendations(eventsToday, assignedToday, margin)
+  };
+}
+
+function v6259Recommendations(eventsToday, assignedToday, margin){
+  const out = [];
+  eventsToday.forEach(e => {
+    const evAssignments = assignedToday.filter(a => String(a.event_id) === String(e.id));
+    if(evAssignments.length < Number(e.required_workers || 0)) {
+      out.push({type:'staffing', level:'warning', event_id:e.id, message:'Personal asignado por debajo del requerido'});
+    }
+    if(!evAssignments.some(a => Number(a.is_team_lead || 0) === 1)) {
+      out.push({type:'team_lead', level:'critical', event_id:e.id, message:'Asignar jefe de equipo'});
+    }
+  });
+  if(margin < 30) {
+    out.push({type:'profitability', level:'warning', message:'Revisar costes o presupuesto para mejorar margen'});
+  }
+  return out;
+}
+
+function v6259ClientProfitability(){
+  const database = v6259Db();
+  if(!database) return [];
+  let rows = [];
+  try {
+    rows = database.prepare(`
+      SELECT 
+        COALESCE(c.name, e.client, 'Sin cliente') AS client_name,
+        COUNT(e.id) AS events,
+        SUM(COALESCE(e.budget, e.total, e.revenue, e.estimated_revenue, 0)) AS revenue
+      FROM events e
+      LEFT JOIN clients c ON c.id = e.client_id
+      GROUP BY client_name
+      ORDER BY revenue DESC
+      LIMIT 50
+    `).all();
+  } catch(e) {
+    rows = [];
+  }
+  return rows.map(r => {
+    const revenue = Number(r.revenue || 0);
+    const estimatedCost = revenue * 0.35;
+    return Object.assign({}, r, {
+      personnel_cost_estimated: estimatedCost,
+      profit_estimated: revenue - estimatedCost,
+      margin_estimated: revenue ? ((revenue - estimatedCost) / revenue) * 100 : 0
+    });
+  });
+}
+
+function v6259EventProfitability(){
+  const rows = v6259All(`SELECT * FROM events ORDER BY COALESCE(event_date,date,'') DESC LIMIT 100`);
+  return rows.map(e => {
+    const revenue = Number(e.budget || e.total || e.revenue || e.estimated_revenue || 0);
+    const estimatedCost = revenue * 0.35;
+    return {
+      event_id:e.id,
+      event_name:e.name || e.title || '',
+      event_date:e.event_date || e.date || '',
+      client:e.client || e.client_name || '',
+      revenue,
+      personnel_cost_estimated: estimatedCost,
+      profit_estimated: revenue - estimatedCost,
+      margin_estimated: revenue ? ((revenue - estimatedCost) / revenue) * 100 : 0
+    };
+  });
+}
+
+function v6259Rankings(){
+  const workerRows = v6259All(`
+    SELECT 
+      u.id,
+      COALESCE(u.first_name || ' ' || u.last_name, u.nickname, u.email, u.phone) AS worker_name,
+      COUNT(a.id) AS services
+    FROM assignments a
+    LEFT JOIN users u ON u.id = a.user_id
+    GROUP BY u.id
+    ORDER BY services DESC
+    LIMIT 20
+  `);
+  const clientRows = v6259ClientProfitability().slice(0,20);
+  return {workers:workerRows, clients:clientRows};
+}
+
+function v6259Predictions(){
+  const events = v6259All(`SELECT * FROM events ORDER BY COALESCE(event_date,date,'') DESC LIMIT 50`);
+  return events.map(e => {
+    const required = Number(e.required_workers || 0);
+    const recommendedWorkers = required || 4;
+    const recommendedTeamLeads = recommendedWorkers >= 4 ? 1 : 1;
+    const recommendedRunners = recommendedWorkers >= 8 ? 1 : 0;
+    const revenue = Number(e.budget || e.total || e.revenue || e.estimated_revenue || 0);
+    const predictedCost = recommendedWorkers * 5 * 12;
+    const predictedMargin = revenue ? ((revenue - predictedCost) / revenue) * 100 : 0;
+    const risk = predictedMargin < 25 ? 'alto' : predictedMargin < 40 ? 'medio' : 'bajo';
+    return {
+      event_id:e.id,
+      event_name:e.name || e.title || '',
+      recommended_workers:recommendedWorkers,
+      recommended_team_leads:recommendedTeamLeads,
+      recommended_runners:recommendedRunners,
+      predicted_cost:predictedCost,
+      predicted_margin:predictedMargin,
+      risk_level:risk
+    };
+  });
+}
+
+try {
+  v6259EnsureTables();
+
+  app.get('/api/v6259/health',(req,res)=>{
+    res.json({ok:true,version:'62.59.0',message:'Dashboard CEO + Inteligencia Operativa activo'});
+  });
+
+  app.get('/api/v6259/dashboard/ceo',(req,res)=>{
+    res.json(v6259GetDashboard());
+  });
+
+  app.get('/api/v6259/kpis',(req,res)=>{
+    res.json(v6259GetDashboard());
+  });
+
+  app.get('/api/v6259/profitability/clients',(req,res)=>{
+    res.json({ok:true, clients:v6259ClientProfitability()});
+  });
+
+  app.get('/api/v6259/profitability/events',(req,res)=>{
+    res.json({ok:true, events:v6259EventProfitability()});
+  });
+
+  app.get('/api/v6259/rankings',(req,res)=>{
+    res.json({ok:true, rankings:v6259Rankings()});
+  });
+
+  app.get('/api/v6259/predictions',(req,res)=>{
+    res.json({ok:true, predictions:v6259Predictions()});
+  });
+
+  app.get('/api/v6259/alerts',(req,res)=>{
+    res.json({ok:true, alerts:v6259GetDashboard().alerts});
+  });
+} catch(e){
+  console.error('[V62.59]', e.message);
+}
+// ---------- END V62.59 DASHBOARD CEO ----------
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
