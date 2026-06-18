@@ -1,6 +1,6 @@
 {
-  "name": "marfan-crew-hours-v62-59-dashboard-ceo",
-  "version": "62.59.0",
+  "name": "marfan-crew-hours-v62-60-centro-operativo-live",
+  "version": "62.60.0",
   "description": "V62.51 Railway Build Fix sobre V62.50",
   "main": "server.js",
   "scripts": {

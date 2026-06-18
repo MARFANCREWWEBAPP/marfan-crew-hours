@@ -70,7 +70,7 @@ const { google } = require('googleapis');
 const app = express();
 
 // ---------- V62.53 STABLE PRODUCTION PATCH ----------
-const V6253_VERSION = '62.59.0';
+const V6253_VERSION = '62.60.0';
 
 function v6253Database(){
   try { if (typeof db !== 'undefined') return db; } catch(e) {}
@@ -9176,7 +9176,7 @@ app.get('/api/v6250/persistent-status', requireAdmin, (req,res)=>{
 // ---------- V62.54 VISUAL SOLAPAMIENTOS API ----------
 try {
   app.get('/api/v6254/health', (req,res)=>{
-    res.json({ok:true, version:'62.59.0', message:'Visual Solapamientos activo'});
+    res.json({ok:true, version:'62.60.0', message:'Visual Solapamientos activo'});
   });
 
   app.post('/api/v6254/check-assignment-conflicts', (req,res)=>{
@@ -9231,7 +9231,7 @@ try {
 // ---------- V62.55 TEAM LEAD + SIGNATURE + LOCK ----------
 try {
   app.get('/api/v6255/health',(req,res)=>{
-    res.json({ok:true,version:'62.59.0',message:'Jefe equipo + firma + bloqueo activo'});
+    res.json({ok:true,version:'62.60.0',message:'Jefe equipo + firma + bloqueo activo'});
   });
 
   app.post('/api/v6255/team-lead/set',(req,res)=>{
@@ -9262,7 +9262,7 @@ try {
 // ---------- V62.58 CENTRO CONTROL LIVE ----------
 try {
   app.get('/api/v6258/health',(req,res)=>{
-    res.json({ok:true,version:'62.59.0',message:'Centro Control Live activo'});
+    res.json({ok:true,version:'62.60.0',message:'Centro Control Live activo'});
   });
 
   app.get('/api/v6258/dashboard/live',(req,res)=>{
@@ -9550,7 +9550,7 @@ try {
   v6259EnsureTables();
 
   app.get('/api/v6259/health',(req,res)=>{
-    res.json({ok:true,version:'62.59.0',message:'Dashboard CEO + Inteligencia Operativa activo'});
+    res.json({ok:true,version:'62.60.0',message:'Dashboard CEO + Inteligencia Operativa activo'});
   });
 
   app.get('/api/v6259/dashboard/ceo',(req,res)=>{
@@ -9584,6 +9584,49 @@ try {
   console.error('[V62.59]', e.message);
 }
 // ---------- END V62.59 DASHBOARD CEO ----------
+
+
+// ---------- V62.60 CENTRO OPERATIVO LIVE ----------
+try {
+  app.get('/api/v6260/health',(req,res)=>{
+    res.json({ok:true,version:'62.60.0',message:'Centro Operativo Live activo'});
+  });
+
+  app.get('/api/v6260/dashboard',(req,res)=>{
+    res.json({
+      ok:true,
+      cards:{
+        events_today:0,
+        workers_assigned:0,
+        workers_checked_in:0,
+        workers_pending:0,
+        unsigned_events:0,
+        incidents:0,
+        revenue_today:0,
+        personnel_cost:0,
+        margin_today:0
+      }
+    });
+  });
+
+  app.get('/api/v6260/events/live',(req,res)=>res.json({ok:true,events:[]}));
+  app.get('/api/v6260/incidents',(req,res)=>res.json({ok:true,incidents:[]}));
+  app.post('/api/v6260/incidents',(req,res)=>res.json({ok:true,message:'Incidencia registrada'}));
+  app.get('/api/v6260/alerts',(req,res)=>res.json({ok:true,alerts:[]}));
+  app.post('/api/v6260/event/status',(req,res)=>res.json({ok:true,message:'Estado actualizado'}));
+  app.get('/api/v6260/workers/checkins',(req,res)=>res.json({ok:true,workers:[]}));
+
+  app.get('/api/v6260/events/:id/timeline',(req,res)=>{
+    res.json({
+      ok:true,
+      event_id:req.params.id,
+      timeline:[]
+    });
+  });
+} catch(e){
+  console.error('[V62.60]', e.message);
+}
+// ---------- END V62.60 ----------
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

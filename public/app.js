@@ -10646,3 +10646,21 @@ window.v6259LoadPredictions = async function(){
 
 console.log('Marfan Crew V62.59 Dashboard CEO cargado');
 // ---------- END V62.59 DASHBOARD CEO FRONTEND HELPERS ----------
+
+
+// ---------- V62.60 FRONTEND HELPERS ----------
+window.MARFAN_VERSION = '62.60.0';
+window.v6260LoadDashboard = async function(){
+  const r = await fetch('/api/v6260/dashboard');
+  return r.json();
+};
+window.v6260LoadEventsLive = async function(){
+  const r = await fetch('/api/v6260/events/live');
+  return r.json();
+};
+window.v6260LoadAlerts = async function(){
+  const r = await fetch('/api/v6260/alerts');
+  return r.json();
+};
+console.log('Marfan Crew V62.60 Centro Operativo Live cargado');
+// ---------- END V62.60 ----------
