@@ -8353,7 +8353,7 @@ async function pushEventToGoogleV614(id){
 
 
 // ---------- V62.64 UI CORE FIX REAL VIEWS ----------
-window.MARFAN_VERSION = '62.69.0';
+window.MARFAN_VERSION = '62.70.0';
 
 function v6264SetTitle(t){
   try { const h=document.querySelector('main h1,.main h1,h1'); if(h) h.textContent=t; } catch(e){}
@@ -8531,7 +8531,7 @@ window.v6264OpenOperator=v6264OpenOperator;
 
 
 // ---------- V62.65 OPERARIOS PRO UI ----------
-window.MARFAN_VERSION='62.69.0';
+window.MARFAN_VERSION='62.70.0';
 function v6265Style(){if(document.getElementById('v6265-style'))return;const st=document.createElement('style');st.id='v6265-style';st.textContent='.v6265-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:12px 0}.v6265-card{background:#fff;border:1px solid #e5e5ea;border-radius:20px;padding:18px;margin:14px 0;box-shadow:0 12px 30px rgba(0,0,0,.05)}.v6265-kpi{background:#fff;border:1px solid #e5e5ea;border-radius:18px;padding:16px}.v6265-kpi small{display:block;color:#6e6e73;text-transform:uppercase;font-size:11px;font-weight:900}.v6265-kpi b{font-size:25px}.v6265-btn{background:#000;color:#fff;border:none;border-radius:14px;padding:10px 14px;font-weight:900;cursor:pointer;margin:4px}.v6265-row{display:flex;justify-content:space-between;gap:12px;align-items:center;border-bottom:1px solid #eee;padding:12px 0}.v6265-alert{background:#fff7e6;border:1px solid #ffe1a8;border-radius:14px;padding:12px;margin:8px 0;font-weight:800}.v6265-bad{background:#ffe8e6;border-color:#ffc5bf}.v6265-ok{background:#e8f8ee;border-color:#bdeacb}@media(max-width:900px){.v6265-grid{grid-template-columns:1fr 1fr}.v6265-row{display:block}}';document.head.appendChild(st)}v6265Style();
 function v6265Content(){return document.getElementById('content')||document.querySelector('main')||document.body}
 function v6265Title(t){try{const h=document.querySelector('main h1,.main h1,h1');if(h)h.textContent=t;document.title='Marfan Crew · '+t}catch(e){}}
@@ -10744,7 +10744,7 @@ if(typeof openOperatorEditV6210==='function'&&!openOperatorEditV6210.__v6227Wrap
 })();
 
 // ---------- V62.53 STABLE PRODUCTION FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.69.0';
+window.MARFAN_VERSION = '62.70.0';
 window.v6253CheckAssignmentConflicts = async function(payload){
   const r = await fetch('/api/v6253/check-assignment-conflicts', {
     method:'POST',
@@ -10770,7 +10770,7 @@ console.log('Marfan Crew V62.53 Stable Production cargado');
 
 
 // ---------- V62.54 VISUAL SOLAPAMIENTOS FRONTEND ----------
-window.MARFAN_VERSION = '62.69.0';
+window.MARFAN_VERSION = '62.70.0';
 
 window.v6254CheckAssignmentConflicts = async function(payload){
   const r = await fetch('/api/v6254/check-assignment-conflicts', {
@@ -10824,7 +10824,7 @@ console.log('Marfan Crew V62.54 Visual Solapamientos cargado');
 
 
 // ---------- V62.58 FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.69.0';
+window.MARFAN_VERSION = '62.70.0';
 window.v6258OpenDashboard = function(){
   return fetch('/api/v6258/dashboard/live').then(r=>r.json());
 };
@@ -10833,7 +10833,7 @@ console.log('Marfan Crew V62.58 Centro Control Live cargado');
 
 
 // ---------- V62.59 DASHBOARD CEO FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.69.0';
+window.MARFAN_VERSION = '62.70.0';
 
 window.v6259LoadCeoDashboard = async function(){
   const r = await fetch('/api/v6259/dashboard/ceo');
@@ -10865,7 +10865,7 @@ console.log('Marfan Crew V62.59 Dashboard CEO cargado');
 
 
 // ---------- V62.60 FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.69.0';
+window.MARFAN_VERSION = '62.70.0';
 window.v6260LoadDashboard = async function(){
   const r = await fetch('/api/v6260/dashboard');
   return r.json();
@@ -10883,7 +10883,7 @@ console.log('Marfan Crew V62.60 Centro Operativo Live cargado');
 
 
 // ---------- V62.61 FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.69.0';
+window.MARFAN_VERSION = '62.70.0';
 window.v6261SaveAvailability = async function(payload){
   const r = await fetch('/api/v6261/availability', {
     method:'POST',
@@ -10909,7 +10909,7 @@ console.log('Marfan Crew V62.61 Disponibilidad + Planificador cargado');
 
 
 // ---------- V62.63 INTEGRACION REAL UI FRONTEND ----------
-window.MARFAN_VERSION = '62.69.0';
+window.MARFAN_VERSION = '62.70.0';
 
 (function(){
   if (window.__v6263Installed) return;
@@ -11117,7 +11117,7 @@ console.log('Marfan Crew V62.65 Operarios Pro cargado');
 
 
 // ---------- V62.66 FIX VER PORTAL OPERARIO ----------
-window.MARFAN_VERSION = '62.69.0';
+window.MARFAN_VERSION = '62.70.0';
 
 function v6266Content(){ return document.getElementById('content') || document.querySelector('main') || document.body; }
 async function v6266Json(url){ try{ const r=await fetch(url); return await r.json(); }catch(e){ return {ok:false,error:e.message}; } }
@@ -11216,7 +11216,7 @@ console.log('Marfan Crew V62.66 Fix Portal Operario cargado');
 
 
 // ---------- V62.67 FIX PORTAL SAFARI + ID SEGURO ----------
-window.MARFAN_VERSION = '62.69.0';
+window.MARFAN_VERSION = '62.70.0';
 
 function v6267Content(){
   return document.getElementById('v6265-profile') ||

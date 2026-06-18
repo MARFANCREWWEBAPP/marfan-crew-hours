@@ -5,7 +5,7 @@ NIXPACKS_NODE_VERSION = "18"
 nixPkgs = ["nodejs_18", "npm-9_x"]
 
 [phases.install]
-cmds = ["npm install --omit=dev --no-audit --no-fund --legacy-peer-deps"]
+cmds = ["echo install skipped - runtime install enabled"]
 
 [phases.build]
 cmds = ["npm run build"]
