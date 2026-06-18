@@ -1,5 +1,14 @@
+[variables]
+NIXPACKS_NODE_VERSION = "18"
+
+[phases.setup]
+nixPkgs = ["nodejs_18", "npm-9_x"]
+
 [phases.install]
-cmds = ["npm install --omit=dev --no-audit --no-fund"]
+cmds = ["npm install --omit=dev --no-audit --no-fund --legacy-peer-deps"]
+
+[phases.build]
+cmds = ["npm run build"]
 
 [start]
 cmd = "npm start"

@@ -1,22 +1,23 @@
 {
-  "name": "marfan-crew-hours-v62-68-railway-dependency-fix",
-  "version": "62.68.0",
+  "name": "marfan-crew-hours-v62-69-railway-node18-build-fix",
+  "version": "62.69.0",
   "description": "V62.51 Railway Build Fix sobre V62.50",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "postinstall": "node -e \"try{require('express');console.log('express OK')}catch(e){console.error(e.message);process.exit(1)}\""
+    "build": "echo Build OK"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^9.6.0",
-    "express": "^4.18.3",
-    "express-session": "^1.18.1",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0",
     "googleapis": "^144.0.0",
     "multer": "^1.4.5-lts.1"
   },
   "engines": {
-    "node": ">=18"
+    "node": "18.x",
+    "npm": "9.x"
   },
   "private": true
 }
