@@ -70,7 +70,7 @@ const { google } = require('googleapis');
 const app = express();
 
 // ---------- V62.53 STABLE PRODUCTION PATCH ----------
-const V6253_VERSION = '62.60.0';
+const V6253_VERSION = '62.61.0';
 
 function v6253Database(){
   try { if (typeof db !== 'undefined') return db; } catch(e) {}
@@ -9176,7 +9176,7 @@ app.get('/api/v6250/persistent-status', requireAdmin, (req,res)=>{
 // ---------- V62.54 VISUAL SOLAPAMIENTOS API ----------
 try {
   app.get('/api/v6254/health', (req,res)=>{
-    res.json({ok:true, version:'62.60.0', message:'Visual Solapamientos activo'});
+    res.json({ok:true, version:'62.61.0', message:'Visual Solapamientos activo'});
   });
 
   app.post('/api/v6254/check-assignment-conflicts', (req,res)=>{
@@ -9231,7 +9231,7 @@ try {
 // ---------- V62.55 TEAM LEAD + SIGNATURE + LOCK ----------
 try {
   app.get('/api/v6255/health',(req,res)=>{
-    res.json({ok:true,version:'62.60.0',message:'Jefe equipo + firma + bloqueo activo'});
+    res.json({ok:true,version:'62.61.0',message:'Jefe equipo + firma + bloqueo activo'});
   });
 
   app.post('/api/v6255/team-lead/set',(req,res)=>{
@@ -9262,7 +9262,7 @@ try {
 // ---------- V62.58 CENTRO CONTROL LIVE ----------
 try {
   app.get('/api/v6258/health',(req,res)=>{
-    res.json({ok:true,version:'62.60.0',message:'Centro Control Live activo'});
+    res.json({ok:true,version:'62.61.0',message:'Centro Control Live activo'});
   });
 
   app.get('/api/v6258/dashboard/live',(req,res)=>{
@@ -9550,7 +9550,7 @@ try {
   v6259EnsureTables();
 
   app.get('/api/v6259/health',(req,res)=>{
-    res.json({ok:true,version:'62.60.0',message:'Dashboard CEO + Inteligencia Operativa activo'});
+    res.json({ok:true,version:'62.61.0',message:'Dashboard CEO + Inteligencia Operativa activo'});
   });
 
   app.get('/api/v6259/dashboard/ceo',(req,res)=>{
@@ -9589,7 +9589,7 @@ try {
 // ---------- V62.60 CENTRO OPERATIVO LIVE ----------
 try {
   app.get('/api/v6260/health',(req,res)=>{
-    res.json({ok:true,version:'62.60.0',message:'Centro Operativo Live activo'});
+    res.json({ok:true,version:'62.61.0',message:'Centro Operativo Live activo'});
   });
 
   app.get('/api/v6260/dashboard',(req,res)=>{
@@ -9627,6 +9627,267 @@ try {
   console.error('[V62.60]', e.message);
 }
 // ---------- END V62.60 ----------
+
+
+// ---------- V62.61 DISPONIBILIDAD + VACACIONES + PLANIFICADOR ----------
+function v6261Db(){
+  try { if (typeof db !== 'undefined') return db; } catch(e) {}
+  try { if (global.db) return global.db; } catch(e) {}
+  return null;
+}
+function v6261Today(){ return new Date().toISOString().slice(0,10); }
+function v6261EnsureTables(){
+  const database = v6261Db();
+  if(!database) return;
+  try {
+    database.exec(`CREATE TABLE IF NOT EXISTS worker_availability_v6261 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      date TEXT DEFAULT '',
+      status TEXT DEFAULT 'available',
+      start_time TEXT DEFAULT '',
+      end_time TEXT DEFAULT '',
+      reason TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );`);
+  } catch(e) {}
+  try {
+    database.exec(`CREATE TABLE IF NOT EXISTS worker_preferences_v6261 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER UNIQUE,
+      preferred_role TEXT DEFAULT '',
+      max_hours_week REAL DEFAULT 40,
+      max_nights_week INTEGER DEFAULT 3,
+      has_car INTEGER DEFAULT 0,
+      can_drive INTEGER DEFAULT 0,
+      preferred_zone TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );`);
+  } catch(e) {}
+  try {
+    database.exec(`CREATE TABLE IF NOT EXISTS planning_suggestions_v6261 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id INTEGER,
+      generated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      payload TEXT DEFAULT ''
+    );`);
+  } catch(e) {}
+}
+function v6261All(sql, params){
+  const database = v6261Db();
+  try { return database.prepare(sql).all(...(params || [])); } catch(e) { return []; }
+}
+function v6261Get(sql, params){
+  const database = v6261Db();
+  try { return database.prepare(sql).get(...(params || [])); } catch(e) { return null; }
+}
+function v6261Run(sql, params){
+  const database = v6261Db();
+  try { return database.prepare(sql).run(...(params || [])); } catch(e) { return null; }
+}
+function v6261ToMs(date, time){
+  const d = String(date || '').slice(0,10) || v6261Today();
+  const t = String(time || '00:00').slice(0,5);
+  const p = t.split(':').map(Number);
+  return new Date(d + 'T00:00:00').getTime() + (((p[0]||0)*60 + (p[1]||0))*60000);
+}
+function v6261Overlap(a1,a2,b1,b2){ return a1 < b2 && b1 < a2; }
+function v6261EventDate(e){ return e.event_date || e.date || e.fecha || ''; }
+function v6261EventStart(e){ return e.start_time || e.planned_start || e.hora_inicio || '09:00'; }
+function v6261EventEnd(e){ return e.end_time || e.planned_end || e.hora_fin || '14:00'; }
+
+function v6261AssignmentConflicts(eventId,userId,date,start,end){
+  const rows = v6261All(`
+    SELECT a.*, e.name AS event_name, e.event_date, e.date, e.start_time AS event_start_time, e.end_time AS event_end_time
+    FROM assignments a
+    LEFT JOIN events e ON e.id = a.event_id
+    WHERE a.user_id = ? AND CAST(a.event_id AS TEXT) != CAST(? AS TEXT)
+  `, [userId, eventId || 0]);
+
+  let ns = v6261ToMs(date,start), ne = v6261ToMs(date,end);
+  if(ne <= ns) ne += 86400000;
+
+  return rows.filter(r=>{
+    const rd = r.event_date || r.date || date;
+    const rs = r.planned_start || r.start_time || r.event_start_time || start;
+    const re = r.planned_end || r.end_time || r.event_end_time || end;
+    let as = v6261ToMs(rd,rs), ae = v6261ToMs(rd,re);
+    if(ae <= as) ae += 86400000;
+    return v6261Overlap(ns,ne,as,ae);
+  });
+}
+
+function v6261AvailabilityBlocks(userId,date,start,end){
+  const rows = v6261All(`
+    SELECT * FROM worker_availability_v6261
+    WHERE user_id = ? AND date = ? AND status != 'available'
+  `, [userId, date]);
+
+  let ns = v6261ToMs(date,start), ne = v6261ToMs(date,end);
+  if(ne <= ns) ne += 86400000;
+
+  return rows.filter(r=>{
+    const rs = r.start_time || '00:00';
+    const re = r.end_time || '23:59';
+    let as = v6261ToMs(date,rs), ae = v6261ToMs(date,re);
+    if(ae <= as) ae += 86400000;
+    return v6261Overlap(ns,ne,as,ae);
+  });
+}
+
+function v6261WorkerName(u){
+  return [u.first_name, u.last_name].filter(Boolean).join(' ') || u.nickname || u.name || u.email || u.phone || ('Operario #' + u.id);
+}
+
+function v6261WorkerScore(user,event,conflicts,blocks){
+  let score = 100;
+  const role = String(user.role || '').toLowerCase();
+  if(role.includes('admin')) score -= 100;
+  if(Number(user.active || 1) === 0) score -= 100;
+  if(conflicts.length) score -= 100;
+  if(blocks.length) score -= 100;
+  if(role.includes('team') || role.includes('jefe')) score += 10;
+  if(user.phone) score += 3;
+  if(user.email) score += 2;
+  return score;
+}
+
+function v6261RecommendTeam(eventId){
+  const event = v6261Get(`SELECT * FROM events WHERE id=?`, [eventId]);
+  if(!event) return {ok:false,error:'Evento no encontrado'};
+  const date = v6261EventDate(event);
+  const start = v6261EventStart(event);
+  const end = v6261EventEnd(event);
+  const required = Number(event.required_workers || event.workers_required || event.staff_required || 4);
+
+  let users = v6261All(`SELECT * FROM users WHERE COALESCE(active,1)!=0`);
+  users = users.filter(u => !String(u.role || '').toLowerCase().includes('admin'));
+
+  const scored = users.map(u=>{
+    const conflicts = v6261AssignmentConflicts(eventId,u.id,date,start,end);
+    const blocks = v6261AvailabilityBlocks(u.id,date,start,end);
+    const score = v6261WorkerScore(u,event,conflicts,blocks);
+    return {
+      user_id:u.id,
+      name:v6261WorkerName(u),
+      role:u.role || '',
+      phone:u.phone || '',
+      email:u.email || '',
+      score,
+      available: score > 0,
+      conflicts,
+      availability_blocks:blocks,
+      reason: score <= 0 ? (conflicts.length ? 'Solapamiento' : blocks.length ? 'No disponible' : 'No apto') : 'Disponible'
+    };
+  }).sort((a,b)=>b.score-a.score);
+
+  const selected = scored.filter(x=>x.available).slice(0, required);
+  const payload = {ok:true,event_id:eventId,required_workers:required,selected,candidates:scored};
+
+  try {
+    v6261Run(`INSERT INTO planning_suggestions_v6261 (event_id,payload) VALUES (?,?)`, [eventId, JSON.stringify(payload)]);
+  } catch(e) {}
+
+  return payload;
+}
+
+try {
+  v6261EnsureTables();
+
+  app.get('/api/v6261/health',(req,res)=>{
+    res.json({ok:true,version:'62.61.0',message:'Disponibilidad + Planificador activo'});
+  });
+
+  app.get('/api/v6261/availability',(req,res)=>{
+    v6261EnsureTables();
+    const rows = v6261All(`SELECT * FROM worker_availability_v6261 ORDER BY date DESC, user_id`);
+    res.json({ok:true,availability:rows});
+  });
+
+  app.post('/api/v6261/availability',(req,res)=>{
+    v6261EnsureTables();
+    const b = req.body || {};
+    if(!b.user_id || !b.date) return res.status(400).json({ok:false,error:'Falta user_id o date'});
+    const status = b.status || 'unavailable';
+    v6261Run(`INSERT INTO worker_availability_v6261 (user_id,date,status,start_time,end_time,reason,notes,updated_at)
+      VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`,
+      [b.user_id,b.date,status,b.start_time||'',b.end_time||'',b.reason||'',b.notes||'']
+    );
+    res.json({ok:true});
+  });
+
+  app.get('/api/v6261/availability/:userId',(req,res)=>{
+    v6261EnsureTables();
+    const rows = v6261All(`SELECT * FROM worker_availability_v6261 WHERE user_id=? ORDER BY date DESC`, [req.params.userId]);
+    res.json({ok:true,availability:rows});
+  });
+
+  app.post('/api/v6261/preferences',(req,res)=>{
+    v6261EnsureTables();
+    const b = req.body || {};
+    if(!b.user_id) return res.status(400).json({ok:false,error:'Falta user_id'});
+    v6261Run(`INSERT INTO worker_preferences_v6261
+      (user_id,preferred_role,max_hours_week,max_nights_week,has_car,can_drive,preferred_zone,notes,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(user_id) DO UPDATE SET
+        preferred_role=excluded.preferred_role,
+        max_hours_week=excluded.max_hours_week,
+        max_nights_week=excluded.max_nights_week,
+        has_car=excluded.has_car,
+        can_drive=excluded.can_drive,
+        preferred_zone=excluded.preferred_zone,
+        notes=excluded.notes,
+        updated_at=CURRENT_TIMESTAMP`,
+      [b.user_id,b.preferred_role||'',Number(b.max_hours_week||40),Number(b.max_nights_week||3),Number(b.has_car||0),Number(b.can_drive||0),b.preferred_zone||'',b.notes||'']
+    );
+    res.json({ok:true});
+  });
+
+  app.get('/api/v6261/preferences',(req,res)=>{
+    v6261EnsureTables();
+    const rows = v6261All(`SELECT * FROM worker_preferences_v6261 ORDER BY user_id`);
+    res.json({ok:true,preferences:rows});
+  });
+
+  app.get('/api/v6261/event/:eventId/availability',(req,res)=>{
+    v6261EnsureTables();
+    const event = v6261Get(`SELECT * FROM events WHERE id=?`, [req.params.eventId]);
+    if(!event) return res.status(404).json({ok:false,error:'Evento no encontrado'});
+    const date = v6261EventDate(event), start = v6261EventStart(event), end = v6261EventEnd(event);
+    const users = v6261All(`SELECT * FROM users WHERE COALESCE(active,1)!=0`);
+    const rows = users.filter(u=>!String(u.role||'').toLowerCase().includes('admin')).map(u=>{
+      const conflicts = v6261AssignmentConflicts(req.params.eventId,u.id,date,start,end);
+      const blocks = v6261AvailabilityBlocks(u.id,date,start,end);
+      return {
+        user_id:u.id,
+        name:v6261WorkerName(u),
+        role:u.role || '',
+        available: conflicts.length === 0 && blocks.length === 0,
+        conflicts,
+        availability_blocks:blocks
+      };
+    });
+    res.json({ok:true,event_id:req.params.eventId,workers:rows});
+  });
+
+  app.get('/api/v6261/plan/:eventId',(req,res)=>{
+    v6261EnsureTables();
+    res.json(v6261RecommendTeam(req.params.eventId));
+  });
+
+  app.get('/api/v6261/suggestions',(req,res)=>{
+    v6261EnsureTables();
+    const rows = v6261All(`SELECT * FROM planning_suggestions_v6261 ORDER BY id DESC LIMIT 100`);
+    res.json({ok:true,suggestions:rows});
+  });
+
+} catch(e){
+  console.error('[V62.61]', e.message);
+}
+// ---------- END V62.61 ----------
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

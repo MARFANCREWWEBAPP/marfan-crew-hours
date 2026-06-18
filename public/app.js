@@ -10649,7 +10649,7 @@ console.log('Marfan Crew V62.59 Dashboard CEO cargado');
 
 
 // ---------- V62.60 FRONTEND HELPERS ----------
-window.MARFAN_VERSION = '62.60.0';
+window.MARFAN_VERSION = '62.61.0';
 window.v6260LoadDashboard = async function(){
   const r = await fetch('/api/v6260/dashboard');
   return r.json();
@@ -10664,3 +10664,29 @@ window.v6260LoadAlerts = async function(){
 };
 console.log('Marfan Crew V62.60 Centro Operativo Live cargado');
 // ---------- END V62.60 ----------
+
+
+// ---------- V62.61 FRONTEND HELPERS ----------
+window.MARFAN_VERSION = '62.61.0';
+window.v6261SaveAvailability = async function(payload){
+  const r = await fetch('/api/v6261/availability', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload || {})
+  });
+  return r.json();
+};
+window.v6261LoadAvailability = async function(){
+  const r = await fetch('/api/v6261/availability');
+  return r.json();
+};
+window.v6261PlanEvent = async function(eventId){
+  const r = await fetch('/api/v6261/plan/' + encodeURIComponent(eventId));
+  return r.json();
+};
+window.v6261EventAvailability = async function(eventId){
+  const r = await fetch('/api/v6261/event/' + encodeURIComponent(eventId) + '/availability');
+  return r.json();
+};
+console.log('Marfan Crew V62.61 Disponibilidad + Planificador cargado');
+// ---------- END V62.61 ----------
