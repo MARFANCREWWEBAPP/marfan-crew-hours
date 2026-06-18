@@ -70,7 +70,7 @@ const { google } = require('googleapis');
 const app = express();
 
 // ---------- V62.53 STABLE PRODUCTION PATCH ----------
-const V6253_VERSION = '62.55.0';
+const V6253_VERSION = '62.56.0';
 
 function v6253Database(){
   try { if (typeof db !== 'undefined') return db; } catch(e) {}
@@ -9176,7 +9176,7 @@ app.get('/api/v6250/persistent-status', requireAdmin, (req,res)=>{
 // ---------- V62.54 VISUAL SOLAPAMIENTOS API ----------
 try {
   app.get('/api/v6254/health', (req,res)=>{
-    res.json({ok:true, version:'62.55.0', message:'Visual Solapamientos activo'});
+    res.json({ok:true, version:'62.56.0', message:'Visual Solapamientos activo'});
   });
 
   app.post('/api/v6254/check-assignment-conflicts', (req,res)=>{
@@ -9231,7 +9231,7 @@ try {
 // ---------- V62.55 TEAM LEAD + SIGNATURE + LOCK ----------
 try {
   app.get('/api/v6255/health',(req,res)=>{
-    res.json({ok:true,version:'62.55.0',message:'Jefe equipo + firma + bloqueo activo'});
+    res.json({ok:true,version:'62.56.0',message:'Jefe equipo + firma + bloqueo activo'});
   });
 
   app.post('/api/v6255/team-lead/set',(req,res)=>{
@@ -9257,6 +9257,254 @@ try {
   console.error('[V62.55]', e.message);
 }
 // ---------- END V62.55 ----------
+
+
+// ---------- V62.56 ALBARAN A4 PRO ----------
+function v6256Db(){
+  try { if (typeof db !== 'undefined') return db; } catch(e) {}
+  try { if (global.db) return global.db; } catch(e) {}
+  return null;
+}
+
+function v6256Safe(v){
+  return String(v === null || v === undefined ? '' : v)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;');
+}
+
+function v6256GetEvent(eventId){
+  const database = v6256Db();
+  if(!database) return null;
+  try { return database.prepare('SELECT * FROM events WHERE id=?').get(eventId); } catch(e) { return null; }
+}
+
+function v6256GetClient(event){
+  const database = v6256Db();
+  if(!database || !event) return {};
+  try {
+    if(event.client_id) return database.prepare('SELECT * FROM clients WHERE id=?').get(event.client_id) || {};
+  } catch(e) {}
+  try {
+    if(event.client) return database.prepare('SELECT * FROM clients WHERE name=? OR legal_name=? LIMIT 1').get(event.client, event.client) || {};
+  } catch(e) {}
+  return {};
+}
+
+function v6256GetAssignments(eventId){
+  const database = v6256Db();
+  if(!database) return [];
+  try {
+    return database.prepare(`
+      SELECT a.*, u.first_name, u.last_name, u.nickname, u.phone, u.email
+      FROM assignments a
+      LEFT JOIN users u ON u.id = a.user_id
+      WHERE a.event_id=?
+      ORDER BY COALESCE(a.is_team_lead,0) DESC, u.first_name, u.last_name
+    `).all(eventId);
+  } catch(e) {
+    try { return database.prepare('SELECT * FROM assignments WHERE event_id=?').all(eventId); } catch(_) { return []; }
+  }
+}
+
+function v6256GetSignature(eventId){
+  const database = v6256Db();
+  if(!database) return null;
+  try {
+    database.exec(`CREATE TABLE IF NOT EXISTS client_signatures_v6255 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id INTEGER,
+      client_name TEXT DEFAULT '',
+      client_dni TEXT DEFAULT '',
+      signature_data TEXT DEFAULT '',
+      signed_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );`);
+    return database.prepare('SELECT * FROM client_signatures_v6255 WHERE event_id=? ORDER BY id DESC LIMIT 1').get(eventId);
+  } catch(e) { return null; }
+}
+
+function v6256Minutes(start,end){
+  const parse = (t)=>{
+    t = String(t||'00:00').slice(0,5);
+    const p=t.split(':').map(Number);
+    return (p[0]||0)*60+(p[1]||0);
+  };
+  let s=parse(start), e=parse(end);
+  if(e<=s) e += 24*60;
+  return Math.max(0,e-s);
+}
+
+function v6256Money(n){ return (Number(n||0)).toFixed(2).replace('.', ',') + ' €'; }
+
+function v6256BuildAlbaranHtml(eventId){
+  const event = v6256GetEvent(eventId);
+  if(!event) return null;
+  const client = v6256GetClient(event);
+  const assignments = v6256GetAssignments(eventId);
+  const signature = v6256GetSignature(eventId);
+  const eventName = event.name || event.title || event.event_name || 'Evento MARFAN';
+  const eventDate = event.event_date || event.date || '';
+  const start = event.start_time || event.planned_start || '';
+  const end = event.end_time || event.planned_end || '';
+  const location = event.location || event.address || '';
+  let totalMinutes = 0;
+
+  const rows = assignments.map((a,idx)=>{
+    const name = [a.first_name, a.last_name].filter(Boolean).join(' ') || a.nickname || a.name || ('Operario #' + (a.user_id||''));
+    const role = a.service_role || a.role || (a.is_team_lead ? 'Jefe de equipo' : 'Operario');
+    const st = a.planned_start || a.start_time || start || '';
+    const en = a.planned_end || a.end_time || end || '';
+    const mins = v6256Minutes(st,en);
+    totalMinutes += mins;
+    const hours = (mins/60).toFixed(2).replace('.',',');
+    const lead = Number(a.is_team_lead||0) ? '⭐ JEFE' : '';
+    return `<tr>
+      <td>${idx+1}</td>
+      <td>${v6256Safe(name)} <b>${lead}</b></td>
+      <td>${v6256Safe(role)}</td>
+      <td>${v6256Safe(st)}</td>
+      <td>${v6256Safe(en)}</td>
+      <td>${hours}</td>
+    </tr>`;
+  }).join('');
+
+  const totalHours = (totalMinutes/60).toFixed(2).replace('.', ',');
+  const qrText = encodeURIComponent(`MARFAN CREW | EVENTO ${eventId} | ${eventName} | ${eventDate} | ${signature ? 'FIRMADO' : 'PENDIENTE FIRMA'}`);
+  const signatureBlock = signature ? `
+    <div class="signatureBox">
+      <b>Firma cliente</b><br>
+      Cliente: ${v6256Safe(signature.client_name || '')}<br>
+      DNI: ${v6256Safe(signature.client_dni || '')}<br>
+      Fecha firma: ${v6256Safe(signature.signed_at || '')}
+      ${signature.signature_data ? `<div class="draw"><img src="${signature.signature_data}" /></div>` : '<div class="draw"></div>'}
+    </div>` : `
+    <div class="signatureBox pending">
+      <b>Firma cliente pendiente</b><br>
+      Este albarán no debe considerarse definitivo hasta estar firmado.
+      <div class="draw"></div>
+    </div>`;
+
+  return `<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Albarán MARFAN ${v6256Safe(eventName)}</title>
+<style>
+@page{size:A4;margin:14mm}
+*{box-sizing:border-box}
+body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:0;background:#fff;font-size:12px}
+.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #111;padding-bottom:12px;margin-bottom:16px}
+.brand h1{margin:0;font-size:26px;letter-spacing:-1px}.brand p{margin:4px 0;color:#555}
+.badge{border:2px solid #111;border-radius:12px;padding:10px;text-align:right;font-weight:bold}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.box{border:1px solid #ccc;border-radius:12px;padding:12px;min-height:90px}
+.box h3{margin:0 0 8px 0;font-size:14px;text-transform:uppercase}
+table{width:100%;border-collapse:collapse;margin-top:10px}
+th{background:#111;color:#fff;text-align:left;padding:8px;font-size:11px}
+td{border-bottom:1px solid #ddd;padding:8px;font-size:11px}
+.summary{display:flex;justify-content:flex-end;margin-top:12px}
+.summary table{width:300px}
+.signatureWrap{display:grid;grid-template-columns:1fr 120px;gap:12px;margin-top:18px}
+.signatureBox{border:1px solid #ccc;border-radius:12px;padding:12px;min-height:150px}
+.pending{background:#fff7e0}
+.draw{margin-top:10px;border:1px dashed #999;height:80px;border-radius:8px;display:flex;align-items:center;justify-content:center}
+.draw img{max-height:76px;max-width:100%}
+.qr{border:1px solid #ccc;border-radius:12px;padding:8px;text-align:center}
+.qr img{width:96px;height:96px}
+.footer{position:fixed;bottom:5mm;left:14mm;right:14mm;border-top:1px solid #ccc;padding-top:6px;font-size:10px;color:#555}
+.noPrint{margin:20px 0;text-align:center}
+.noPrint button{padding:10px 18px;border-radius:10px;border:none;background:#111;color:#fff;font-weight:bold}
+@media print{.noPrint{display:none}}
+</style>
+</head>
+<body>
+<div class="noPrint"><button onclick="window.print()">Imprimir / Guardar PDF A4</button></div>
+<div class="header">
+  <div class="brand">
+    <h1>MARFAN CREW</h1>
+    <p>Albarán profesional de servicio</p>
+  </div>
+  <div class="badge">
+    ALBARÁN<br>
+    Evento #${v6256Safe(eventId)}<br>
+    ${signature ? 'FIRMADO' : 'PENDIENTE FIRMA'}
+  </div>
+</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>Cliente</h3>
+    <b>${v6256Safe(client.name || event.client || '')}</b><br>
+    Razón social: ${v6256Safe(client.legal_name || event.legal_name || '')}<br>
+    CIF: ${v6256Safe(client.cif || event.cif || '')}<br>
+    Contacto: ${v6256Safe(client.contact_name || event.contact_name || '')}<br>
+    Teléfono: ${v6256Safe(client.phone || event.contact_phone || '')}
+  </div>
+  <div class="box">
+    <h3>Evento</h3>
+    <b>${v6256Safe(eventName)}</b><br>
+    Fecha: ${v6256Safe(eventDate)}<br>
+    Horario previsto: ${v6256Safe(start)} - ${v6256Safe(end)}<br>
+    Ubicación: ${v6256Safe(location)}<br>
+    Estado: ${v6256Safe(event.status || event.operational_status || '')}
+  </div>
+</div>
+
+<div class="box">
+  <h3>Personal asignado</h3>
+  <table>
+    <thead><tr><th>#</th><th>Operario</th><th>Rol</th><th>Entrada</th><th>Salida</th><th>Horas</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="6">Sin operarios asignados</td></tr>'}</tbody>
+  </table>
+  <div class="summary"><table><tr><td><b>Total horas servicio</b></td><td><b>${totalHours}</b></td></tr></table></div>
+</div>
+
+<div class="signatureWrap">
+  ${signatureBlock}
+  <div class="qr">
+    <b>Verificación</b><br>
+    <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${qrText}">
+    <small>Evento #${v6256Safe(eventId)}</small>
+  </div>
+</div>
+
+<div class="footer">
+  MARFAN CREW · Documento generado por Marfan Crew App V62.56 · El albarán definitivo queda sujeto a firma del cliente y bloqueo operativo.
+</div>
+</body>
+</html>`;
+}
+
+try {
+  app.get('/api/v6256/health',(req,res)=>{
+    res.json({ok:true,version:'62.56.0',message:'Albarán A4 Pro activo'});
+  });
+
+  app.get('/api/v6256/albaran/:eventId/html',(req,res)=>{
+    try {
+      const html = v6256BuildAlbaranHtml(req.params.eventId);
+      if(!html) return res.status(404).send('Evento no encontrado');
+      res.setHeader('Content-Type','text/html; charset=utf-8');
+      res.send(html);
+    } catch(e) {
+      res.status(500).send(e.message);
+    }
+  });
+
+  app.get('/albaran-a4/:eventId',(req,res)=>{
+    try {
+      const html = v6256BuildAlbaranHtml(req.params.eventId);
+      if(!html) return res.status(404).send('Evento no encontrado');
+      res.setHeader('Content-Type','text/html; charset=utf-8');
+      res.send(html);
+    } catch(e) {
+      res.status(500).send(e.message);
+    }
+  });
+} catch(e) {
+  console.error('[V62.56]', e.message);
+}
+// ---------- END V62.56 ALBARAN A4 PRO ----------
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

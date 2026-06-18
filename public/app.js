@@ -10605,3 +10605,13 @@ window.v6254RenderConflictBox = function(container, result){
 
 console.log('Marfan Crew V62.54 Visual Solapamientos cargado');
 // ---------- END V62.54 VISUAL SOLAPAMIENTOS FRONTEND ----------
+
+
+// ---------- V62.56 ALBARAN A4 PRO FRONTEND ----------
+window.MARFAN_VERSION = '62.56.0';
+window.v6256OpenAlbaranA4 = function(eventId){
+  if(!eventId) return alert('Falta ID de evento');
+  window.open('/albaran-a4/' + encodeURIComponent(eventId), '_blank');
+};
+console.log('Marfan Crew V62.56 Albarán A4 Pro cargado');
+// ---------- END V62.56 ALBARAN A4 PRO FRONTEND ----------
