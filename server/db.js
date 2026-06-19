@@ -1,0 +1,730 @@
+const fs = require("node:fs");
+const path = require("node:path");
+const { DatabaseSync } = require("node:sqlite");
+const { hashPassword, randomId } = require("./security");
+
+const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), "data"));
+const BACKUP_DIR = path.resolve(process.env.BACKUP_DIR || path.join(process.cwd(), "backups"));
+const DB_PATH = path.resolve(process.env.SQLITE_PATH || path.join(DATA_DIR, "marfan.sqlite"));
+const AUTO_BACKUP_ON_START = process.env.AUTO_BACKUP_ON_START !== "false";
+
+fs.mkdirSync(DATA_DIR, { recursive: true });
+fs.mkdirSync(BACKUP_DIR, { recursive: true });
+
+applyPendingRestore();
+
+const wasNewDatabase = !fs.existsSync(DB_PATH);
+const db = new DatabaseSync(DB_PATH);
+
+db.exec(`
+  PRAGMA foreign_keys = ON;
+  PRAGMA journal_mode = WAL;
+  PRAGMA busy_timeout = 5000;
+`);
+
+function exec(sql) {
+  db.exec(sql);
+}
+
+function all(sql, params = []) {
+  return db.prepare(sql).all(...params);
+}
+
+function get(sql, params = []) {
+  return db.prepare(sql).get(...params);
+}
+
+function run(sql, params = []) {
+  return db.prepare(sql).run(...params);
+}
+
+function transaction(callback) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = callback();
+    db.exec("COMMIT");
+    return result;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function applyPendingRestore() {
+  const markerPath = path.join(DATA_DIR, "restore-request.json");
+  if (!fs.existsSync(markerPath)) return;
+
+  const marker = JSON.parse(fs.readFileSync(markerPath, "utf8"));
+  const backupPath = path.resolve(marker.backupPath || "");
+  if (!backupPath.startsWith(`${BACKUP_DIR}${path.sep}`) || !fs.existsSync(backupPath)) {
+    throw new Error("Restore request rejected: backup path is invalid.");
+  }
+
+  if (fs.existsSync(DB_PATH)) {
+    const safetyPath = `${DB_PATH}.pre-restore-${Date.now()}`;
+    fs.copyFileSync(DB_PATH, safetyPath);
+  }
+
+  fs.copyFileSync(backupPath, DB_PATH);
+  fs.rmSync(markerPath);
+}
+
+const migrations = [
+  {
+    version: 1,
+    name: "initial-erp-schema",
+    sql: `
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        role TEXT NOT NULL CHECK (role IN ('super_admin', 'admin', 'employee')),
+        name TEXT NOT NULL,
+        email TEXT UNIQUE,
+        phone TEXT UNIQUE,
+        password_hash TEXT NOT NULL,
+        salt TEXT NOT NULL,
+        avatar_url TEXT,
+        active INTEGER NOT NULL DEFAULT 1,
+        last_login_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL,
+        salt TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS clients (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        tax_id TEXT,
+        contact_name TEXT,
+        email TEXT,
+        phone TEXT,
+        address TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS employees (
+        id TEXT PRIMARY KEY,
+        user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        phone TEXT,
+        email TEXT,
+        status TEXT NOT NULL DEFAULT 'activo',
+        city TEXT,
+        lat REAL,
+        lng REAL,
+        hourly_rate REAL NOT NULL DEFAULT 0,
+        km_rate REAL NOT NULL DEFAULT 0.24,
+        diet_rate REAL NOT NULL DEFAULT 0,
+        skills TEXT NOT NULL DEFAULT '[]',
+        photo_url TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS documents (
+        id TEXT PRIMARY KEY,
+        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('vigente', 'proximo', 'caducado', 'pendiente')),
+        expires_at TEXT,
+        url TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS availability (
+        id TEXT PRIMARY KEY,
+        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('vacaciones', 'no_disponible', 'enfermedad', 'otro')),
+        reason TEXT,
+        status TEXT NOT NULL DEFAULT 'aprobado',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS events (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        client_id TEXT NOT NULL REFERENCES clients(id),
+        date TEXT NOT NULL,
+        start_time TEXT NOT NULL,
+        end_time TEXT NOT NULL,
+        location TEXT NOT NULL,
+        address TEXT,
+        lat REAL NOT NULL,
+        lng REAL NOT NULL,
+        team_leader_id TEXT REFERENCES employees(id),
+        required_total INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'falta_personal',
+        notes TEXT,
+        budget REAL NOT NULL DEFAULT 0,
+        closed_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS event_requirements (
+        id TEXT PRIMARY KEY,
+        event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,
+        count INTEGER NOT NULL DEFAULT 1
+      );
+
+      CREATE TABLE IF NOT EXISTS assignments (
+        id TEXT PRIMARY KEY,
+        event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'confirmado',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(event_id, employee_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS time_entries (
+        id TEXT PRIMARY KEY,
+        event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        lat REAL,
+        lng REAL,
+        distance_m INTEGER,
+        within_radius INTEGER NOT NULL DEFAULT 0,
+        accepted INTEGER NOT NULL DEFAULT 0,
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS incidents (
+        id TEXT PRIMARY KEY,
+        event_id TEXT REFERENCES events(id) ON DELETE SET NULL,
+        employee_id TEXT REFERENCES employees(id) ON DELETE SET NULL,
+        type TEXT NOT NULL,
+        priority TEXT NOT NULL CHECK (priority IN ('baja', 'media', 'alta', 'critica')),
+        status TEXT NOT NULL DEFAULT 'abierta',
+        title TEXT NOT NULL,
+        description TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        resolved_at TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS allowances (
+        id TEXT PRIMARY KEY,
+        event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        km REAL NOT NULL DEFAULT 0,
+        diet REAL NOT NULL DEFAULT 0,
+        night_hours REAL NOT NULL DEFAULT 0,
+        extras REAL NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS delivery_notes (
+        id TEXT PRIMARY KEY,
+        event_id TEXT NOT NULL UNIQUE REFERENCES events(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'borrador',
+        signature_name TEXT,
+        signature_dni TEXT,
+        signed_at TEXT,
+        pdf_path TEXT,
+        locked INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id TEXT PRIMARY KEY,
+        actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        action TEXT NOT NULL,
+        entity TEXT,
+        entity_id TEXT,
+        metadata TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS backups (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL CHECK (type IN ('manual', 'auto', 'safety')),
+        label TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_events_date ON events(date);
+      CREATE INDEX IF NOT EXISTS idx_assignments_event ON assignments(event_id);
+      CREATE INDEX IF NOT EXISTS idx_assignments_employee ON assignments(employee_id);
+      CREATE INDEX IF NOT EXISTS idx_time_entries_event_employee ON time_entries(event_id, employee_id);
+      CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
+      CREATE INDEX IF NOT EXISTS idx_documents_employee ON documents(employee_id);
+      CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id, used_at);
+    `
+  },
+  {
+    version: 2,
+    name: "real-data-documents-and-delivery-notes",
+    sql: `
+      ALTER TABLE clients ADD COLUMN legal_name TEXT;
+      ALTER TABLE clients ADD COLUMN province TEXT;
+      ALTER TABLE clients ADD COLUMN source_ref TEXT;
+
+      ALTER TABLE employees ADD COLUMN dni TEXT;
+      ALTER TABLE employees ADD COLUMN social_security_number TEXT;
+      ALTER TABLE employees ADD COLUMN bank_account TEXT;
+      ALTER TABLE employees ADD COLUMN address TEXT;
+      ALTER TABLE employees ADD COLUMN province TEXT;
+      ALTER TABLE employees ADD COLUMN postal_code TEXT;
+      ALTER TABLE employees ADD COLUMN birth_date TEXT;
+      ALTER TABLE employees ADD COLUMN shirt_size TEXT;
+      ALTER TABLE employees ADD COLUMN pants_size TEXT;
+      ALTER TABLE employees ADD COLUMN shoe_size TEXT;
+      ALTER TABLE employees ADD COLUMN jacket_size TEXT;
+      ALTER TABLE employees ADD COLUMN epi_size TEXT;
+      ALTER TABLE employees ADD COLUMN emergency_contact TEXT;
+      ALTER TABLE employees ADD COLUMN source_ref TEXT;
+      ALTER TABLE employees ADD COLUMN imported_at TEXT;
+
+      ALTER TABLE documents ADD COLUMN file_name TEXT;
+      ALTER TABLE documents ADD COLUMN file_mime TEXT;
+      ALTER TABLE documents ADD COLUMN file_size INTEGER;
+      ALTER TABLE documents ADD COLUMN storage_path TEXT;
+      ALTER TABLE documents ADD COLUMN uploaded_at TEXT;
+      ALTER TABLE documents ADD COLUMN uploaded_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL;
+
+      ALTER TABLE delivery_notes ADD COLUMN signature_image TEXT;
+      ALTER TABLE delivery_notes ADD COLUMN service_price REAL;
+      ALTER TABLE delivery_notes ADD COLUMN client_notes TEXT;
+
+      CREATE TABLE IF NOT EXISTS data_imports (
+        id TEXT PRIMARY KEY,
+        source TEXT NOT NULL,
+        rows_read INTEGER NOT NULL DEFAULT 0,
+        inserted INTEGER NOT NULL DEFAULT 0,
+        updated INTEGER NOT NULL DEFAULT 0,
+        skipped INTEGER NOT NULL DEFAULT 0,
+        metadata TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_employees_dni ON employees(dni);
+      CREATE INDEX IF NOT EXISTS idx_clients_tax_id ON clients(tax_id);
+      CREATE INDEX IF NOT EXISTS idx_delivery_notes_event ON delivery_notes(event_id);
+      CREATE INDEX IF NOT EXISTS idx_data_imports_source ON data_imports(source);
+    `
+  },
+  {
+    version: 3,
+    name: "pricing-settings-google-location",
+    sql: `
+      CREATE TABLE IF NOT EXISTS company_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS work_roles (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        base_price REAL NOT NULL DEFAULT 0,
+        night_price REAL NOT NULL DEFAULT 0,
+        active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      ALTER TABLE events ADD COLUMN google_maps_url TEXT;
+      ALTER TABLE events ADD COLUMN vehicle_count INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE events ADD COLUMN base_distance_km REAL NOT NULL DEFAULT 0;
+      ALTER TABLE events ADD COLUMN billable_km REAL NOT NULL DEFAULT 0;
+      ALTER TABLE events ADD COLUMN kilometre_price REAL NOT NULL DEFAULT 0.37;
+      ALTER TABLE events ADD COLUMN role_price_total REAL NOT NULL DEFAULT 0;
+      ALTER TABLE events ADD COLUMN night_price_total REAL NOT NULL DEFAULT 0;
+      ALTER TABLE events ADD COLUMN distance_price_total REAL NOT NULL DEFAULT 0;
+      ALTER TABLE events ADD COLUMN service_price REAL NOT NULL DEFAULT 0;
+
+      INSERT OR IGNORE INTO company_settings (key, value) VALUES
+        ('base_address', 'Calle Ciro Alegría 89, Málaga'),
+        ('base_lat', '36.72130'),
+        ('base_lng', '-4.42164'),
+        ('included_km', '20'),
+        ('vehicle_km_price', '0.37'),
+        ('office_phone', '+34910000000'),
+        ('office_whatsapp', '34910000000');
+
+      INSERT OR IGNORE INTO work_roles (id, name, base_price, night_price) VALUES
+        ('role_montaje', 'Montaje', 18, 24),
+        ('role_carga', 'Carga y descarga', 18, 24),
+        ('role_tecnico', 'Tecnico', 28, 36),
+        ('role_runner', 'Runner', 18, 24),
+        ('role_jefe', 'Jefe de equipo', 24, 32),
+        ('role_carretillero', 'Carretillero', 24, 32),
+        ('role_limpieza', 'Limpieza', 16, 22),
+        ('role_auxiliar_produccion', 'Auxiliar produccion', 20, 28),
+        ('role_operario', 'Operario', 18, 24);
+
+      CREATE INDEX IF NOT EXISTS idx_work_roles_active ON work_roles(active);
+    `
+  },
+  {
+    version: 4,
+    name: "password-reset-tokens",
+    sql: `
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL,
+        salt TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id, used_at);
+    `
+  }
+];
+
+function applyMigrations() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  const applied = new Set(all("SELECT version FROM schema_migrations").map((row) => row.version));
+  for (const migration of migrations) {
+    if (applied.has(migration.version)) continue;
+    transaction(() => {
+      db.exec(migration.sql);
+      run("INSERT INTO schema_migrations (version, name) VALUES (?, ?)", [
+        migration.version,
+        migration.name
+      ]);
+    });
+  }
+}
+
+function addUser({ id, role, name, email, phone, password }) {
+  const credentials = hashPassword(password);
+  run(
+    `INSERT INTO users (id, role, name, email, phone, password_hash, salt)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, role, name, email, phone, credentials.hash, credentials.salt]
+  );
+}
+
+function seedIfNewInstall() {
+  if (!wasNewDatabase) return;
+
+  const today = new Date();
+  const iso = (offsetDays = 0) => {
+    const date = new Date(today);
+    date.setDate(date.getDate() + offsetDays);
+    return date.toISOString().slice(0, 10);
+  };
+
+  const superId = "usr_super";
+  const adminId = "usr_admin";
+  const employeeUserId = "usr_employee_alex";
+  const leaderUserId = "usr_leader_carlos";
+
+  transaction(() => {
+    addUser({
+      id: superId,
+      role: "super_admin",
+      name: "Super Admin",
+      email: "super@marfancrew.test",
+      phone: "+34910000001",
+      password: "super123"
+    });
+    addUser({
+      id: adminId,
+      role: "admin",
+      name: "Antonio Ruiz",
+      email: "admin@marfancrew.test",
+      phone: "+34910000002",
+      password: "admin123"
+    });
+    addUser({
+      id: leaderUserId,
+      role: "employee",
+      name: "Carlos Martin",
+      email: "carlos@marfancrew.test",
+      phone: "+34600123456",
+      password: "empleado123"
+    });
+    addUser({
+      id: employeeUserId,
+      role: "employee",
+      name: "Alejandro Perez",
+      email: "empleado@marfancrew.test",
+      phone: "+34600777888",
+      password: "empleado123"
+    });
+
+    const clients = [
+      ["cli_tech", "Tech Events S.L.", "B66900123", "Marta Molina", "ops@techevents.test", "+34931234001", "Barcelona", "Cliente con alta rotacion de montaje."],
+      ["cli_aecc", "AECOC", "G08400112", "Laura Serra", "eventos@aecoc.test", "+34931234002", "Barcelona", "Congresos y convenciones."],
+      ["cli_bmw", "BMW Group Espana", "A28713642", "Javier Cano", "brand@bmw.test", "+34911234003", "Madrid", "Presentaciones premium."],
+      ["cli_live", "Live Nation Espana", "B81234567", "Paula Rios", "produccion@livenation.test", "+34911234004", "Madrid", "Eventos masivos y conciertos."],
+      ["cli_heineken", "Heineken Espana", "A28006013", "Ivan Soler", "trade@heineken.test", "+34951234005", "Barcelona", "Activaciones y roadshows."]
+    ];
+    for (const client of clients) {
+      run(
+        `INSERT INTO clients (id, name, tax_id, contact_name, email, phone, address, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        client
+      );
+    }
+
+    const employees = [
+      ["emp_carlos", leaderUserId, "Carlos Martin", "Jefe de equipo", "+34600123456", "carlos@marfancrew.test", "Madrid", 40.4222, -3.6703, 22, 20, JSON.stringify(["montaje", "jefe", "prl"])],
+      ["emp_alejandro", employeeUserId, "Alejandro Perez", "Montaje", "+34600777888", "empleado@marfancrew.test", "Madrid", 40.4220, -3.6701, 16, 12, JSON.stringify(["montaje", "carga", "runner"])],
+      ["emp_lucia", null, "Lucia Ramos", "Runner", "+34600222333", "lucia@marfancrew.test", "Barcelona", 41.3725, 2.1519, 15, 11, JSON.stringify(["runner", "produccion"])],
+      ["emp_marta", null, "Marta Soler", "Tecnico", "+34600444555", "marta@marfancrew.test", "Barcelona", 41.3835, 2.1760, 24, 18, JSON.stringify(["tecnico", "sonido", "luces"])],
+      ["emp_javier", null, "Javier Rodriguez", "Carga y descarga", "+34600666777", "javier@marfancrew.test", "Barcelona", 41.3548, 2.1291, 17, 13, JSON.stringify(["carga", "carretilla"])],
+      ["emp_nerea", null, "Nerea Vidal", "Limpieza", "+34600888999", "nerea@marfancrew.test", "Madrid", 40.4168, -3.7038, 14, 10, JSON.stringify(["limpieza", "office"])],
+      ["emp_omar", null, "Omar Benali", "Carretillero", "+34600999000", "omar@marfancrew.test", "Barcelona", 41.3874, 2.1686, 21, 16, JSON.stringify(["carretilla", "carga"])],
+      ["emp_ana", null, "Ana Torres", "Auxiliar produccion", "+34600555111", "ana@marfancrew.test", "Madrid", 40.4381, -3.8196, 18, 14, JSON.stringify(["produccion", "runner"])]
+    ];
+    for (const employee of employees) {
+      run(
+        `INSERT INTO employees
+          (id, user_id, name, role, phone, email, city, lat, lng, hourly_rate, diet_rate, skills)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        employee
+      );
+    }
+
+    const documents = [
+      ["doc_carlos_prl", "emp_carlos", "PRL", "Prevencion de riesgos", "vigente", iso(120)],
+      ["doc_carlos_dni", "emp_carlos", "DNI", "Documento identidad", "vigente", iso(700)],
+      ["doc_ale_prl", "emp_alejandro", "PRL", "Prevencion de riesgos", "vigente", iso(90)],
+      ["doc_ale_epi", "emp_alejandro", "EPI", "Entrega de EPIs", "proximo", iso(12)],
+      ["doc_javier_prl", "emp_javier", "PRL", "Prevencion de riesgos", "caducado", iso(-7)],
+      ["doc_lucia_contrato", "emp_lucia", "Contrato", "Contrato marco", "pendiente", null]
+    ];
+    for (const document of documents) {
+      run(
+        `INSERT INTO documents (id, employee_id, type, name, status, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        document
+      );
+    }
+
+    const events = [
+      ["evt_tech", "Feria Tech Barcelona", "cli_tech", iso(0), "08:00", "14:00", "Fira Barcelona", "Av. Joan Carles I, Barcelona", 41.3548, 2.1291, "emp_carlos", 8, "completo", "Montaje stands pabellon 4", 9800],
+      ["evt_aecoc", "Congreso AECOC 2026", "cli_aecc", iso(0), "09:00", "18:00", "CCIB Barcelona", "Placa de Willy Brandt, Barcelona", 41.4122, 2.2199, "emp_carlos", 9, "falta_personal", "Acreditaciones y apoyo sala", 14200],
+      ["evt_bmw", "Presentacion BMW i7", "cli_bmw", iso(0), "10:00", "16:00", "Casa Seat", "Pg. de Gracia, Barcelona", 41.3926, 2.1649, "emp_marta", 6, "completo", "Produccion premium", 11200],
+      ["evt_heineken", "Activacion Heineken", "cli_heineken", iso(0), "10:30", "20:00", "Port Olimpic", "Moll de Gregal, Barcelona", 41.3865, 2.2007, null, 7, "sin_jefe", "Sin jefe confirmado", 8600],
+      ["evt_live", "Concierto Melendi", "cli_live", iso(0), "16:00", "00:30", "WiZink Center", "Av. Felipe II, s/n, Madrid", 40.4239, -3.6718, "emp_carlos", 11, "falta_personal", "Refuerzo accesos y montaje", 19800],
+      ["evt_roadshow", "Roadshow Vodafone", "cli_tech", iso(1), "12:30", "16:30", "Pl. Catalunya", "Barcelona", 41.3869, 2.1700, "emp_lucia", 5, "critico", "Falta documentacion y dos perfiles", 6200],
+      ["evt_closed", "Jornada Distribuidores", "cli_bmw", iso(-1), "15:00", "19:00", "IFEMA Madrid", "Av. Partenon, Madrid", 40.4689, -3.6164, "emp_ana", 8, "finalizado", "Evento cerrado", 7200]
+    ];
+    for (const event of events) {
+      run(
+        `INSERT INTO events
+          (id, name, client_id, date, start_time, end_time, location, address, lat, lng, team_leader_id, required_total, status, notes, budget)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        event
+      );
+    }
+
+    const requirements = [
+      ["evt_tech", "Montaje", 5],
+      ["evt_tech", "Runner", 1],
+      ["evt_tech", "Jefe de equipo", 1],
+      ["evt_tech", "Tecnico", 1],
+      ["evt_aecoc", "Auxiliar produccion", 3],
+      ["evt_aecoc", "Runner", 2],
+      ["evt_aecoc", "Montaje", 4],
+      ["evt_live", "Montaje", 6],
+      ["evt_live", "Jefe de equipo", 1],
+      ["evt_live", "Limpieza", 2],
+      ["evt_live", "Runner", 2],
+      ["evt_heineken", "Montaje", 4],
+      ["evt_heineken", "Runner", 2],
+      ["evt_heineken", "Jefe de equipo", 1]
+    ];
+    for (const [eventId, role, count] of requirements) {
+      run("INSERT INTO event_requirements (id, event_id, role, count) VALUES (?, ?, ?, ?)", [
+        randomId("req"),
+        eventId,
+        role,
+        count
+      ]);
+    }
+
+    const assignments = [
+      ["evt_tech", "emp_carlos", "Jefe de equipo"],
+      ["evt_tech", "emp_lucia", "Runner"],
+      ["evt_tech", "emp_marta", "Tecnico"],
+      ["evt_tech", "emp_javier", "Carga y descarga"],
+      ["evt_tech", "emp_omar", "Carretillero"],
+      ["evt_aecoc", "emp_carlos", "Jefe de equipo"],
+      ["evt_aecoc", "emp_lucia", "Runner"],
+      ["evt_aecoc", "emp_javier", "Carga y descarga"],
+      ["evt_bmw", "emp_marta", "Tecnico"],
+      ["evt_bmw", "emp_ana", "Auxiliar produccion"],
+      ["evt_bmw", "emp_nerea", "Limpieza"],
+      ["evt_live", "emp_carlos", "Jefe de equipo"],
+      ["evt_live", "emp_alejandro", "Montaje"],
+      ["evt_live", "emp_nerea", "Limpieza"],
+      ["evt_live", "emp_ana", "Auxiliar produccion"],
+      ["evt_heineken", "emp_javier", "Carga y descarga"],
+      ["evt_heineken", "emp_omar", "Carretillero"],
+      ["evt_roadshow", "emp_lucia", "Runner"]
+    ];
+    for (const [eventId, employeeId, role] of assignments) {
+      run("INSERT INTO assignments (id, event_id, employee_id, role) VALUES (?, ?, ?, ?)", [
+        randomId("asg"),
+        eventId,
+        employeeId,
+        role
+      ]);
+    }
+
+    const clocked = [
+      ["evt_tech", "emp_carlos", "entrada", 41.3548, 2.1291, 11, 1, 1],
+      ["evt_tech", "emp_lucia", "entrada", 41.3547, 2.1294, 28, 1, 1],
+      ["evt_bmw", "emp_marta", "entrada", 41.3925, 2.1650, 14, 1, 1],
+      ["evt_live", "emp_carlos", "entrada", 40.4237, -3.6717, 20, 1, 1]
+    ];
+    for (const row of clocked) {
+      run(
+        `INSERT INTO time_entries
+          (id, event_id, employee_id, type, lat, lng, distance_m, within_radius, accepted)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [randomId("clk"), ...row]
+      );
+    }
+
+    const incidents = [
+      ["evt_aecoc", "emp_javier", "retraso", "alta", "Retraso detectado", "Operario con mas de 15 minutos de retraso."],
+      ["evt_heineken", null, "documentacion", "critica", "Evento sin jefe", "El evento no tiene jefe de equipo asignado."],
+      ["evt_live", "emp_alejandro", "documentacion", "media", "EPI proximo a caducar", "Renovar justificante de entrega EPI."]
+    ];
+    for (const incident of incidents) {
+      run(
+        `INSERT INTO incidents (id, event_id, employee_id, type, priority, title, description)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [randomId("inc"), ...incident]
+      );
+    }
+
+    run(
+      `INSERT INTO availability (id, employee_id, start_date, end_date, type, reason)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [randomId("ava"), "emp_javier", iso(2), iso(3), "no_disponible", "Curso carretilla"]
+    );
+
+    for (const [eventId, employeeId, km, diet, nightHours, extras] of [
+      ["evt_live", "emp_alejandro", 12, 12, 1.5, 0],
+      ["evt_live", "emp_carlos", 16, 12, 1.5, 20],
+      ["evt_tech", "emp_lucia", 8, 0, 0, 0]
+    ]) {
+      run(
+        `INSERT INTO allowances (id, event_id, employee_id, km, diet, night_hours, extras)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [randomId("all"), eventId, employeeId, km, diet, nightHours, extras]
+      );
+    }
+  });
+}
+
+function escapeSqlLiteral(value) {
+  return String(value).replaceAll("'", "''");
+}
+
+function createBackup(type = "manual", label = "Backup manual") {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const fileName = `${type}-${timestamp}.sqlite`;
+  const filePath = path.join(BACKUP_DIR, fileName);
+  db.exec(`VACUUM INTO '${escapeSqlLiteral(filePath)}'`);
+  const stats = fs.statSync(filePath);
+  const backup = {
+    id: randomId("bak"),
+    type,
+    label,
+    file_path: filePath,
+    size_bytes: stats.size
+  };
+  run(
+    `INSERT INTO backups (id, type, label, file_path, size_bytes)
+     VALUES (?, ?, ?, ?, ?)`,
+    [backup.id, backup.type, backup.label, backup.file_path, backup.size_bytes]
+  );
+  return backup;
+}
+
+function ensureDailyBackup() {
+  if (!AUTO_BACKUP_ON_START) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  const existing = get(
+    "SELECT id FROM backups WHERE type = 'auto' AND substr(created_at, 1, 10) = ? LIMIT 1",
+    [today]
+  );
+  if (existing) return null;
+  return createBackup("auto", "Backup automatico diario");
+}
+
+function requestRestore(backupId) {
+  const backup = get("SELECT * FROM backups WHERE id = ?", [backupId]);
+  if (!backup) {
+    const error = new Error("Backup no encontrado");
+    error.status = 404;
+    throw error;
+  }
+  const resolved = path.resolve(backup.file_path);
+  if (!resolved.startsWith(`${BACKUP_DIR}${path.sep}`) || !fs.existsSync(resolved)) {
+    const error = new Error("El archivo de backup no esta disponible");
+    error.status = 409;
+    throw error;
+  }
+  createBackup("safety", "Backup de seguridad previo a restauracion");
+  fs.writeFileSync(
+    path.join(DATA_DIR, "restore-request.json"),
+    JSON.stringify({ backupId, backupPath: resolved, requestedAt: new Date().toISOString() }, null, 2)
+  );
+  return backup;
+}
+
+applyMigrations();
+seedIfNewInstall();
+ensureDailyBackup();
+
+module.exports = {
+  BACKUP_DIR,
+  DATA_DIR,
+  DB_PATH,
+  all,
+  createBackup,
+  db,
+  exec,
+  get,
+  requestRestore,
+  run,
+  transaction
+};
