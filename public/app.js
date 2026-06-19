@@ -8764,6 +8764,142 @@ document.addEventListener('click',function(ev){
 console.log('Marfan Crew 2 Operario Pro Completo cargado');
 // ---------- END MARFAN 2 UI ----------
 
+
+// ---------- MARFAN 5 INCIDENCIAS PRO UI ----------
+window.MARFAN_VERSION='5.0.0';
+
+(function(){
+  if(document.getElementById('m5-style')) return;
+  const st=document.createElement('style');
+  st.id='m5-style';
+  st.textContent=`
+    .m5-card{background:#fff;border:1px solid #e5e5ea;border-radius:20px;padding:18px;margin:14px 0;box-shadow:0 12px 30px rgba(0,0,0,.05)}
+    .m5-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:12px 0}
+    .m5-kpi{background:#fff;border:1px solid #e5e5ea;border-radius:18px;padding:16px}
+    .m5-kpi small{display:block;color:#6e6e73;text-transform:uppercase;font-size:11px;font-weight:900}
+    .m5-kpi b{font-size:24px}
+    .m5-row{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;border-bottom:1px solid #eee;padding:12px 0}
+    .m5-btn{background:#000;color:#fff;border:none;border-radius:14px;padding:10px 14px;font-weight:900;cursor:pointer;margin:4px}
+    .m5-btn.red{background:#dc2626}.m5-btn.green{background:#16a34a}.m5-btn.blue{background:#2563eb}
+    .m5-input{width:100%;padding:12px;border:1px solid #ddd;border-radius:14px;margin:6px 0}
+    .m5-pill{display:inline-block;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:900;background:#f2f2f7;margin:2px}
+    .m5-critica{background:#ffe8e6;color:#b00020}.m5-alta{background:#fff1d6;color:#8a5a00}.m5-media{background:#eef4ff;color:#1d4ed8}.m5-resuelta{background:#e8f8ee;color:#137333}
+    @media(max-width:900px){.m5-grid{grid-template-columns:1fr 1fr}.m5-row{display:block}}
+  `;
+  document.head.appendChild(st);
+})();
+
+function m5Content(){return document.getElementById('content')||document.querySelector('main')||document.body}
+function m5Title(t){try{const h=document.querySelector('main h1,.main h1,h1');if(h)h.textContent=t;document.title='Marfan Crew · '+t}catch(e){}}
+async function m5Json(url,opt){try{const r=await fetch(url,opt);return await r.json()}catch(e){return{ok:false,error:e.message}}}
+function m5Kpi(l,v){return `<div class="m5-kpi"><small>${l}</small><b>${v}</b></div>`}
+
+async function viewIncidenciasPro5(){
+  m5Title('Incidencias Pro');
+  const c=m5Content();
+  const d=await m5Json('/api/5/incidencias');
+  const k=d.cards||{};
+  c.innerHTML=`
+    <div class="m5-card">
+      <h2>Incidencias Pro</h2>
+      <p class="muted">Control de ausencias, retrasos, accidentes, cliente, horas extra y problemas operativos.</p>
+      <button class="m5-btn" onclick="m5ShowNewIncident()">Nueva incidencia</button>
+      <button class="m5-btn blue" onclick="viewIncidenciasPro5()">Actualizar</button>
+    </div>
+
+    <div class="m5-grid">
+      ${m5Kpi('Total',k.total||0)}
+      ${m5Kpi('Abiertas',k.abiertas||0)}
+      ${m5Kpi('En proceso',k.en_proceso||0)}
+      ${m5Kpi('Resueltas',k.resueltas||0)}
+      ${m5Kpi('Críticas',k.criticas||0)}
+      ${m5Kpi('Altas',k.altas||0)}
+    </div>
+
+    <div id="m5-new" class="m5-card" style="display:none"></div>
+
+    <div class="m5-card">
+      <h3>Listado de incidencias</h3>
+      ${(d.incidents||[]).length ? (d.incidents||[]).map(i=>`
+        <div class="m5-row">
+          <div>
+            <b>${i.title||i.type||'Incidencia'}</b><br>
+            <span class="muted">${i.event_label||''} · ${i.worker_label||''}</span><br>
+            <span>${i.description||''}</span><br>
+            <span class="m5-pill m5-${i.priority||'media'}">${i.priority||'media'}</span>
+            <span class="m5-pill ${i.status==='resuelta'?'m5-resuelta':''}">${i.status||'abierta'}</span>
+            <span class="m5-pill">${i.created_at||''}</span>
+          </div>
+          <div>
+            ${i.status!=='resuelta'?`<button class="m5-btn blue" onclick="m5SetStatus('${i.id}','en_proceso')">En proceso</button><button class="m5-btn green" onclick="m5Resolve('${i.id}')">Resolver</button>`:''}
+          </div>
+        </div>
+      `).join('') : '<p>Sin incidencias registradas.</p>'}
+    </div>`;
+}
+
+async function m5ShowNewIncident(){
+  const box=document.getElementById('m5-new');
+  if(!box) return;
+  box.style.display='block';
+  const ev=await m5Json('/api/5/events');
+  const wk=await m5Json('/api/5/workers');
+  box.innerHTML=`
+    <h3>Nueva incidencia</h3>
+    <select id="m5-event" class="m5-input"><option value="">Sin evento</option>${(ev.events||[]).map(e=>`<option value="${e.id}">${e.name||e.title||('Evento #'+e.id)} · ${e.event_date||e.date||''}</option>`).join('')}</select>
+    <select id="m5-worker" class="m5-input"><option value="">Sin operario</option>${(wk.workers||[]).map(w=>`<option value="${w.id}">${w.label}</option>`).join('')}</select>
+    <select id="m5-type" class="m5-input">
+      <option value="ausencia">Ausencia</option><option value="retraso">Retraso</option><option value="accidente">Accidente</option><option value="cliente">Cliente</option><option value="horas_extra">Horas extra</option><option value="otro">Otro</option>
+    </select>
+    <select id="m5-priority" class="m5-input">
+      <option value="media">Media</option><option value="alta">Alta</option><option value="critica">Crítica</option><option value="baja">Baja</option>
+    </select>
+    <input id="m5-title" class="m5-input" placeholder="Título">
+    <textarea id="m5-description" class="m5-input" placeholder="Descripción"></textarea>
+    <button class="m5-btn green" onclick="m5CreateIncident()">Guardar incidencia</button>`;
+  try{box.scrollIntoView({behavior:'smooth',block:'start'})}catch(e){}
+}
+
+async function m5CreateIncident(){
+  const payload={
+    event_id:document.getElementById('m5-event').value||null,
+    user_id:document.getElementById('m5-worker').value||null,
+    type:document.getElementById('m5-type').value,
+    priority:document.getElementById('m5-priority').value,
+    title:document.getElementById('m5-title').value,
+    description:document.getElementById('m5-description').value
+  };
+  const r=await fetch('/api/5/incidencias',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const j=await r.json();
+  if(!j.ok) return alert(j.error||'Error');
+  alert('Incidencia registrada');
+  viewIncidenciasPro5();
+}
+
+async function m5SetStatus(id,status){
+  const r=await fetch('/api/5/incidencias/'+encodeURIComponent(id)+'/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})});
+  const j=await r.json();
+  if(!j.ok) return alert(j.error||'Error');
+  viewIncidenciasPro5();
+}
+
+async function m5Resolve(id){
+  const resolution=prompt('Resolución de la incidencia:')||'Resuelta';
+  const r=await fetch('/api/5/incidencias/'+encodeURIComponent(id)+'/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'resuelta',resolution})});
+  const j=await r.json();
+  if(!j.ok) return alert(j.error||'Error');
+  viewIncidenciasPro5();
+}
+
+window.viewIncidenciasPro5=viewIncidenciasPro5;
+window.m5ShowNewIncident=m5ShowNewIncident;
+window.m5CreateIncident=m5CreateIncident;
+window.m5SetStatus=m5SetStatus;
+window.m5Resolve=m5Resolve;
+
+console.log('Marfan Crew 5 Incidencias Pro cargado');
+// ---------- END MARFAN 5 UI ----------
+
 (function(){
   const MENU = [
     {g:'OPERATIVA', l:'Dashboard', k:['dashboard'], f:['viewDashboard','dashboard','showDashboard']},

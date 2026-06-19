@@ -10191,6 +10191,131 @@ try {
 }
 // ---------- END MARFAN 2 ----------
 
+
+// ---------- MARFAN 5 INCIDENCIAS PRO ----------
+function m5Db(){
+  try { if (typeof db !== 'undefined') return db; } catch(e) {}
+  try { if (global.db) return global.db; } catch(e) {}
+  return null;
+}
+function m5All(sql, params){
+  const database = m5Db();
+  try { return database.prepare(sql).all(...(params || [])); } catch(e) { return []; }
+}
+function m5Get(sql, params){
+  const database = m5Db();
+  try { return database.prepare(sql).get(...(params || [])); } catch(e) { return null; }
+}
+function m5Run(sql, params){
+  const database = m5Db();
+  try { return database.prepare(sql).run(...(params || [])); } catch(e) { return null; }
+}
+function m5Ensure(){
+  const database = m5Db();
+  if(!database) return;
+  try {
+    database.exec(`CREATE TABLE IF NOT EXISTS incidents_m5 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id INTEGER,
+      user_id INTEGER,
+      type TEXT DEFAULT '',
+      priority TEXT DEFAULT 'media',
+      status TEXT DEFAULT 'abierta',
+      title TEXT DEFAULT '',
+      description TEXT DEFAULT '',
+      resolution TEXT DEFAULT '',
+      lat TEXT DEFAULT '',
+      lng TEXT DEFAULT '',
+      created_by TEXT DEFAULT '',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      resolved_at TEXT DEFAULT ''
+    );`);
+  } catch(e) {}
+}
+function m5Name(row){
+  return [row.first_name,row.last_name].filter(Boolean).join(' ') || row.nickname || row.name || row.email || row.phone || ('Operario #' + (row.user_id||row.id||''));
+}
+function m5List(){
+  m5Ensure();
+  return m5All(`
+    SELECT i.*,
+           e.name AS event_name, e.title AS event_title, e.event_date, e.date, e.location, e.address,
+           u.first_name,u.last_name,u.nickname,u.name,u.phone,u.email
+    FROM incidents_m5 i
+    LEFT JOIN events e ON e.id = i.event_id
+    LEFT JOIN users u ON u.id = i.user_id
+    ORDER BY 
+      CASE i.status WHEN 'abierta' THEN 1 WHEN 'en_proceso' THEN 2 ELSE 3 END,
+      CASE i.priority WHEN 'critica' THEN 1 WHEN 'alta' THEN 2 WHEN 'media' THEN 3 ELSE 4 END,
+      i.id DESC
+  `).map(r => ({
+    ...r,
+    event_label: r.event_name || r.event_title || (r.event_id ? ('Evento #' + r.event_id) : 'Sin evento'),
+    worker_label: m5Name(r)
+  }));
+}
+function m5Dashboard(){
+  const rows = m5List();
+  return {
+    ok:true,
+    version:'5.0.0',
+    cards:{
+      total: rows.length,
+      abiertas: rows.filter(x=>x.status==='abierta').length,
+      en_proceso: rows.filter(x=>x.status==='en_proceso').length,
+      resueltas: rows.filter(x=>x.status==='resuelta').length,
+      criticas: rows.filter(x=>x.priority==='critica').length,
+      altas: rows.filter(x=>x.priority==='alta').length
+    },
+    incidents: rows
+  };
+}
+try {
+  m5Ensure();
+
+  app.get('/api/5/health',(req,res)=>{
+    res.json({ok:true,version:'5.0.0',message:'Incidencias Pro activo'});
+  });
+
+  app.get('/api/5/incidencias',(req,res)=>{
+    res.json(m5Dashboard());
+  });
+
+  app.post('/api/5/incidencias',(req,res)=>{
+    m5Ensure();
+    const b = req.body || {};
+    const r = m5Run(`INSERT INTO incidents_m5
+      (event_id,user_id,type,priority,status,title,description,lat,lng,created_by)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [b.event_id||null,b.user_id||null,b.type||'otro',b.priority||'media','abierta',b.title||'',b.description||'',b.lat||'',b.lng||'',b.created_by||'admin']
+    );
+    res.json({ok:true,id:r && r.lastInsertRowid});
+  });
+
+  app.post('/api/5/incidencias/:id/status',(req,res)=>{
+    const b = req.body || {};
+    const status = b.status || 'en_proceso';
+    const resolution = b.resolution || '';
+    const resolvedAt = status === 'resuelta' ? new Date().toISOString() : '';
+    m5Run(`UPDATE incidents_m5 SET status=?, resolution=?, resolved_at=? WHERE id=?`, [status,resolution,resolvedAt,req.params.id]);
+    res.json({ok:true});
+  });
+
+  app.get('/api/5/events',(req,res)=>{
+    const rows = m5All(`SELECT id,name,title,event_date,date,location,address FROM events ORDER BY COALESCE(event_date,date,'') DESC LIMIT 200`);
+    res.json({ok:true,events:rows});
+  });
+
+  app.get('/api/5/workers',(req,res)=>{
+    const rows = m5All(`SELECT id,first_name,last_name,nickname,name,phone,email,role FROM users WHERE COALESCE(role,'')!='admin' ORDER BY first_name,last_name,nickname,email,phone LIMIT 300`)
+      .map(u=>({...u,label:m5Name(u)}));
+    res.json({ok:true,workers:rows});
+  });
+} catch(e) {
+  console.error('[MARFAN 5]', e.message);
+}
+// ---------- END MARFAN 5 ----------
+
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
