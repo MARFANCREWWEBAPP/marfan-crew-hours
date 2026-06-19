@@ -1,0 +1,14 @@
+{
+  "name": "marfan-clean-1",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MARFAN CLEAN 1 - Gestión de personal para eventos sin dependencias externas",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build": "echo Build OK"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

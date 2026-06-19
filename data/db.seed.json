@@ -1,0 +1,79 @@
+{
+  "settings": {
+    "company": "MARFAN CREW",
+    "iva": 21,
+    "gps_radius_m": 300,
+    "currency": "EUR",
+    "whatsapp_prefix": "34"
+  },
+  "users": [
+    {
+      "id": 1,
+      "name": "Administrador",
+      "email": "admin@marfancrew.com",
+      "phone": "admin",
+      "password": "admin123",
+      "role": "admin",
+      "active": true,
+      "team_lead": false,
+      "dni": "",
+      "notes": ""
+    },
+    {
+      "id": 2,
+      "name": "Operario Demo",
+      "email": "operario@marfancrew.local",
+      "phone": "600000000",
+      "password": "1234",
+      "role": "operario",
+      "active": true,
+      "team_lead": true,
+      "dni": "",
+      "notes": ""
+    }
+  ],
+  "clients": [],
+  "events": [],
+  "assignments": [],
+  "checkins": [],
+  "incidents": [],
+  "documents": [],
+  "rates": [
+    {
+      "id": 1,
+      "name": "Operario carga y descarga",
+      "sell": 23.5,
+      "cost": 18.5,
+      "diet": 15
+    },
+    {
+      "id": 2,
+      "name": "Jefe de equipo",
+      "sell": 38,
+      "cost": 30,
+      "diet": 15
+    },
+    {
+      "id": 3,
+      "name": "Técnico sonido",
+      "sell": 32,
+      "cost": 25,
+      "diet": 15
+    },
+    {
+      "id": 4,
+      "name": "Técnico iluminación",
+      "sell": 30,
+      "cost": 25,
+      "diet": 15
+    },
+    {
+      "id": 5,
+      "name": "Runner / conductor",
+      "sell": 23.5,
+      "cost": 18.5,
+      "diet": 15
+    }
+  ],
+  "logs": []
+}
