@@ -1,5 +1,5 @@
 
-# MARFAN CLEAN 2
+# MARFAN CLEAN 3
 
 App nueva desde cero para gestión de personal de eventos.
 
@@ -70,7 +70,7 @@ Operario demo:
 Cambiar logo, colores, textos y formularios concretos sobre esta base limpia.
 
 
-## MARFAN CLEAN 2
+## MARFAN CLEAN 3
 
 Añadido:
 - Menú Administradores.
@@ -83,3 +83,18 @@ Añadido:
 2. No borrar `/data/marfan-clean-db.json`.
 3. Subir actualizaciones de código normalmente.
 4. La app solo crea una base inicial si no existe una previa.
+
+
+## MARFAN CLEAN 3
+
+Corrección principal:
+- Autenticación estable con token firmado.
+- El login ya no depende de sesiones en memoria.
+- Si Railway reinicia el contenedor, el usuario no queda en un estado roto.
+- Si el token es antiguo, la app vuelve al login automáticamente.
+- Endpoint `/api/me` para validar sesión.
+- Dashboard deja de mostrar "No autorizado" después de login correcto.
+
+Persistencia:
+- Se mantiene `/data/marfan-clean-db.json`.
+- No se sobrescribe información existente.

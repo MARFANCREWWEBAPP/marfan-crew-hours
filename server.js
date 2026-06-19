@@ -96,13 +96,47 @@ function token() {
   return crypto.randomBytes(24).toString('hex');
 }
 
-const sessions = new Map();
+const AUTH_SECRET = process.env.AUTH_SECRET || process.env.SESSION_SECRET || 'marfan-clean-local-secret';
+
+function signPayload(payload) {
+  return crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('hex');
+}
+
+function makeAuthToken(user) {
+  const payload = Buffer.from(JSON.stringify({
+    id: user.id,
+    role: user.role,
+    name: user.name,
+    iat: Date.now()
+  })).toString('base64url');
+  return 'mfc.' + payload + '.' + signPayload(payload);
+}
+
+function readAuthToken(t) {
+  if (!t || !String(t).startsWith('mfc.')) return null;
+  const parts = String(t).split('.');
+  if (parts.length !== 3) return null;
+  const payload = parts[1];
+  const sig = parts[2];
+  if (sig !== signPayload(payload)) return null;
+  try {
+    return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+  } catch (e) {
+    return null;
+  }
+}
 
 function getUser(req) {
   const auth = req.headers.authorization || '';
   const t = auth.replace(/^Bearer\s+/i, '');
-  if (!t || !sessions.has(t)) return null;
-  return sessions.get(t);
+  const tokenUser = readAuthToken(t);
+  if (!tokenUser) return null;
+
+  const db = readDb();
+  const user = db.users.find(u => String(u.id) === String(tokenUser.id) && u.active !== false);
+  if (!user) return null;
+
+  return { id: user.id, role: user.role, name: user.name };
 }
 
 function requireUser(req, res) {
@@ -300,13 +334,19 @@ async function handleApi(req, res, url) {
       String(u.password) === String(b.password || '')
     );
     if (!user) return send(res, 401, { ok: false, error: 'Credenciales incorrectas' });
-    const t = token();
-    sessions.set(t, { id: user.id, role: user.role, name: user.name });
+    const t = makeAuthToken(user);
     return send(res, 200, { ok: true, token: t, user: { id: user.id, name: user.name, role: user.role } });
   }
 
   if (url.pathname === '/api/health') {
-    return send(res, 200, { ok: true, version: 'MARFAN CLEAN 2', uptime: process.uptime(), data: DB_PATH });
+    return send(res, 200, { ok: true, version: 'MARFAN CLEAN 3', uptime: process.uptime(), data: DB_PATH });
+  }
+
+
+  if (req.method === 'GET' && url.pathname === '/api/me') {
+    const u = requireUser(req, res);
+    if (!u) return;
+    return send(res, 200, { ok: true, user: u });
   }
 
   const publicGet = req.method === 'GET' && ['/api/bootstrap'].includes(url.pathname);
@@ -491,6 +531,6 @@ const server = http.createServer(async (req, res) => {
 
 ensureDb();
 server.listen(PORT, () => {
-  console.log('MARFAN CLEAN 1 running on :' + PORT);
+  console.log('MARFAN CLEAN 3 running on :' + PORT);
   console.log('Data:', DB_PATH);
 });

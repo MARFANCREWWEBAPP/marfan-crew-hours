@@ -1,8 +1,8 @@
 {
-  "name": "marfan-clean-2",
-  "version": "2.0.0",
+  "name": "marfan-clean-3",
+  "version": "3.0.0",
   "private": true,
-  "description": "MARFAN CLEAN 2 - Persistencia blindada y administradores",
+  "description": "MARFAN CLEAN 3 - Autenticacion estable y nucleo operativo",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
