@@ -70,7 +70,7 @@ const { google } = require('googleapis');
 const app = express();
 
 // ---------- V62.53 STABLE PRODUCTION PATCH ----------
-const V6253_VERSION = '3.0.0';
+const V6253_VERSION = '2.0.0';
 
 function v6253Database(){
   try { if (typeof db !== 'undefined') return db; } catch(e) {}
@@ -460,13 +460,13 @@ app.use((req,res,next)=>{
 });
 
 app.get('/api/version-v582', (req,res)=>{
-  res.json({ok:true, version:'3.0.0', message:'Calendar Override Real loaded'});
+  res.json({ok:true, version:'58.2.0', message:'Calendar Override Real loaded'});
 });
 
 
 // ---------- V61.1 EMERGENCY STABLE HEALTH ----------
 app.get('/api/v611-health', (req,res)=>{
-  res.json({ok:true, version:'3.0.0', status:'emergency-stable'});
+  res.json({ok:true, version:'61.1.0', status:'emergency-stable'});
 });
 
 
@@ -752,7 +752,7 @@ app.post('/api/v612/event-form-save', requireAdmin, (req,res)=>{
 });
 
 app.get('/api/v612-route-test', requireAdmin, (req,res)=>{
-  res.json({ok:true, version:'3.0.0', route:'v46-safe-event-form'});
+  res.json({ok:true, version:'61.2.0', route:'v46-safe-event-form'});
 });
 
 
@@ -938,7 +938,7 @@ app.get('/api/v627-data-status', requireAdmin, (req,res)=>{
       exists = fs_v627.existsSync(dbPath);
       size = exists ? fs_v627.statSync(dbPath).size : 0;
     }catch(e){}
-    res.json({ok:true, version: '3.0.0', data_dir:dataDir, db_path:dbPath, exists, size});
+    res.json({ok:true, version: '2.0.0', data_dir:dataDir, db_path:dbPath, exists, size});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
   }
@@ -3212,7 +3212,7 @@ app.get('/api/v6216-auto-restore-status', requireAdmin, (req,res)=>{
   try{
     res.json({
       ok:true,
-      version: '3.0.0',
+      version: '2.0.0',
       status:global.V6216_RESTORE_STATUS || null,
       db_path:v6216DbPath(),
       data_dir:v6216DataDir(),
@@ -3885,7 +3885,7 @@ function v6223ExportUsersJson(){
     const users = db.prepare('SELECT * FROM users ORDER BY id').all();
     const stamp = new Date().toISOString().replace(/[:.]/g,'-');
     const out = p.join(v6223JsonDir(), `users-${stamp}.json`);
-    f.writeFileSync(out, JSON.stringify({version: '3.0.0', created_at:new Date().toISOString(), users}, null, 2));
+    f.writeFileSync(out, JSON.stringify({version: '2.0.0', created_at:new Date().toISOString(), users}, null, 2));
     v6223KeepLastFiles(v6223JsonDir(), 'users-', 10);
     return {ok:true,path:out,count:users.length};
   }catch(e){ return {ok:false,error:e.message}; }
@@ -3999,7 +3999,7 @@ app.get('/api/v6223-persistence-status', requireAdmin, (req,res)=>{
     try{ snapshots = db.prepare("SELECT COUNT(*) AS c FROM event_snapshots_v6218").get().c || 0; }catch(e){}
     res.json({
       ok:true,
-      version: '3.0.0',
+      version: '2.0.0',
       data_dir:v6223DataDir(),
       users,
       events,
@@ -5521,7 +5521,7 @@ function v57BackupObject(reason='manual'){
   const backup = {
     meta:{
       app:'Marfan Crew Hours',
-      version:'3.0.0',
+      version:'57.0.0',
       reason,
       created_at:new Date().toISOString()
     },
@@ -5651,7 +5651,7 @@ app.use((req,res,next)=>{
 });
 
 // ---------- API ROUTES ----------
-app.get('/health', (req, res) => res.json({ ok: true, version: '3.0.0' }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '53.3.0' }));
 
 
 app.post('/api/geocode', requireAdmin, async (req, res) => {
@@ -6912,7 +6912,7 @@ function v533CreateBackupObject() {
   const backup = {
     meta: {
       app: 'Marfan Crew Hours',
-      version: '3.0.0',
+      version: '53.3.0',
       exported_at: new Date().toISOString()
     },
     tables: {}
@@ -7117,7 +7117,7 @@ app.get('/api/backup/export', requireAdmin, (req, res) => {
   const backup = {
     meta: {
       app:'Marfan Crew Hours',
-      version:'3.0.0',
+      version:'53.1.0',
       exported_at:new Date().toISOString()
     },
     tables: {}
@@ -7530,7 +7530,7 @@ function v552CreateBackupObject() {
   const backup = {
     meta: {
       app: 'Marfan Crew Hours',
-      version: '3.0.0',
+      version: '56.8.0',
       exported_at: new Date().toISOString(),
       data_dir: V552_DATA_DIR,
       backup_dir: V552_BACKUP_DIR,
@@ -9176,7 +9176,7 @@ app.get('/api/v6250/persistent-status', requireAdmin, (req,res)=>{
 // ---------- V62.54 VISUAL SOLAPAMIENTOS API ----------
 try {
   app.get('/api/v6254/health', (req,res)=>{
-    res.json({ok:true, version:'3.0.0', message:'Visual Solapamientos activo'});
+    res.json({ok:true, version:'2.0.0', message:'Visual Solapamientos activo'});
   });
 
   app.post('/api/v6254/check-assignment-conflicts', (req,res)=>{
@@ -9231,7 +9231,7 @@ try {
 // ---------- V62.55 TEAM LEAD + SIGNATURE + LOCK ----------
 try {
   app.get('/api/v6255/health',(req,res)=>{
-    res.json({ok:true,version:'3.0.0',message:'Jefe equipo + firma + bloqueo activo'});
+    res.json({ok:true,version:'2.0.0',message:'Jefe equipo + firma + bloqueo activo'});
   });
 
   app.post('/api/v6255/team-lead/set',(req,res)=>{
@@ -9262,7 +9262,7 @@ try {
 // ---------- V62.58 CENTRO CONTROL LIVE ----------
 try {
   app.get('/api/v6258/health',(req,res)=>{
-    res.json({ok:true,version:'3.0.0',message:'Centro Control Live activo'});
+    res.json({ok:true,version:'2.0.0',message:'Centro Control Live activo'});
   });
 
   app.get('/api/v6258/dashboard/live',(req,res)=>{
@@ -9550,7 +9550,7 @@ try {
   v6259EnsureTables();
 
   app.get('/api/v6259/health',(req,res)=>{
-    res.json({ok:true,version:'3.0.0',message:'Dashboard CEO + Inteligencia Operativa activo'});
+    res.json({ok:true,version:'2.0.0',message:'Dashboard CEO + Inteligencia Operativa activo'});
   });
 
   app.get('/api/v6259/dashboard/ceo',(req,res)=>{
@@ -9589,7 +9589,7 @@ try {
 // ---------- V62.60 CENTRO OPERATIVO LIVE ----------
 try {
   app.get('/api/v6260/health',(req,res)=>{
-    res.json({ok:true,version:'3.0.0',message:'Centro Operativo Live activo'});
+    res.json({ok:true,version:'2.0.0',message:'Centro Operativo Live activo'});
   });
 
   app.get('/api/v6260/dashboard',(req,res)=>{
@@ -9798,7 +9798,7 @@ try {
   v6261EnsureTables();
 
   app.get('/api/v6261/health',(req,res)=>{
-    res.json({ok:true,version:'3.0.0',message:'Disponibilidad + Planificador activo'});
+    res.json({ok:true,version:'2.0.0',message:'Disponibilidad + Planificador activo'});
   });
 
   app.get('/api/v6261/availability',(req,res)=>{
@@ -9923,7 +9923,7 @@ function v6263Dashboard(){
   const cost = todayAssignments.length * 5 * 12;
   return {
     ok:true,
-    version:'3.0.0',
+    version:'2.0.0',
     cards:{
       events_today:todayEvents.length,
       clients_total:clients.length,
@@ -9949,7 +9949,7 @@ function v6263Alerts(eventsToday, assignmentsToday){
   return out;
 }
 try {
-  app.get('/api/v6263/health',(req,res)=>res.json({ok:true,version:'3.0.0',message:'Integración real UI activa'}));
+  app.get('/api/v6263/health',(req,res)=>res.json({ok:true,version:'2.0.0',message:'Integración real UI activa'}));
   app.get('/api/v6263/dashboard',(req,res)=>res.json(v6263Dashboard()));
   app.get('/api/v6263/centro-operativo',(req,res)=>res.json(v6263Dashboard()));
   app.get('/api/v6263/disponibilidad',(req,res)=>{
@@ -9973,7 +9973,7 @@ try {
 
 // ---------- V62.64 UI CORE FIX API ----------
 try {
-  app.get('/api/v6264/health',(req,res)=>res.json({ok:true,version:'3.0.0',message:'UI Core Fix activo'}));
+  app.get('/api/v6264/health',(req,res)=>res.json({ok:true,version:'2.0.0',message:'UI Core Fix activo'}));
 } catch(e) {}
 // ---------- END V62.64 ----------
 
@@ -10015,7 +10015,7 @@ function v6265GlobalAlerts(){
 }
 try {
   v6265EnsureTables();
-  app.get('/api/v6265/health',(req,res)=>res.json({ok:true,version:'3.0.0',message:'Operarios Pro + Expediente RRHH activo'}));
+  app.get('/api/v6265/health',(req,res)=>res.json({ok:true,version:'2.0.0',message:'Operarios Pro + Expediente RRHH activo'}));
   app.get('/api/v6265/workers',(req,res)=>res.json({ok:true,workers:v6265Workers().map(w=>({id:w.id,name:v6265WorkerName(w),phone:w.phone||'',email:w.email||'',role:w.role||'',active:w.active,stats:v6265WorkerStats(w.id)}))}));
   app.get('/api/v6265/worker/:userId/profile',(req,res)=>{ const p=v6265Profile(req.params.userId); if(!p) return res.status(404).json({ok:false,error:'Operario no encontrado'}); res.json({ok:true,profile:p}); });
   app.post('/api/v6265/worker/:userId/note',(req,res)=>{ v6265EnsureTables(); const b=req.body||{}; v6265Run(`INSERT INTO worker_notes_v6265 (user_id,note_type,note,created_by) VALUES (?,?,?,?)`,[req.params.userId,b.note_type||'general',b.note||'',b.created_by||'admin']); res.json({ok:true}); });
@@ -10028,7 +10028,7 @@ try {
 // ---------- V62.66 FIX VER PORTAL SIN TOCAR RAILWAY ----------
 try {
   app.get('/api/v6266/health',(req,res)=>{
-    res.json({ok:true,version:'3.0.0',message:'Fix Ver Portal activo sin cambios de Railway'});
+    res.json({ok:true,version:'2.0.0',message:'Fix Ver Portal activo sin cambios de Railway'});
   });
 } catch(e) {}
 // ---------- END V62.66 ----------
@@ -10156,7 +10156,7 @@ try {
   m2EnsureTables();
 
   app.get('/api/m2/health',(req,res)=>{
-    res.json({ok:true,version:'3.0.0',message:'Operario Pro Completo activo'});
+    res.json({ok:true,version:'2.0.0',message:'Operario Pro Completo activo'});
   });
 
   app.get('/api/m2/operators',(req,res)=>{
@@ -10191,41 +10191,11 @@ try {
 }
 // ---------- END MARFAN 2 ----------
 
-
-// ---------- MARFAN 3 CONTROL DIARIO REAL ----------
-function m3Db(){ try { if (typeof db !== 'undefined') return db; } catch(e) {} try { if (global.db) return global.db; } catch(e) {} return null; }
-function m3All(sql, params){ const database=m3Db(); try { return database.prepare(sql).all(...(params||[])); } catch(e) { return []; } }
-function m3Today(){ return new Date().toISOString().slice(0,10); }
-function m3Name(u){ return [u.first_name,u.last_name].filter(Boolean).join(' ') || u.nickname || u.name || u.email || u.phone || ('Operario #' + (u.user_id||u.id||'')); }
-function m3Daily(date){
-  date=String(date||m3Today()).slice(0,10);
-  const events=m3All(`SELECT * FROM events ORDER BY COALESCE(event_date,date,'') ASC`);
-  const todayEvents=events.filter(e=>String(e.event_date||e.date||'').slice(0,10)===date);
-  const ids=new Set(todayEvents.map(e=>String(e.id)));
-  const assignments=m3All(`SELECT a.*,u.first_name,u.last_name,u.nickname,u.name,u.phone,u.email,u.role,e.name AS event_name,e.title AS event_title,e.event_date,e.date,e.start_time AS event_start,e.end_time AS event_end FROM assignments a LEFT JOIN users u ON u.id=a.user_id LEFT JOIN events e ON e.id=a.event_id`).filter(a=>ids.has(String(a.event_id)));
-  const checkins=m3All(`SELECT * FROM checkins ORDER BY COALESCE(created_at,at,'') DESC`).filter(c=>String(c.created_at||c.at||'').slice(0,10)===date);
-  let incidents=[]; try{incidents=m3All(`SELECT * FROM operator_incidents_m2 ORDER BY id DESC LIMIT 300`).filter(i=>String(i.created_at||'').slice(0,10)===date)}catch(e){}
-  const checkedUsers=new Set(checkins.map(c=>String(c.user_id)));
-  const assignedUsers=new Set(assignments.map(a=>String(a.user_id)));
-  const byEvent=todayEvents.map(e=>{
-    const a=assignments.filter(x=>String(x.event_id)===String(e.id));
-    const evChecked=new Set(checkins.filter(c=>a.some(x=>String(x.user_id)===String(c.user_id))).map(c=>String(c.user_id)));
-    const lead=a.find(x=>Number(x.is_team_lead||0)===1);
-    return {event:e, assigned:a.length, checked_in:evChecked.size, pending:Math.max(0,a.length-evChecked.size), team_lead:lead?{user_id:lead.user_id,name:m3Name(lead),phone:lead.phone||''}:null, status:a.length===0?'sin_personal':(a.length===evChecked.size?'completo':'pendiente'), assignments:a.map(x=>({user_id:x.user_id,name:m3Name(x),phone:x.phone||'',role:x.service_role||x.role||'',is_team_lead:Number(x.is_team_lead||0),checked_in:evChecked.has(String(x.user_id)),planned_start:x.planned_start||x.start_time||e.start_time||'',planned_end:x.planned_end||x.end_time||e.end_time||''}))};
-  });
-  return {ok:true,version:'3.0.0',date,cards:{events_today:todayEvents.length,workers_assigned:assignedUsers.size,workers_checked_in:checkedUsers.size,workers_pending:Math.max(0,assignedUsers.size-checkedUsers.size),incidents:incidents.length,events_without_staff:byEvent.filter(x=>x.assigned===0).length,events_without_team_lead:byEvent.filter(x=>!x.team_lead).length},events:byEvent,checkins,incidents};
-}
-try{
-  app.get('/api/3/health',(req,res)=>res.json({ok:true,version:'3.0.0',message:'Control Diario Real activo'}));
-  app.get('/api/3/control-diario',(req,res)=>res.json(m3Daily(req.query.date||m3Today())));
-}catch(e){console.error('[MARFAN 3]',e.message);}
-// ---------- END MARFAN 3 ----------
-
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, '3.0.0.0', () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Marfan Crew Hours V62.49 Calendar Buttons Use Picker listening on port ${PORT}`);
 });
 
