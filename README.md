@@ -1,5 +1,5 @@
 
-# MARFAN CLEAN 1
+# MARFAN CLEAN 2
 
 App nueva desde cero para gestión de personal de eventos.
 
@@ -68,3 +68,18 @@ Operario demo:
 ## Siguiente paso
 
 Cambiar logo, colores, textos y formularios concretos sobre esta base limpia.
+
+
+## MARFAN CLEAN 2
+
+Añadido:
+- Menú Administradores.
+- Crear, editar y borrar administradores.
+- Persistencia blindada: `server.js` nunca sobrescribe `/data/marfan-clean-db.json` si ya existe.
+- Ajustes muestra aviso claro de persistencia.
+
+## Regla para no perder datos
+1. Mantener Railway Volume montado en `/data`.
+2. No borrar `/data/marfan-clean-db.json`.
+3. Subir actualizaciones de código normalmente.
+4. La app solo crea una base inicial si no existe una previa.

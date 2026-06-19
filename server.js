@@ -35,8 +35,12 @@ function ensureDb() {
   ensureDir(DATA_DIR);
   ensureDir(LOCAL_DATA_DIR);
 
+  // Persistencia blindada:
+  // Nunca sobrescribe la base existente en /data durante una actualización.
+  // Solo crea una DB inicial si /data/marfan-clean-db.json no existe.
   if (!fs.existsSync(DB_PATH)) {
     fs.writeFileSync(DB_PATH, JSON.stringify(loadSeed(), null, 2), 'utf8');
+    return;
   }
 }
 
@@ -302,7 +306,7 @@ async function handleApi(req, res, url) {
   }
 
   if (url.pathname === '/api/health') {
-    return send(res, 200, { ok: true, version: 'MARFAN CLEAN 1', uptime: process.uptime(), data: DB_PATH });
+    return send(res, 200, { ok: true, version: 'MARFAN CLEAN 2', uptime: process.uptime(), data: DB_PATH });
   }
 
   const publicGet = req.method === 'GET' && ['/api/bootstrap'].includes(url.pathname);
@@ -327,6 +331,34 @@ async function handleApi(req, res, url) {
     const file = path.join(backupDir, 'marfan-backup-' + nowIso().replace(/[:.]/g, '-') + '.json');
     fs.writeFileSync(file, JSON.stringify(db, null, 2), 'utf8');
     return send(res, 200, { ok: true, file });
+  }
+
+
+  if (req.method === 'GET' && url.pathname === '/api/admins') {
+    return send(res, 200, { ok: true, admins: db.users.filter(u => u.role === 'admin') });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/admins') {
+    if (user.role !== 'admin') return send(res, 403, { ok: false, error: 'Solo administradores' });
+    const b = await parseBody(req);
+    const item = {
+      id: nextId(db.users),
+      name: b.name || 'Administrador',
+      email: b.email || '',
+      phone: b.phone || '',
+      password: b.password || 'admin123',
+      role: 'admin',
+      active: true,
+      team_lead: false,
+      dni: b.dni || '',
+      notes: b.notes || '',
+      created_at: nowIso(),
+      updated_at: nowIso()
+    };
+    db.users.push(item);
+    db.logs.push({ id: nextId(db.logs), action: 'create_admin', collection: 'users', item_id: item.id, user_id: user.id, created_at: nowIso() });
+    writeDb(db);
+    return send(res, 200, { ok: true, admin: item });
   }
 
   const collections = {

@@ -32,6 +32,7 @@ const menu = [
   ['GESTIÓN','assign','Asignaciones'],
   ['GESTIÓN','documents','Documentación'],
   ['GESTIÓN','rates','Tarifas'],
+  ['ADMINISTRACIÓN','admins','Administradores'],
   ['ADMINISTRACIÓN','delivery','Albaranes A4'],
   ['ADMINISTRACIÓN','finance','Finanzas Pro'],
   ['ADMINISTRACIÓN','reports','Informes PDF'],
@@ -116,7 +117,7 @@ async function go(view){
   const map={
     dashboard:viewDashboard, calendar:viewCalendar, operations:viewOperations, daily:viewDaily, active:viewActive,
     planner:viewPlanner, incidents:viewIncidents, clients:()=>viewCrud('clients','Clientes'), users:viewUsers,
-    assign:viewAssignments, documents:viewDocuments, rates:viewRates, delivery:viewDelivery,
+    assign:viewAssignments, documents:viewDocuments, rates:viewRates, admins:viewAdmins, delivery:viewDelivery,
     finance:viewFinance, reports:viewReports, portal:viewPortal, settings:viewSettings
   };
   try{ await map[view](); }catch(e){content(`<div class="card"><h2>Error</h2><p>${esc(e.message)}</p></div>`);}
@@ -322,6 +323,64 @@ async function viewDocuments(){setTitle('Documentación');await viewCrud('docume
 async function viewRates(){setTitle('Tarifas'); const db=await loadDb(); content(`<div class="card"><button onclick="rateForm()">+ Crear tarifa</button></div><div class="card">${db.rates.map(r=>`<div class="row"><div><b>${esc(r.name)}</b><br>Venta ${euro(r.sell)} · Coste ${euro(r.cost)} · Dieta ${euro(r.diet)}</div><button onclick="rateForm(${r.id})">Editar</button></div>`).join('')}</div>`);}
 function rateForm(id){genericForm('rates',id,['name','sell','cost','diet']);}
 
+
+async function viewAdmins(){
+  setTitle('Administradores');
+  const db=await loadDb();
+  const admins=db.users.filter(u=>u.role==='admin');
+  content(`
+    <div class="card">
+      <h2>Administradores</h2>
+      <p class="muted">Crea usuarios con acceso total a la aplicación. Los datos se guardan en /data y no se pierden al actualizar.</p>
+      <button onclick="adminForm()">+ Crear administrador</button>
+    </div>
+    <div class="card">
+      ${admins.length?admins.map(u=>`
+        <div class="row">
+          <div>
+            <b>${esc(u.name)}</b><br>
+            <span class="muted">${esc(u.email||'')} · ${esc(u.phone||'')}</span><br>
+            <span class="pill ok">admin</span>
+          </div>
+          <div>
+            <button onclick="adminForm(${u.id})">Editar</button>
+            ${u.id!==1?`<button class="red" onclick="removeItem('users',${u.id},'admins')">Borrar</button>`:''}
+          </div>
+        </div>
+      `).join(''):'<p>No hay administradores.</p>'}
+    </div>`);
+}
+
+function adminForm(id){
+  const row=id?(state.db.users||[]).find(x=>x.id===id):{};
+  modal(`
+    <h2>${id?'Editar':'Crear'} administrador</h2>
+    <input id="ad_name" placeholder="Nombre" value="${esc(row?.name||'')}">
+    <input id="ad_email" placeholder="Email / usuario" value="${esc(row?.email||'')}">
+    <input id="ad_phone" placeholder="Teléfono" value="${esc(row?.phone||'')}">
+    <input id="ad_password" placeholder="Contraseña" value="${esc(row?.password||'admin123')}">
+    <textarea id="ad_notes" placeholder="Notas">${esc(row?.notes||'')}</textarea>
+    <button onclick="saveAdmin(${id||0})">Guardar administrador</button>
+  `);
+}
+
+async function saveAdmin(id){
+  const body={
+    name:v('ad_name'),
+    email:v('ad_email'),
+    phone:v('ad_phone'),
+    password:v('ad_password'),
+    role:'admin',
+    active:true,
+    notes:v('ad_notes')
+  };
+  if(id) await API.put('/api/users/'+id, body);
+  else await API.post('/api/admins', body);
+  closeModal();
+  go('admins');
+}
+
+
 async function viewDelivery(){
   setTitle('Albaranes A4');
   const db=await loadDb();
@@ -360,7 +419,7 @@ async function openPortal(userId){
 async function viewSettings(){
   setTitle('Ajustes / Backup');
   const db=await loadDb();
-  content(`<div class="card"><h2>Ajustes</h2><p>Persistencia: /data/marfan-clean-db.json</p><button onclick="backup()">Guardar backup</button><button onclick="downloadDb()">Descargar JSON</button></div>`);
+  content(`<div class="card"><h2>Ajustes / Persistencia</h2><p><b>Base de datos:</b> /data/marfan-clean-db.json</p><p class="muted">Mientras Railway tenga el volumen montado en /data, las actualizaciones de código no borran clientes, eventos, operarios, fichajes, incidencias ni administradores.</p><button onclick="backup()">Guardar backup</button><button onclick="downloadDb()">Descargar JSON</button></div>`);
 }
 
 async function backup(){const r=await API.post('/api/backup',{});alert('Backup creado: '+r.file);}
