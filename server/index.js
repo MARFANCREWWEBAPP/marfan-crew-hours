@@ -1,8 +1,10 @@
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 const http = require("node:http");
 const path = require("node:path");
 const {
   all,
+  BACKUP_DIR,
   createBackup,
   DATA_DIR,
   get,
@@ -19,8 +21,51 @@ const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
 const CLOCK_RADIUS_M = 150;
 const MAX_BODY_BYTES = 15_000_000;
 const DOCUMENT_UPLOAD_DIR = path.join(DATA_DIR, "uploads", "documents");
+const DEFAULT_GOOGLE_CALENDAR_ID = "21102c189e2a9f5fb7072b9475554e93ae0b5124176fdfaa3da9470149b39e37@group.calendar.google.com";
+const DEFAULT_GOOGLE_CALENDAR_EMBED_URL = "https://calendar.google.com/calendar/embed?src=21102c189e2a9f5fb7072b9475554e93ae0b5124176fdfaa3da9470149b39e37%40group.calendar.google.com&ctz=Europe%2FMadrid";
+const GOOGLE_CALENDAR_TIME_ZONE = "Europe/Madrid";
+const GOOGLE_CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+const GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
+let googleAccessTokenCache = null;
+const googleOauthLoopbacks = new Map();
 
 fs.mkdirSync(DOCUMENT_UPLOAD_DIR, { recursive: true });
+
+function safeBackupPath(filePath) {
+  const resolved = path.resolve(filePath || "");
+  const base = path.resolve(BACKUP_DIR);
+  if (!resolved.startsWith(`${base}${path.sep}`)) return null;
+  return resolved;
+}
+
+function sha256File(filePath) {
+  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+function backupStatus(backup) {
+  const resolved = safeBackupPath(backup.file_path);
+  const status = {
+    ...backup,
+    path_valid: Boolean(resolved),
+    exists: false,
+    verified: false,
+    integrity: resolved ? "missing" : "invalid_path",
+    actual_size_bytes: 0,
+    sha256: null
+  };
+
+  if (!resolved || !fs.existsSync(resolved)) return status;
+
+  const stats = fs.statSync(resolved);
+  if (!stats.isFile()) return status;
+
+  status.exists = true;
+  status.actual_size_bytes = stats.size;
+  status.sha256 = sha256File(resolved);
+  status.verified = Number(backup.size_bytes || 0) === stats.size;
+  status.integrity = status.verified ? "verified" : "size_mismatch";
+  return status;
+}
 
 function send(res, status, payload, headers = JSON_HEADERS) {
   res.writeHead(status, headers);
@@ -121,6 +166,47 @@ function audit(actor, action, entity, entityId, metadata = {}) {
   );
 }
 
+function listAuditLogs(filters = {}) {
+  const where = [];
+  const params = [];
+  if (filters.action) {
+    where.push("audit_logs.action = ?");
+    params.push(filters.action);
+  }
+  if (filters.entity) {
+    where.push("audit_logs.entity = ?");
+    params.push(filters.entity);
+  }
+  if (filters.actorUserId) {
+    where.push("audit_logs.actor_user_id = ?");
+    params.push(filters.actorUserId);
+  }
+  const limit = Math.min(Math.max(Number(filters.limit || 150), 1), 500);
+  return all(
+    `SELECT audit_logs.*,
+            users.name AS actor_name,
+            users.email AS actor_email,
+            users.role AS actor_role
+     FROM audit_logs
+     LEFT JOIN users ON users.id = audit_logs.actor_user_id
+     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+     ORDER BY audit_logs.created_at DESC
+     LIMIT ?`,
+    [...params, limit]
+  ).map((row) => ({
+    id: row.id,
+    actor_user_id: row.actor_user_id,
+    actor_name: row.actor_name || "Sistema",
+    actor_email: row.actor_email || "",
+    actor_role: row.actor_role || "system",
+    action: row.action,
+    entity: row.entity,
+    entity_id: row.entity_id,
+    metadata: jsonField(row.metadata, {}),
+    created_at: row.created_at
+  }));
+}
+
 function publicUser(row) {
   return {
     id: row.id,
@@ -145,6 +231,28 @@ function parseEmployee(row) {
   return {
     ...row,
     skills: jsonField(row.skills)
+  };
+}
+
+function employeePortalProfile(row) {
+  const employee = parseEmployee(row);
+  return {
+    id: employee.id,
+    name: employee.name,
+    role: employee.role,
+    phone: employee.phone,
+    email: employee.email,
+    city: employee.city,
+    lat: employee.lat,
+    lng: employee.lng,
+    skills: employee.skills,
+    photo_url: employee.photo_url,
+    dni: employee.dni,
+    shirt_size: employee.shirt_size,
+    pants_size: employee.pants_size,
+    shoe_size: employee.shoe_size,
+    epi_size: employee.epi_size,
+    status: employee.status
   };
 }
 
@@ -173,8 +281,70 @@ function nightHoursBetween(start, end) {
   return Math.round((nightMinutes / 60) * 100) / 100;
 }
 
+function googlePublicIcsUrl(calendarId = DEFAULT_GOOGLE_CALENDAR_ID) {
+  const id = String(calendarId || "").trim();
+  return id ? `https://calendar.google.com/calendar/ical/${encodeURIComponent(id)}/public/basic.ics` : "";
+}
+
+function ensureCalendarSettings() {
+  const defaults = {
+    google_calendar_id: DEFAULT_GOOGLE_CALENDAR_ID,
+    google_calendar_api_key: "",
+    google_calendar_public_ics_url: googlePublicIcsUrl(DEFAULT_GOOGLE_CALENDAR_ID),
+    google_calendar_embed_url: DEFAULT_GOOGLE_CALENDAR_EMBED_URL,
+    google_calendar_sync_enabled: "true",
+    google_calendar_service_account_json: "",
+    google_calendar_delegated_user: "",
+    google_calendar_oauth_client_json: "",
+    google_calendar_oauth_refresh_token: "",
+    google_calendar_oauth_connected_at: ""
+  };
+  for (const [key, value] of Object.entries(defaults)) {
+    run("INSERT OR IGNORE INTO company_settings (key, value) VALUES (?, ?)", [key, value]);
+  }
+  const token = get("SELECT value FROM company_settings WHERE key = 'calendar_feed_token'");
+  if (!token?.value) {
+    run("INSERT OR REPLACE INTO company_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)", [
+      "calendar_feed_token",
+      randomToken()
+    ]);
+  }
+}
+
 function settingMap() {
+  ensureCalendarSettings();
   return Object.fromEntries(all("SELECT key, value FROM company_settings").map((row) => [row.key, row.value]));
+}
+
+function settingsForAdmin() {
+  const settings = settingMap();
+  const serviceAccount = googleServiceAccountCredentials(settings);
+  const oauthClient = googleOAuthClientCredentials(settings);
+  return {
+    ...settings,
+    google_calendar_service_account_json: "",
+    google_calendar_service_account_email: serviceAccount?.client_email || "",
+    google_calendar_service_account_configured: serviceAccount ? "true" : "false",
+    google_calendar_oauth_client_json: "",
+    google_calendar_oauth_refresh_token: "",
+    google_calendar_oauth_client_id: oauthClient?.client_id || "",
+    google_calendar_oauth_client_configured: oauthClient ? "true" : "false",
+    google_calendar_oauth_connected: settings.google_calendar_oauth_refresh_token ? "true" : "false"
+  };
+}
+
+function sanitizeSettingsAudit(body) {
+  const sanitized = { ...body };
+  for (const key of [
+    "google_calendar_api_key",
+    "google_calendar_public_ics_url",
+    "google_calendar_service_account_json",
+    "google_calendar_oauth_client_json",
+    "google_calendar_oauth_refresh_token"
+  ]) {
+    if (sanitized[key]) sanitized[key] = "[configurado]";
+  }
+  return sanitized;
 }
 
 function numberSetting(settings, key, fallback) {
@@ -223,6 +393,26 @@ function cleanAvailabilityStatus(status, fallback = "solicitado") {
 
 function cleanAssignmentStatus(status, fallback = "confirmado") {
   return ["confirmado", "pendiente", "bloqueado"].includes(status) ? status : fallback;
+}
+
+function isTeamLeaderRole(role) {
+  return String(role || "").toLowerCase().includes("jefe");
+}
+
+function employeeRoleFromBody(body, fallback = "Montaje") {
+  return body.teamLeader === true || body.teamLeader === "on" || body.teamLeader === "true"
+    ? "Jefe de equipo"
+    : body.role || fallback;
+}
+
+function employeeSkillsFromBody(body, fallback = []) {
+  const skills = Array.isArray(body.skills) ? body.skills : fallback;
+  if (!isTeamLeaderRole(employeeRoleFromBody(body, ""))) return skills;
+  return Array.from(new Set([...skills, "jefe"]));
+}
+
+function eventPerformed(event, today = formatDate()) {
+  return Boolean(event && (event.status === "finalizado" || String(event.date) < today));
 }
 
 function recoveryCode() {
@@ -425,6 +615,20 @@ function repriceOpenEvents() {
 
 function formatDate(date = new Date()) {
   return date.toISOString().slice(0, 10);
+}
+
+function addIsoDays(dateValue, days) {
+  const [year, month, day] = String(dateValue || formatDate()).split("-").map(Number);
+  const date = new Date(Date.UTC(year, (month || 1) - 1, day || 1));
+  date.setUTCDate(date.getUTCDate() + Number(days || 0));
+  return formatDate(date);
+}
+
+function addTime(time, hours) {
+  const [hour, minute] = String(time || "09:00").split(":").map(Number);
+  const total = ((hour || 0) * 60) + (minute || 0) + Math.round(Number(hours || 0) * 60);
+  const normalized = ((total % 1440) + 1440) % 1440;
+  return `${String(Math.floor(normalized / 60)).padStart(2, "0")}:${String(normalized % 60).padStart(2, "0")}`;
 }
 
 function daysUntil(dateValue, today = formatDate()) {
@@ -925,6 +1129,57 @@ function liveClockState(event, assignment, entries) {
   return "sin_fichar";
 }
 
+function clockProgress(event, assignment, entries) {
+  const accepted = entries.filter((entry) => entry.accepted).sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+  const state = liveClockState(event, assignment, entries);
+  const lastEntry = accepted[0] || null;
+  const canClockIn = ["sin_fichar", "pendiente", "tarde"].includes(state);
+  const canClockOut = state === "en_curso";
+  return {
+    state,
+    lastEntry,
+    nextType: canClockIn ? "entrada" : canClockOut ? "salida" : null,
+    canClockIn,
+    canClockOut
+  };
+}
+
+function employeeServiceClockData(service, employeeId) {
+  const entries = all(
+    `SELECT * FROM time_entries
+     WHERE event_id = ? AND employee_id = ?
+     ORDER BY timestamp DESC`,
+    [service.id, employeeId]
+  );
+  const progress = clockProgress(service, { status: service.assignment_status }, entries);
+  return {
+    ...service,
+    clock_state: progress.state,
+    next_clock_type: progress.nextType,
+    last_clock_type: progress.lastEntry?.type || null,
+    last_clock_at: progress.lastEntry?.timestamp || null,
+    can_clock_in: progress.canClockIn ? 1 : 0,
+    can_clock_out: progress.canClockOut ? 1 : 0
+  };
+}
+
+function clockSequenceError(event, assignment, employeeId, type) {
+  const entries = all(
+    `SELECT * FROM time_entries
+     WHERE event_id = ? AND employee_id = ?
+     ORDER BY timestamp DESC`,
+    [event.id, employeeId]
+  );
+  const progress = clockProgress(event, assignment, entries);
+  if (type === "entrada" && !progress.canClockIn) {
+    return progress.state === "en_curso" ? "Entrada ya registrada" : "Servicio ya finalizado para este operario";
+  }
+  if (type === "salida" && !progress.canClockOut) {
+    return progress.state === "finalizado" ? "Salida ya registrada" : "Primero debes fichar entrada";
+  }
+  return null;
+}
+
 function livePayload(date = formatDate()) {
   const events = listEvents({ from: date, to: date });
   const enrichedEvents = events.map((event) => {
@@ -1023,6 +1278,11 @@ function eventDetail(eventId) {
   event.incidents = all("SELECT * FROM incidents WHERE event_id = ? ORDER BY created_at DESC", [eventId]);
   event.deliveryNote = get("SELECT * FROM delivery_notes WHERE event_id = ?", [eventId]) || null;
   return event;
+}
+
+function eventDetailByGoogleUid(googleUid) {
+  const row = get("SELECT id FROM events WHERE google_calendar_uid = ?", [googleUid]);
+  return row ? eventDetail(row.id) : null;
 }
 
 function validateAssignment(event, employee) {
@@ -1160,27 +1420,873 @@ function createExcelXml(rows, sheetName = "Eventos") {
 </Workbook>`;
 }
 
+function foldIcsLine(line) {
+  const chunks = [];
+  let text = String(line);
+  while (text.length > 74) {
+    chunks.push(text.slice(0, 74));
+    text = ` ${text.slice(74)}`;
+  }
+  chunks.push(text);
+  return chunks.join("\r\n");
+}
+
+function icsEscape(value) {
+  return String(value ?? "")
+    .replaceAll("\\", "\\\\")
+    .replaceAll("\n", "\\n")
+    .replaceAll(",", "\\,")
+    .replaceAll(";", "\\;");
+}
+
+function icsDateTime(date, time) {
+  return `${String(date || "").replaceAll("-", "")}T${String(time || "00:00").replace(":", "")}00`;
+}
+
+function appOriginFromRequest(req) {
+  const protocol = req.headers["x-forwarded-proto"] || "http";
+  const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
+  return `${protocol}://${host}`;
+}
+
+function assignmentSummary(assignments = []) {
+  const active = assignments.filter((assignment) => assignment.status !== "bloqueado");
+  if (!active.length) return "Sin personal asignado";
+  return active.map((assignment) => `${assignment.name} (${assignment.role})`).join(", ");
+}
+
+function createMarfanCalendarIcs(events, origin = "https://marfancrew.local") {
+  const now = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//MARFAN CREW ERP//Calendario Operativo//ES",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    "X-WR-CALNAME:MARFAN CREW ERP",
+    "X-WR-TIMEZONE:Europe/Madrid"
+  ];
+  for (const event of events) {
+    const description = [
+      `Cliente: ${event.client_name || ""}`,
+      `Estado: ${event.status || ""}`,
+      `Jefe de equipo: ${event.team_leader_name || "Pendiente"}`,
+      `Personal: ${assignmentSummary(event.assignments)}`,
+      `Requerido: ${event.required_total || 0}`,
+      `Notas: ${event.notes || ""}`,
+      `Ficha interna: ${origin}/#evento-${event.id}`
+    ].join("\n");
+    lines.push(
+      "BEGIN:VEVENT",
+      `UID:${event.id}@marfancrew-erp`,
+      `DTSTAMP:${now}`,
+      `DTSTART;TZID=Europe/Madrid:${icsDateTime(event.date, event.start_time)}`,
+      `DTEND;TZID=Europe/Madrid:${icsDateTime(event.date, event.end_time)}`,
+      `SUMMARY:${icsEscape(event.name)}`,
+      `LOCATION:${icsEscape(event.address || event.location || "")}`,
+      `DESCRIPTION:${icsEscape(description)}`,
+      `STATUS:${event.status === "finalizado" ? "CONFIRMED" : "TENTATIVE"}`,
+      "END:VEVENT"
+    );
+  }
+  lines.push("END:VCALENDAR");
+  return `${lines.map(foldIcsLine).join("\r\n")}\r\n`;
+}
+
+function upsertGoogleCalendarClient() {
+  const id = "cli_google_calendar";
+  run(
+    `INSERT OR IGNORE INTO clients (id, name, legal_name, contact_name, email, phone, address, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      "Google Calendar",
+      "Google Calendar",
+      "Importacion calendario",
+      "",
+      "",
+      "",
+      "Cliente tecnico para eventos importados desde Google Calendar."
+    ]
+  );
+  return id;
+}
+
+function importGoogleCalendarEvent(body, actor) {
+  const googleUid = String(body.googleUid || body.id || "").trim();
+  if (!googleUid) {
+    const error = new Error("Identificador Google obligatorio");
+    error.status = 400;
+    throw error;
+  }
+  const existing = eventDetailByGoogleUid(googleUid);
+  if (existing) return { event: existing, created: false };
+
+  const settings = settingMap();
+  const clientId = upsertGoogleCalendarClient();
+  const id = randomId("evt");
+  const date = body.date || formatDate();
+  const startTime = body.startTime || body.start_time || "09:00";
+  const endTime = body.endTime || body.end_time || addTime(startTime, 2);
+  const location = body.location || "Ubicacion pendiente";
+  const lat = Number(body.lat || settings.base_lat || 36.7213);
+  const lng = Number(body.lng || settings.base_lng || -4.42164);
+  const pricing = calculateServicePricing({
+    startTime,
+    endTime,
+    lat,
+    lng,
+    requirements: [],
+    vehicleCount: 1
+  });
+
+  run(
+    `INSERT INTO events
+      (id, name, client_id, date, start_time, end_time, location, address, lat, lng, team_leader_id,
+       required_total, status, notes, budget, google_maps_url, vehicle_count, base_distance_km, billable_km,
+       kilometre_price, role_price_total, night_price_total, distance_price_total, service_price,
+       google_calendar_uid, google_calendar_source, google_calendar_event_id, google_sync_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      body.name || "Evento Google",
+      clientId,
+      date,
+      startTime,
+      endTime,
+      location,
+      body.address || location,
+      lat,
+      lng,
+      null,
+      0,
+      "sin_jefe",
+      [body.notes || "", "Importado desde Google Calendar. Completa ubicacion, equipo necesario y personal asignado en MARFAN."].filter(Boolean).join("\n\n"),
+      0,
+      body.googleMapsUrl || "",
+      1,
+      pricing.baseDistanceKm,
+      pricing.billableKm,
+      pricing.kilometrePrice,
+      pricing.rolePriceTotal,
+      pricing.nightPriceTotal,
+      pricing.distancePriceTotal,
+      pricing.servicePrice,
+      googleUid,
+      body.source || "google",
+      body.googleEventId || body.google_event_id || null,
+      "imported"
+    ]
+  );
+  audit(actor, "google_event_imported", "event", id, { googleUid, source: body.source || "google" });
+  return { event: eventDetail(id), created: true };
+}
+
+function unfoldIcs(text) {
+  return String(text || "").replace(/\r?\n[ \t]/g, "");
+}
+
+function parseIcsDate(value) {
+  const raw = String(value || "").trim();
+  if (/^\d{8}$/.test(raw)) {
+    return { date: `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`, time: "00:00" };
+  }
+  const match = raw.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/);
+  if (!match) return null;
+  return { date: `${match[1]}-${match[2]}-${match[3]}`, time: `${match[4]}:${match[5]}` };
+}
+
+function parseIcsEvents(text) {
+  const unfolded = unfoldIcs(text);
+  const blocks = unfolded.match(/BEGIN:VEVENT[\s\S]*?END:VEVENT/g) || [];
+  return blocks.map((block, index) => {
+    const props = {};
+    for (const line of block.split(/\r?\n/)) {
+      const separator = line.indexOf(":");
+      if (separator < 0) continue;
+      const key = line.slice(0, separator).split(";")[0].toUpperCase();
+      const value = line.slice(separator + 1)
+        .replaceAll("\\n", "\n")
+        .replaceAll("\\,", ",")
+        .replaceAll("\\;", ";")
+        .replaceAll("\\\\", "\\");
+      props[key] = value;
+    }
+    const start = parseIcsDate(props.DTSTART);
+    if (!start) return null;
+    const end = parseIcsDate(props.DTEND) || { date: start.date, time: start.time };
+    return {
+      id: `google_${Buffer.from(props.UID || `${props.SUMMARY || "evento"}_${index}`).toString("base64url").slice(0, 36)}`,
+      google_uid: props.UID || "",
+      google_event_id: "",
+      source: "google",
+      external: true,
+      name: props.SUMMARY || "Evento Google",
+      client_name: "Google Calendar",
+      date: start.date,
+      start_time: start.time,
+      end_time: end.time,
+      location: props.LOCATION || "",
+      address: props.LOCATION || "",
+      notes: props.DESCRIPTION || "",
+      status: "google",
+      required_total: 0,
+      assigned_count: 0,
+      clocked_count: 0,
+      incident_count: 0,
+      service_price: 0,
+      budget: 0,
+      finance: { cost: 0, benefit: 0, margin: 0 }
+    };
+  }).filter(Boolean);
+}
+
+function googleCalendarIcsUrl(settings) {
+  const explicit = String(settings.google_calendar_public_ics_url || "").trim();
+  if (explicit.includes("/calendar/ical/")) return explicit;
+  const embed = explicit.includes("/calendar/embed") ? explicit : String(settings.google_calendar_embed_url || "").trim();
+  if (embed) {
+    try {
+      const parsed = new URL(embed);
+      const src = parsed.searchParams.get("src");
+      if (src) return googlePublicIcsUrl(src);
+    } catch {}
+  }
+  return googlePublicIcsUrl(settings.google_calendar_id || DEFAULT_GOOGLE_CALENDAR_ID);
+}
+
+function googleDateParts(value, fallbackDate = "") {
+  const raw = String(value || "");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return { date: raw, time: "00:00" };
+  const date = new Date(raw);
+  if (!Number.isFinite(date.getTime())) return { date: fallbackDate, time: "00:00" };
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Madrid",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date).map((part) => [part.type, part.value]));
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}`
+  };
+}
+
+function googleApiDateBound(date, endOfDay = false) {
+  if (!date) return null;
+  return `${date}T${endOfDay ? "23:59:59" : "00:00:00"}+01:00`;
+}
+
+function googleApiEventToCalendarEvent(item, index = 0) {
+  const start = googleDateParts(item.start?.dateTime || item.start?.date);
+  const end = googleDateParts(item.end?.dateTime || item.end?.date, start.date);
+  return {
+    id: `google_${Buffer.from(item.id || item.iCalUID || `${item.summary || "evento"}_${index}`).toString("base64url").slice(0, 36)}`,
+    google_uid: item.iCalUID || item.id || "",
+    google_event_id: item.id || "",
+    source: "google",
+    external: true,
+    name: item.summary || "Evento Google",
+    client_name: "Google Calendar",
+    date: start.date,
+    start_time: start.time,
+    end_time: end.time,
+    location: item.location || "",
+    address: item.location || "",
+    notes: item.description || "",
+    status: "google",
+    required_total: 0,
+    assigned_count: 0,
+    clocked_count: 0,
+    incident_count: 0,
+    service_price: 0,
+    budget: 0,
+    finance: { cost: 0, benefit: 0, margin: 0 }
+  };
+}
+
+async function googleCalendarApiEvents(settings, { from, to } = {}) {
+  const apiKey = String(settings.google_calendar_api_key || "").trim();
+  const calendarId = String(settings.google_calendar_id || DEFAULT_GOOGLE_CALENDAR_ID).trim();
+  if (!apiKey || !calendarId) return null;
+  const params = new URLSearchParams({
+    key: apiKey,
+    singleEvents: "true",
+    orderBy: "startTime",
+    maxResults: "2500",
+    timeZone: "Europe/Madrid"
+  });
+  const min = googleApiDateBound(from);
+  const max = googleApiDateBound(to, true);
+  if (min) params.set("timeMin", min);
+  if (max) params.set("timeMax", max);
+  const sourceUrl = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`;
+  const response = await fetch(`${sourceUrl}?${params}`);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Google Calendar API ${response.status}${detail ? `: ${detail.slice(0, 140)}` : ""}`);
+  }
+  const payload = await response.json();
+  const events = (payload.items || []).map(googleApiEventToCalendarEvent).filter((event) => event.date);
+  return { events, status: "connected_api", sourceUrl };
+}
+
+async function googleCalendarEvents({ from, to } = {}) {
+  const settings = settingMap();
+  const enabled = String(settings.google_calendar_enabled ?? "true") !== "false";
+  if (!enabled) return { events: [], status: "disabled" };
+  try {
+    const apiResult = await googleCalendarApiEvents(settings, { from, to });
+    if (apiResult) return apiResult;
+  } catch (error) {
+    return {
+      events: [],
+      status: "api_error",
+      error: error.message,
+      sourceUrl: `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(settings.google_calendar_id || DEFAULT_GOOGLE_CALENDAR_ID)}/events`
+    };
+  }
+  const url = googleCalendarIcsUrl(settings);
+  if (!url) return { events: [], status: "not_configured" };
+  try {
+    const response = await fetch(url, { headers: { "user-agent": "MARFAN-CREW-ERP/1.0" } });
+    if (!response.ok) {
+      if (response.status === 404 && settings.google_calendar_embed_url) {
+        return {
+          events: [],
+          status: "embed_only",
+          message: "Google permite ver el iframe, pero no expone un iCal publico. Pega una API key o la URL iCal secreta para mostrar eventos como tarjetas.",
+          sourceUrl: url
+        };
+      }
+      throw new Error(`Google Calendar ${response.status}`);
+    }
+    let events = parseIcsEvents(await response.text());
+    if (from) events = events.filter((event) => event.date >= from);
+    if (to) events = events.filter((event) => event.date <= to);
+    return { events, status: "connected", sourceUrl: url };
+  } catch (error) {
+    return { events: [], status: "error", error: error.message, sourceUrl: url };
+  }
+}
+
+function base64Url(input) {
+  return Buffer.from(input)
+    .toString("base64")
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replaceAll("=", "");
+}
+
+function parseServiceAccountJson(rawValue) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return null;
+  const jsonText = raw.startsWith("{") ? raw : fs.existsSync(path.resolve(raw)) ? fs.readFileSync(path.resolve(raw), "utf8") : raw;
+  const parsed = JSON.parse(jsonText);
+  if (parsed.private_key) parsed.private_key = String(parsed.private_key).replaceAll("\\n", "\n");
+  return parsed;
+}
+
+function googleServiceAccountCredentials(settings = settingMap(), options = {}) {
+  try {
+    const fromJson = parseServiceAccountJson(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || settings.google_calendar_service_account_json);
+    const credentials = fromJson || {
+      client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || settings.google_calendar_service_account_email,
+      private_key: process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || settings.google_calendar_service_account_private_key,
+      private_key_id: process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY_ID || settings.google_calendar_service_account_private_key_id,
+      token_uri: process.env.GOOGLE_SERVICE_ACCOUNT_TOKEN_URI || GOOGLE_OAUTH_TOKEN_URL
+    };
+    if (credentials.private_key) credentials.private_key = String(credentials.private_key).replaceAll("\\n", "\n");
+    if (!credentials.client_email || !credentials.private_key) return null;
+    return {
+      client_email: credentials.client_email,
+      private_key: credentials.private_key,
+      private_key_id: credentials.private_key_id || "",
+      token_uri: credentials.token_uri || GOOGLE_OAUTH_TOKEN_URL
+    };
+  } catch (error) {
+    if (options.throwOnInvalid) throw Object.assign(new Error("Credencial de Google Calendar no valida"), { cause: error });
+    return null;
+  }
+}
+
+function parseGoogleOAuthClientJson(rawValue) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return null;
+  const jsonText = raw.startsWith("{") ? raw : fs.existsSync(path.resolve(raw)) ? fs.readFileSync(path.resolve(raw), "utf8") : raw;
+  const parsed = JSON.parse(jsonText);
+  const client = parsed.installed || parsed.web || parsed;
+  if (!client.client_id) return null;
+  return {
+    client_id: client.client_id,
+    client_secret: client.client_secret || "",
+    auth_uri: client.auth_uri || "https://accounts.google.com/o/oauth2/v2/auth",
+    token_uri: client.token_uri || GOOGLE_OAUTH_TOKEN_URL,
+    redirect_uris: client.redirect_uris || []
+  };
+}
+
+function googleOAuthClientCredentials(settings = settingMap(), options = {}) {
+  try {
+    const fromJson = parseGoogleOAuthClientJson(process.env.GOOGLE_OAUTH_CLIENT_JSON || settings.google_calendar_oauth_client_json);
+    const credentials = fromJson || {
+      client_id: process.env.GOOGLE_OAUTH_CLIENT_ID || settings.google_calendar_oauth_client_id,
+      client_secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET || settings.google_calendar_oauth_client_secret,
+      auth_uri: "https://accounts.google.com/o/oauth2/v2/auth",
+      token_uri: GOOGLE_OAUTH_TOKEN_URL,
+      redirect_uris: []
+    };
+    if (!credentials.client_id) return null;
+    return credentials;
+  } catch (error) {
+    if (options.throwOnInvalid) throw Object.assign(new Error("Cliente OAuth de Google no valido"), { cause: error });
+    return null;
+  }
+}
+
+function googleSyncEnabled(settings) {
+  return String(settings.google_calendar_enabled ?? "true") !== "false"
+    && String(settings.google_calendar_sync_enabled ?? "true") !== "false";
+}
+
+async function googleCalendarAccessToken(settings) {
+  const oauthRefreshToken = String(settings.google_calendar_oauth_refresh_token || process.env.GOOGLE_OAUTH_REFRESH_TOKEN || "").trim();
+  const oauthClient = googleOAuthClientCredentials(settings);
+  if (oauthRefreshToken && oauthClient) {
+    return googleOAuthAccessToken(settings, oauthClient, oauthRefreshToken);
+  }
+  if (oauthClient && !oauthRefreshToken) {
+    const error = new Error("Google Calendar OAuth pendiente de conectar");
+    error.status = "pending_auth";
+    throw error;
+  }
+
+  const credentials = googleServiceAccountCredentials(settings, { throwOnInvalid: true });
+  if (!credentials) {
+    const error = new Error("Falta conectar Google Calendar o configurar una cuenta de servicio");
+    error.status = "pending_auth";
+    throw error;
+  }
+  const delegatedUser = String(settings.google_calendar_delegated_user || process.env.GOOGLE_CALENDAR_DELEGATED_USER || "").trim();
+  const cacheKey = `${credentials.client_email}:${credentials.private_key_id}:${delegatedUser}`;
+  if (googleAccessTokenCache?.key === cacheKey && googleAccessTokenCache.expiresAt > Date.now() + 60_000) {
+    return googleAccessTokenCache.token;
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const tokenUri = credentials.token_uri || GOOGLE_OAUTH_TOKEN_URL;
+  const header = {
+    alg: "RS256",
+    typ: "JWT",
+    ...(credentials.private_key_id ? { kid: credentials.private_key_id } : {})
+  };
+  const payload = {
+    iss: credentials.client_email,
+    scope: GOOGLE_CALENDAR_EVENTS_SCOPE,
+    aud: tokenUri,
+    iat: now,
+    exp: now + 3600,
+    ...(delegatedUser ? { sub: delegatedUser } : {})
+  };
+  const unsigned = `${base64Url(JSON.stringify(header))}.${base64Url(JSON.stringify(payload))}`;
+  const signature = crypto.createSign("RSA-SHA256").update(unsigned).sign(credentials.private_key);
+  const assertion = `${unsigned}.${base64Url(signature)}`;
+  const response = await fetch(tokenUri, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion
+    })
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(`Google OAuth ${response.status}: ${body.error_description || body.error || "sin detalle"}`);
+  }
+  googleAccessTokenCache = {
+    key: cacheKey,
+    token: body.access_token,
+    expiresAt: Date.now() + Math.max(Number(body.expires_in || 3600) - 60, 60) * 1000
+  };
+  return body.access_token;
+}
+
+async function googleOAuthAccessToken(settings, client, refreshToken) {
+  const cacheKey = `oauth:${client.client_id}:${crypto.createHash("sha256").update(refreshToken).digest("hex")}`;
+  if (googleAccessTokenCache?.key === cacheKey && googleAccessTokenCache.expiresAt > Date.now() + 60_000) {
+    return googleAccessTokenCache.token;
+  }
+  const response = await fetch(client.token_uri || GOOGLE_OAUTH_TOKEN_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: client.client_id,
+      ...(client.client_secret ? { client_secret: client.client_secret } : {}),
+      refresh_token: refreshToken,
+      grant_type: "refresh_token"
+    })
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(`Google OAuth ${response.status}: ${body.error_description || body.error || "sin detalle"}`);
+  }
+  googleAccessTokenCache = {
+    key: cacheKey,
+    token: body.access_token,
+    expiresAt: Date.now() + Math.max(Number(body.expires_in || 3600) - 60, 60) * 1000
+  };
+  return body.access_token;
+}
+
+async function exchangeGoogleOAuthCode(client, code, codeVerifier, redirectUri) {
+  const response = await fetch(client.token_uri || GOOGLE_OAUTH_TOKEN_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: client.client_id,
+      ...(client.client_secret ? { client_secret: client.client_secret } : {}),
+      code,
+      code_verifier: codeVerifier,
+      redirect_uri: redirectUri,
+      grant_type: "authorization_code"
+    })
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(`Google OAuth ${response.status}: ${body.error_description || body.error || "sin detalle"}`);
+  }
+  if (!body.refresh_token) {
+    throw new Error("Google no ha devuelto refresh token. Repite la conexion aceptando permisos.");
+  }
+  return body;
+}
+
+function storeGoogleOAuthTokens(tokens) {
+  transaction(() => {
+    run(
+      `INSERT INTO company_settings (key, value, updated_at)
+       VALUES ('google_calendar_oauth_refresh_token', ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
+      [tokens.refresh_token]
+    );
+    run(
+      `INSERT INTO company_settings (key, value, updated_at)
+       VALUES ('google_calendar_oauth_connected_at', ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
+      [new Date().toISOString()]
+    );
+  });
+  googleAccessTokenCache = null;
+}
+
+function oauthSuccessPage(appUrl) {
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Google Calendar conectado</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;background:#f7f8fa;color:#111827}.box{max-width:520px;background:white;border:1px solid #e5e7eb;border-radius:14px;padding:28px;box-shadow:0 24px 60px rgba(15,23,42,.12)}a{display:inline-block;margin-top:18px;background:#111827;color:white;text-decoration:none;padding:12px 16px;border-radius:10px}</style></head><body><main class="box"><h1>Google Calendar conectado</h1><p>MARFAN ya puede crear y actualizar eventos en Google Calendar cuando guardes cambios.</p><a href="${escHtml(appUrl)}">Volver a MARFAN</a></main></body></html>`;
+}
+
+function oauthErrorPage(message, appUrl) {
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Error Google Calendar</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;background:#fff7ed;color:#111827}.box{max-width:560px;background:white;border:1px solid #fed7aa;border-radius:14px;padding:28px;box-shadow:0 24px 60px rgba(154,52,18,.14)}code{display:block;white-space:pre-wrap;background:#fff7ed;padding:12px;border-radius:10px}a{display:inline-block;margin-top:18px;background:#111827;color:white;text-decoration:none;padding:12px 16px;border-radius:10px}</style></head><body><main class="box"><h1>No se pudo conectar Google</h1><code>${escHtml(message)}</code><a href="${escHtml(appUrl)}">Volver a MARFAN</a></main></body></html>`;
+}
+
+function createGoogleOAuthAuthorizationUrl({ client, redirectUri, state, codeChallenge }) {
+  const authUrl = new URL(client.auth_uri || "https://accounts.google.com/o/oauth2/v2/auth");
+  authUrl.searchParams.set("client_id", client.client_id);
+  authUrl.searchParams.set("redirect_uri", redirectUri);
+  authUrl.searchParams.set("response_type", "code");
+  authUrl.searchParams.set("scope", GOOGLE_CALENDAR_EVENTS_SCOPE);
+  authUrl.searchParams.set("access_type", "offline");
+  authUrl.searchParams.set("prompt", "consent");
+  authUrl.searchParams.set("state", state);
+  authUrl.searchParams.set("code_challenge", codeChallenge);
+  authUrl.searchParams.set("code_challenge_method", "S256");
+  return authUrl.toString();
+}
+
+function startGoogleOAuthLoopback({ client, actor, appUrl }) {
+  return new Promise((resolve, reject) => {
+    const state = randomToken();
+    const codeVerifier = randomToken() + randomToken();
+    const codeChallenge = base64Url(crypto.createHash("sha256").update(codeVerifier).digest());
+    let redirectUri = "";
+    const server = http.createServer(async (req, res) => {
+      const callbackUrl = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
+      try {
+        const expected = googleOauthLoopbacks.get(state);
+        if (!expected || callbackUrl.searchParams.get("state") !== state) {
+          throw new Error("Estado OAuth no valido");
+        }
+        if (callbackUrl.searchParams.get("error")) {
+          throw new Error(callbackUrl.searchParams.get("error_description") || callbackUrl.searchParams.get("error"));
+        }
+        const code = callbackUrl.searchParams.get("code");
+        if (!code) throw new Error("Google no devolvio codigo de autorizacion");
+        const tokens = await exchangeGoogleOAuthCode(client, code, codeVerifier, redirectUri);
+        storeGoogleOAuthTokens(tokens);
+        audit(actor, "google_calendar_oauth_connected", "company_settings", "google_calendar", {
+          clientId: client.client_id
+        });
+        send(res, 200, oauthSuccessPage(appUrl), { "content-type": "text/html; charset=utf-8" });
+      } catch (error) {
+        audit(actor, "google_calendar_oauth_failed", "company_settings", "google_calendar", {
+          error: error.message
+        });
+        send(res, 400, oauthErrorPage(error.message, appUrl), { "content-type": "text/html; charset=utf-8" });
+      } finally {
+        const item = googleOauthLoopbacks.get(state);
+        if (item?.timeout) clearTimeout(item.timeout);
+        googleOauthLoopbacks.delete(state);
+        setTimeout(() => item?.server.close(), 250);
+      }
+    });
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      redirectUri = `http://127.0.0.1:${address.port}`;
+      const timeout = setTimeout(() => {
+        googleOauthLoopbacks.delete(state);
+        server.close();
+      }, 10 * 60 * 1000);
+      googleOauthLoopbacks.set(state, { server, timeout });
+      const authUrl = createGoogleOAuthAuthorizationUrl({ client, redirectUri, state, codeChallenge });
+      resolve({ authUrl, redirectUri });
+    });
+  });
+}
+
+async function googleCalendarWriteRequest(settings, method, suffix = "", payload = null, query = {}) {
+  const token = await googleCalendarAccessToken(settings);
+  const calendarId = String(settings.google_calendar_id || DEFAULT_GOOGLE_CALENDAR_ID).trim();
+  if (!calendarId) throw new Error("ID de calendario Google obligatorio");
+  const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events${suffix}`);
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
+  }
+  const response = await fetch(url, {
+    method,
+    headers: {
+      authorization: `Bearer ${token}`,
+      ...(payload ? { "content-type": "application/json; charset=utf-8" } : {})
+    },
+    body: payload ? JSON.stringify(payload) : undefined
+  });
+  const body = await response.json().catch(async () => ({ error: await response.text().catch(() => "") }));
+  if (!response.ok) {
+    const detail = body.error?.message || body.error_description || body.error || "sin detalle";
+    throw new Error(`Google Calendar ${response.status}: ${detail}`);
+  }
+  return body;
+}
+
+async function findGoogleCalendarEventByICalUid(settings, iCalUid) {
+  if (!iCalUid) return null;
+  const payload = await googleCalendarWriteRequest(settings, "GET", "", null, {
+    iCalUID: iCalUid,
+    maxResults: 1,
+    singleEvents: "false"
+  });
+  return payload.items?.[0] || null;
+}
+
+function googleDateTime(date, time) {
+  const normalized = String(time || "00:00").slice(0, 5);
+  return `${date}T${normalized}:00`;
+}
+
+function googleEventDateRange(event) {
+  const startDate = event.date;
+  const endDate = toMinutes(event.end_time) <= toMinutes(event.start_time)
+    ? addIsoDays(event.date, 1)
+    : event.date;
+  return {
+    start: { dateTime: googleDateTime(startDate, event.start_time), timeZone: GOOGLE_CALENDAR_TIME_ZONE },
+    end: { dateTime: googleDateTime(endDate, event.end_time), timeZone: GOOGLE_CALENDAR_TIME_ZONE }
+  };
+}
+
+function requirementsSummary(requirements = []) {
+  if (!requirements.length) return "Sin necesidades definidas";
+  return requirements.map((requirement) => `${requirement.role} x${requirement.count}`).join(", ");
+}
+
+function googleEventPayloadFromMarfanEvent(event, origin = "https://marfancrew.local") {
+  const dateRange = googleEventDateRange(event);
+  const description = [
+    "MARFAN CREW ERP",
+    `Cliente: ${event.client_name || ""}`,
+    `Estado: ${event.status || ""}`,
+    `Jefe de equipo: ${event.team_leader_name || "Pendiente"}`,
+    `Personal asignado: ${assignmentSummary(event.assignments)}`,
+    `Personal requerido: ${requirementsSummary(event.requirements)}`,
+    `Notas: ${event.notes || ""}`,
+    `Ficha interna: ${origin}/#evento-${event.id}`
+  ].join("\n");
+  return {
+    summary: event.name,
+    location: event.address || event.location || "",
+    description,
+    start: dateRange.start,
+    end: dateRange.end,
+    extendedProperties: {
+      private: {
+        marfan_event_id: event.id,
+        marfan_status: event.status || "",
+        marfan_required_total: String(event.required_total || 0)
+      }
+    },
+    reminders: { useDefault: true }
+  };
+}
+
+function updateGoogleSyncStatus(eventId, status, error = "") {
+  run(
+    "UPDATE events SET google_sync_status = ?, google_sync_error = ? WHERE id = ?",
+    [status, error ? String(error).slice(0, 900) : null, eventId]
+  );
+}
+
+function updateGoogleSyncSuccess(eventId, googleEvent) {
+  run(
+    `UPDATE events
+     SET google_calendar_event_id = COALESCE(?, google_calendar_event_id),
+         google_calendar_uid = COALESCE(?, google_calendar_uid),
+         google_calendar_html_link = COALESCE(?, google_calendar_html_link),
+         google_sync_status = 'synced',
+         google_sync_error = NULL,
+         google_synced_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      googleEvent.id || null,
+      googleEvent.iCalUID || null,
+      googleEvent.htmlLink || null,
+      eventId
+    ]
+  );
+}
+
+async function syncEventToGoogleCalendar(eventId, actor, reason = "event_updated", origin = "https://marfancrew.local") {
+  const settings = settingMap();
+  if (!googleSyncEnabled(settings)) {
+    updateGoogleSyncStatus(eventId, "disabled", "");
+    return { status: "disabled" };
+  }
+
+  const event = eventDetail(eventId);
+  if (!event) return { status: "missing" };
+
+  try {
+    googleServiceAccountCredentials(settings, { throwOnInvalid: true });
+    let googleEventId = event.google_calendar_event_id;
+    if (!googleEventId && event.google_calendar_uid) {
+      const found = await findGoogleCalendarEventByICalUid(settings, event.google_calendar_uid);
+      googleEventId = found?.id || null;
+    }
+    const payload = googleEventPayloadFromMarfanEvent(event, origin);
+    const googleEvent = googleEventId
+      ? await googleCalendarWriteRequest(settings, "PATCH", `/${encodeURIComponent(googleEventId)}`, payload)
+      : await googleCalendarWriteRequest(settings, "POST", "", payload);
+    updateGoogleSyncSuccess(eventId, googleEvent);
+    audit(actor, "google_calendar_synced", "event", eventId, {
+      reason,
+      googleEventId: googleEvent.id,
+      iCalUID: googleEvent.iCalUID
+    });
+    return { status: "synced", googleEvent };
+  } catch (error) {
+    const status = error.status === "pending_auth" ? "pending_auth" : "error";
+    updateGoogleSyncStatus(eventId, status, error.message);
+    audit(actor, "google_calendar_sync_failed", "event", eventId, {
+      reason,
+      status,
+      error: error.message
+    });
+    return { status, error: error.message };
+  }
+}
+
 function createPdfLines(title, lines) {
   const escapePdf = (value) => String(value)
     .replaceAll("\\", "\\\\")
     .replaceAll("(", "\\(")
     .replaceAll(")", "\\)");
-  const content = [
-    "BT",
-    "/F1 16 Tf",
-    "40 805 Td",
-    `(${escapePdf(title)}) Tj`,
-    "/F1 8 Tf",
-    "0 -20 Td",
-    ...lines.slice(1).flatMap((line) => [`(${escapePdf(line).slice(0, 138)}) Tj`, "0 -13 Td"]),
-    "ET"
-  ].join("\n");
+  const safeText = (value, max = 112) => escapePdf(String(value ?? "").replace(/\s+/g, " ").trim()).slice(0, max);
+  const ops = [];
+  const fill = (r, g, b) => ops.push(`${r} ${g} ${b} rg`);
+  const stroke = (r, g, b) => ops.push(`${r} ${g} ${b} RG`);
+  const rect = (x, y, w, h, mode = "f") => ops.push(`${x} ${y} ${w} ${h} re ${mode}`);
+  const text = (value, x, y, size = 9, font = "F1", color = [0.06, 0.09, 0.16]) => {
+    fill(...color);
+    ops.push("BT", `/${font} ${size} Tf`, `${x} ${y} Td`, `(${safeText(value, 160)}) Tj`, "ET");
+  };
+
+  fill(0.965, 0.976, 0.988);
+  rect(0, 0, 595, 842);
+  fill(0.024, 0.063, 0.11);
+  rect(0, 758, 595, 84);
+  fill(0.027, 0.58, 0.33);
+  rect(0, 758, 10, 84);
+  fill(1, 1, 1);
+  rect(40, 784, 34, 34);
+  text("M", 51, 794, 18, "F2", [0.024, 0.063, 0.11]);
+  text("MARFAN CREW", 84, 806, 11, "F2", [1, 1, 1]);
+  text("ERP operativo para eventos", 84, 790, 8, "F1", [0.78, 0.86, 0.94]);
+  text(title, 40, 720, 20, "F2", [0.024, 0.063, 0.11]);
+  text(`Generado ${new Date().toLocaleString("es-ES")}`, 420, 722, 8, "F1", [0.36, 0.43, 0.53]);
+  fill(0.027, 0.58, 0.33);
+  rect(40, 704, 515, 3);
+
+  let y = 674;
+  let row = 0;
+  for (const rawLine of lines.slice(1)) {
+    const line = String(rawLine || "");
+    if (!line.trim()) {
+      y -= 8;
+      continue;
+    }
+    if (y < 62) {
+      text("Documento truncado por longitud. Exporta CSV/Excel para ver el detalle completo.", 40, y, 8, "F1", [0.55, 0.29, 0.02]);
+      break;
+    }
+    if (line.includes(" | ")) {
+      const isHeader = row === 0 || /operario|evento|cliente|ingresos|coste|beneficio/i.test(line);
+      fill(isHeader ? 0.024 : row % 2 ? 1 : 0.985, isHeader ? 0.063 : row % 2 ? 1 : 0.988, isHeader ? 0.11 : row % 2 ? 1 : 0.992);
+      rect(40, y - 7, 515, 18);
+      const cells = line.split(" | ");
+      const widths = [112, 94, 94, 104, 108];
+      let x = 48;
+      cells.slice(0, 5).forEach((cell, index) => {
+        text(cell, x, y - 1, 7.3, isHeader ? "F2" : "F1", isHeader ? [1, 1, 1] : [0.06, 0.09, 0.16]);
+        x += widths[index] || 96;
+      });
+      row += 1;
+      y -= 19;
+      continue;
+    }
+    if (/^[A-ZÁÉÍÓÚÑ0-9][^:]{0,42}$/.test(line) && line.length < 48) {
+      text(line, 40, y, 11, "F2", [0.024, 0.063, 0.11]);
+      y -= 17;
+      continue;
+    }
+    fill(1, 1, 1);
+    stroke(0.85, 0.88, 0.92);
+    rect(40, y - 8, 515, 20, "B");
+    text(line, 50, y - 1, 8, "F1", [0.16, 0.22, 0.31]);
+    y -= 23;
+  }
+
+  fill(0.024, 0.063, 0.11);
+  rect(0, 0, 595, 36);
+  text("MARFAN CREW ERP", 40, 14, 9, "F2", [1, 1, 1]);
+  text("Documento corporativo generado automaticamente", 374, 14, 7, "F1", [0.78, 0.86, 0.94]);
+  const content = ops.join("\n");
 
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
     `<< /Length ${Buffer.byteLength(content, "utf8")} >>\nstream\n${content}\nendstream`
   ];
   let pdf = "%PDF-1.4\n";
@@ -1525,6 +2631,163 @@ function deliveryNoteHtml(event) {
     </html>`;
 }
 
+function documentStatusLabel(status) {
+  const labels = {
+    vigente: "Vigente",
+    proximo: "Proximo a caducar",
+    caducado: "Caducado",
+    pendiente: "Pendiente"
+  };
+  return labels[status] || "Pendiente";
+}
+
+function clientDossierData(event) {
+  const client = get("SELECT * FROM clients WHERE id = ?", [event.client_id]) || {};
+  const assignments = (event.assignments || []).filter((assignment) => assignment.status !== "bloqueado");
+  const rows = assignments.map((assignment) => {
+    const documents = listDocuments({ employeeId: assignment.employee_id });
+    const blockers = documents.filter((document) => ["caducado", "pendiente"].includes(document.status));
+    const warnings = documents.filter((document) => document.status === "proximo");
+    return {
+      assignment,
+      documents,
+      blockers,
+      warnings,
+      status: blockers.length ? "bloqueado" : warnings.length ? "aviso" : "ok"
+    };
+  });
+  return {
+    event,
+    client,
+    rows,
+    totals: {
+      staff: rows.length,
+      documents: rows.reduce((sum, row) => sum + row.documents.length, 0),
+      blockers: rows.reduce((sum, row) => sum + row.blockers.length, 0),
+      warnings: rows.reduce((sum, row) => sum + row.warnings.length, 0)
+    }
+  };
+}
+
+function clientDossierPdf(event) {
+  const dossier = clientDossierData(event);
+  const lines = [
+    `Dossier cliente - ${event.name}`,
+    `MARFAN CREW ERP · Generado: ${new Date().toLocaleString("es-ES")}`,
+    `Evento: ${event.id} · Fecha: ${event.date} · Horario: ${event.start_time}-${event.end_time}`,
+    `Cliente: ${dossier.client.name || event.client_name} · CIF/NIF: ${dossier.client.tax_id || ""}`,
+    `Ubicacion: ${event.location} · Direccion: ${event.address || event.location}`,
+    `Jefe de equipo: ${event.team_leader_name || "Pendiente"}`,
+    `Precio servicio: ${Number(event.service_price || event.budget || 0).toFixed(2)} EUR`,
+    "",
+    `Equipo: ${dossier.totals.staff} operarios · Documentos: ${dossier.totals.documents} · Bloqueos: ${dossier.totals.blockers} · Avisos: ${dossier.totals.warnings}`,
+    "",
+    "Operario | Rol | Estado docs | Documentacion"
+  ];
+  for (const row of dossier.rows.slice(0, 24)) {
+    const docs = row.documents.length
+      ? row.documents.map((document) => `${document.type}:${documentStatusLabel(document.status)}${document.expires_at ? ` ${document.expires_at}` : ""}`).join(", ")
+      : "Sin documentos";
+    lines.push([
+      row.assignment.name,
+      row.assignment.role,
+      row.status === "bloqueado" ? "Con bloqueos" : row.status === "aviso" ? "Con avisos" : "OK",
+      docs
+    ].join(" | "));
+  }
+  if (dossier.rows.length > 24) lines.push(`... ${dossier.rows.length - 24} operarios adicionales`);
+  if (!dossier.rows.length) lines.push("Sin operarios asignados");
+  lines.push("", "Nota: este dossier resume estado documental y equipo asignado. Los archivos originales permanecen protegidos en MARFAN CREW ERP.");
+  return createPdfLines(`Dossier ${event.name}`, lines);
+}
+
+function clientDossierHtml(event) {
+  const dossier = clientDossierData(event);
+  const rows = dossier.rows.map((row) => `
+    <tr>
+      <td>
+        <strong>${escHtml(row.assignment.name)}</strong><br />
+        <span class="muted">${escHtml(row.assignment.phone || row.assignment.email || "")}</span>
+      </td>
+      <td>${escHtml(row.assignment.role)}</td>
+      <td><span class="tag ${row.status}">${row.status === "bloqueado" ? "Con bloqueos" : row.status === "aviso" ? "Con avisos" : "OK"}</span></td>
+      <td>
+        ${row.documents.length ? row.documents.map((document) => `
+          <div class="doc-line">
+            <strong>${escHtml(document.type)}</strong>
+            <span>${escHtml(documentStatusLabel(document.status))}</span>
+            <small>${escHtml(document.expires_at || "Sin caducidad")}</small>
+          </div>
+        `).join("") : "<span class=\"muted\">Sin documentos registrados</span>"}
+      </td>
+    </tr>
+  `).join("");
+  return `<!doctype html>
+    <html lang="es">
+      <head>
+        <meta charset="utf-8" />
+        <title>Dossier cliente ${escHtml(event.name)}</title>
+        <style>
+          @page { size: A4; margin: 16mm; }
+          body { font-family: Arial, sans-serif; color: #101828; margin: 0; }
+          header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 2px solid #101828; padding-bottom: 16px; margin-bottom: 18px; }
+          h1 { margin: 0; font-size: 28px; }
+          h2 { font-size: 16px; margin: 22px 0 8px; }
+          .brand { font-weight: 800; letter-spacing: 0; }
+          .muted { color: #667085; }
+          .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 18px 0; }
+          .metric { border: 1px solid #d0d5dd; padding: 10px; }
+          .metric span { display: block; color: #667085; font-size: 11px; text-transform: uppercase; font-weight: 700; }
+          .metric strong { display: block; margin-top: 4px; font-size: 18px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+          th, td { border: 1px solid #d0d5dd; padding: 8px; text-align: left; font-size: 12px; vertical-align: top; }
+          th { background: #f2f4f7; }
+          .tag { display: inline-block; padding: 4px 8px; border-radius: 999px; font-weight: 800; font-size: 11px; }
+          .tag.ok { color: #067647; background: #dcfae6; }
+          .tag.aviso { color: #b54708; background: #fef0c7; }
+          .tag.bloqueado { color: #b42318; background: #fee4e2; }
+          .doc-line { display: grid; grid-template-columns: 90px 1fr 90px; gap: 8px; padding: 3px 0; border-bottom: 1px solid #eaecf0; }
+          .note { border: 1px solid #d0d5dd; padding: 12px; margin-top: 18px; background: #f9fafb; }
+          @media print { button { display: none; } }
+        </style>
+      </head>
+      <body>
+        <button onclick="window.print()">Imprimir / guardar PDF</button>
+        <header>
+          <div><div class="brand">MARFAN CREW ERP</div><div class="muted">Dossier operativo para cliente</div></div>
+          <div><strong>${escHtml(event.id)}</strong><br /><span class="muted">${escHtml(new Date().toLocaleString("es-ES"))}</span></div>
+        </header>
+        <h1>${escHtml(event.name)}</h1>
+        <p class="muted">${escHtml(dossier.client.name || event.client_name)} · ${escHtml(event.location)}</p>
+        <section class="grid">
+          <div class="metric"><span>Fecha</span><strong>${escHtml(event.date)}</strong></div>
+          <div class="metric"><span>Horario</span><strong>${escHtml(event.start_time)}-${escHtml(event.end_time)}</strong></div>
+          <div class="metric"><span>Equipo</span><strong>${dossier.totals.staff}</strong></div>
+          <div class="metric"><span>Precio</span><strong>${Number(event.service_price || event.budget || 0).toFixed(2)} EUR</strong></div>
+          <div class="metric"><span>Documentos</span><strong>${dossier.totals.documents}</strong></div>
+          <div class="metric"><span>Bloqueos</span><strong>${dossier.totals.blockers}</strong></div>
+          <div class="metric"><span>Avisos</span><strong>${dossier.totals.warnings}</strong></div>
+          <div class="metric"><span>Jefe equipo</span><strong>${escHtml(event.team_leader_name || "Pendiente")}</strong></div>
+        </section>
+        <h2>Datos del cliente y servicio</h2>
+        <p>
+          Cliente: <strong>${escHtml(dossier.client.legal_name || dossier.client.name || event.client_name)}</strong><br />
+          CIF/NIF: ${escHtml(dossier.client.tax_id || "-")}<br />
+          Contacto: ${escHtml(dossier.client.contact_name || "-")} · ${escHtml(dossier.client.email || dossier.client.phone || "-")}<br />
+          Direccion evento: ${escHtml(event.address || event.location)}
+        </p>
+        <h2>Equipo asignado y documentacion</h2>
+        <table>
+          <thead><tr><th>Operario</th><th>Rol</th><th>Estado</th><th>Documentacion</th></tr></thead>
+          <tbody>${rows || "<tr><td colspan='4'>Sin operarios asignados</td></tr>"}</tbody>
+        </table>
+        <div class="note">
+          Este dossier resume equipo, roles y estado documental del evento. Los archivos originales permanecen protegidos en la plataforma y solo son accesibles por usuarios autorizados.
+        </div>
+      </body>
+    </html>`;
+}
+
 function escHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -1568,11 +2831,16 @@ async function handleApi(req, res, url) {
       expiresAt
     ]);
     run("UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?", [account.id]);
+    audit(account, "login_success", "session", account.id, {
+      mode: body.mode || "admin",
+      remember: Boolean(body.remember)
+    });
     return sendJson(res, 200, { token, user: publicUser(account), expiresAt });
   }
 
   if (pathname === "/api/auth/logout" && method === "POST") {
     const token = tokenFromRequest(req);
+    if (user) audit(user, "logout", "session", user.id);
     if (token) run("DELETE FROM sessions WHERE token = ?", [token]);
     return sendJson(res, 200, { ok: true });
   }
@@ -1649,7 +2917,7 @@ async function handleApi(req, res, url) {
   if (pathname === "/api/settings" && method === "GET") {
     requireAdmin(user);
     return sendJson(res, 200, {
-      settings: settingMap(),
+      settings: settingsForAdmin(),
       roles: listWorkRoles()
     });
   }
@@ -1664,10 +2932,28 @@ async function handleApi(req, res, url) {
   if (pathname === "/api/settings" && method === "PATCH") {
     requireAdmin(user);
     const body = await readBody(req);
-    const allowed = ["base_address", "base_lat", "base_lng", "included_km", "vehicle_km_price", "office_phone", "office_whatsapp"];
+    const allowed = [
+      "base_address",
+      "base_lat",
+      "base_lng",
+      "included_km",
+      "vehicle_km_price",
+      "office_phone",
+      "office_whatsapp",
+      "google_calendar_id",
+      "google_calendar_api_key",
+      "google_calendar_public_ics_url",
+      "google_calendar_embed_url",
+      "google_calendar_enabled",
+      "google_calendar_sync_enabled",
+      "google_calendar_service_account_json",
+      "google_calendar_delegated_user",
+      "google_calendar_oauth_client_json"
+    ];
     transaction(() => {
       for (const key of allowed) {
         if (body[key] === undefined) continue;
+        if (["google_calendar_service_account_json", "google_calendar_oauth_client_json"].includes(key) && !String(body[key] || "").trim()) continue;
         run(
           `INSERT INTO company_settings (key, value, updated_at)
            VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -1675,10 +2961,21 @@ async function handleApi(req, res, url) {
           [key, String(body[key] ?? "")]
         );
       }
-      audit(user, "settings_updated", "company_settings", "global", body);
+      audit(user, "settings_updated", "company_settings", "global", sanitizeSettingsAudit(body));
     });
     repriceOpenEvents();
-    return sendJson(res, 200, { settings: settingMap(), roles: listWorkRoles() });
+    return sendJson(res, 200, { settings: settingsForAdmin(), roles: listWorkRoles() });
+  }
+
+  if (pathname === "/api/calendar/google-oauth/start" && method === "POST") {
+    requireAdmin(user);
+    const body = await readBody(req);
+    const settings = settingMap();
+    const client = googleOAuthClientCredentials(settings, { throwOnInvalid: true });
+    if (!client) return sendJson(res, 400, { error: "Falta configurar el cliente OAuth de Google" });
+    const appUrl = body.returnUrl || appOriginFromRequest(req);
+    const result = await startGoogleOAuthLoopback({ client, actor: user, appUrl });
+    return sendJson(res, 200, result);
   }
 
   if (pathname === "/api/work-roles" && method === "POST") {
@@ -1720,14 +3017,44 @@ async function handleApi(req, res, url) {
   }
 
   if (pathname === "/api/users" && method === "GET") {
+    requireAdmin(user);
+    const users = listUsers();
+    return sendJson(res, 200, {
+      users: user.role === "super_admin" ? users : users.filter((item) => item.role !== "employee")
+    });
+  }
+
+  if (pathname === "/api/audit-logs" && method === "GET") {
     requireSuperAdmin(user);
-    return sendJson(res, 200, { users: listUsers() });
+    const logs = listAuditLogs({
+      action: url.searchParams.get("action"),
+      entity: url.searchParams.get("entity"),
+      actorUserId: url.searchParams.get("actorId"),
+      limit: url.searchParams.get("limit")
+    });
+    if (url.searchParams.get("format") === "csv") {
+      const rows = logs.map((item) => ({
+        fecha: item.created_at,
+        actor: item.actor_name,
+        rol: item.actor_role,
+        accion: item.action,
+        entidad: item.entity,
+        entidad_id: item.entity_id,
+        detalle: JSON.stringify(item.metadata)
+      }));
+      return send(res, 200, createCsv(rows), {
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": "attachment; filename=auditoria.csv"
+      });
+    }
+    return sendJson(res, 200, { logs });
   }
 
   if (pathname === "/api/users" && method === "POST") {
-    requireSuperAdmin(user);
+    requireAdmin(user);
     const body = await readBody(req);
-    const role = ["super_admin", "admin", "employee"].includes(body.role) ? body.role : "employee";
+    const requestedRole = ["super_admin", "admin", "employee"].includes(body.role) ? body.role : "admin";
+    const role = user.role === "super_admin" ? requestedRole : "admin";
     if (!body.name || !body.password || (!body.email && !body.phone)) {
       return sendJson(res, 400, { error: "Nombre, contrasena y email o telefono son obligatorios" });
     }
@@ -1866,7 +3193,38 @@ async function handleApi(req, res, url) {
     requireAdmin(user);
     const from = url.searchParams.get("from");
     const to = url.searchParams.get("to");
-    return sendJson(res, 200, { events: listEvents({ from, to }) });
+    const localEvents = listEvents({ from, to }).map((event) => ({ ...event, source: "marfan", external: false }));
+    const importedGoogleUids = new Set(localEvents.map((event) => event.google_calendar_uid).filter(Boolean));
+    const google = await googleCalendarEvents({ from, to });
+    const googleEvents = google.events.filter((event) => {
+      const googleUid = event.google_uid || event.id;
+      return !importedGoogleUids.has(googleUid) && !importedGoogleUids.has(event.id);
+    });
+    return sendJson(res, 200, {
+      events: [...localEvents, ...googleEvents].sort((a, b) => `${a.date} ${a.start_time}`.localeCompare(`${b.date} ${b.start_time}`)),
+      localEvents,
+      googleEvents,
+      googleStatus: { ...google, events: googleEvents }
+    });
+  }
+
+  if (pathname === "/api/calendar/import-google-event" && method === "POST") {
+    requireAdmin(user);
+    const result = importGoogleCalendarEvent(await readBody(req), user);
+    return sendJson(res, result.created ? 201 : 200, result);
+  }
+
+  if (pathname === "/api/calendar/marfan.ics" && method === "GET") {
+    const settings = settingMap();
+    if (url.searchParams.get("token") !== settings.calendar_feed_token) {
+      return sendJson(res, 403, { error: "Token de calendario no valido" });
+    }
+    const events = listEvents();
+    return send(res, 200, createMarfanCalendarIcs(events, appOriginFromRequest(req)), {
+      "content-type": "text/calendar; charset=utf-8",
+      "content-disposition": "inline; filename=marfan-crew.ics",
+      "cache-control": "private, max-age=300"
+    });
   }
 
   if (pathname === "/api/events" && method === "GET") {
@@ -1934,8 +3292,16 @@ async function handleApi(req, res, url) {
         ]);
       }
       updateEventStatus(id);
+      audit(user, "event_created", "event", id, {
+        name: body.name,
+        clientId: body.clientId,
+        date: body.date,
+        requiredTotal,
+        servicePrice: pricing.servicePrice
+      });
     });
-    return sendJson(res, 201, { event: eventDetail(id) });
+    const googleSync = await syncEventToGoogleCalendar(id, user, "event_created", appOriginFromRequest(req));
+    return sendJson(res, 201, { event: eventDetail(id), googleSync });
   }
 
   const eventMatch = pathname.match(/^\/api\/events\/([^/]+)$/);
@@ -2002,7 +3368,8 @@ async function handleApi(req, res, url) {
       requirementsChanged: Boolean(body.requirements),
       requiredTotal
     });
-    return sendJson(res, 200, { event: eventDetail(eventId) });
+    const googleSync = await syncEventToGoogleCalendar(eventId, user, "event_updated", appOriginFromRequest(req));
+    return sendJson(res, 200, { event: eventDetail(eventId), googleSync });
   }
 
   const closeEventMatch = pathname.match(/^\/api\/events\/([^/]+)\/close$/);
@@ -2012,7 +3379,8 @@ async function handleApi(req, res, url) {
     if (!event) return sendJson(res, 404, { error: "Evento no encontrado" });
     run("UPDATE events SET status = 'finalizado', closed_at = CURRENT_TIMESTAMP WHERE id = ?", [event.id]);
     audit(user, "event_closed", "event", event.id, { closedBy: user.id });
-    return sendJson(res, 200, { event: eventDetail(event.id) });
+    const googleSync = await syncEventToGoogleCalendar(event.id, user, "event_closed", appOriginFromRequest(req));
+    return sendJson(res, 200, { event: eventDetail(event.id), googleSync });
   }
 
   const duplicateMatch = pathname.match(/^\/api\/events\/([^/]+)\/duplicate$/);
@@ -2066,8 +3434,13 @@ async function handleApi(req, res, url) {
       }
       updateEventStatus(id);
       updateEventPricing(id, pricingForEvent(id));
+      audit(user, "event_duplicated", "event", id, {
+        sourceEventId: source.id,
+        date: body.date || source.date
+      });
     });
-    return sendJson(res, 201, { event: eventDetail(id) });
+    const googleSync = await syncEventToGoogleCalendar(id, user, "event_duplicated", appOriginFromRequest(req));
+    return sendJson(res, 201, { event: eventDetail(id), googleSync });
   }
 
   if (pathname === "/api/clients" && method === "GET") {
@@ -2095,6 +3468,10 @@ async function handleApi(req, res, url) {
         body.notes || ""
       ]
     );
+    audit(user, "client_created", "client", id, {
+      name: body.name,
+      taxId: body.taxId || ""
+    });
     return sendJson(res, 201, { client: get("SELECT * FROM clients WHERE id = ?", [id]) });
   }
 
@@ -2149,6 +3526,8 @@ async function handleApi(req, res, url) {
     requireAdmin(user);
     const body = await readBody(req);
     const id = randomId("emp");
+    const role = employeeRoleFromBody(body, "Montaje");
+    const skills = employeeSkillsFromBody({ ...body, role }, body.skills || []);
     run(
       `INSERT INTO employees
         (id, name, role, phone, email, city, lat, lng, hourly_rate, km_rate, diet_rate, skills, notes,
@@ -2158,7 +3537,7 @@ async function handleApi(req, res, url) {
       [
         id,
         body.name,
-        body.role || "Montaje",
+        role,
         body.phone || "",
         body.email || "",
         body.city || "",
@@ -2167,7 +3546,7 @@ async function handleApi(req, res, url) {
         Number(body.hourlyRate || 15),
         Number(body.kmRate || 0.24),
         Number(body.dietRate || 0),
-        JSON.stringify(body.skills || []),
+        JSON.stringify(skills),
         body.notes || "",
         body.dni || null,
         body.socialSecurityNumber || null,
@@ -2184,6 +3563,12 @@ async function handleApi(req, res, url) {
         body.emergencyContact || null
       ]
     );
+    audit(user, "employee_created", "employee", id, {
+      name: body.name,
+      role,
+      email: body.email || "",
+      phone: body.phone || ""
+    });
     return sendJson(res, 201, { employee: parseEmployee(get("SELECT * FROM employees WHERE id = ?", [id])) });
   }
 
@@ -2193,6 +3578,8 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const existing = get("SELECT * FROM employees WHERE id = ?", [employeeMatch[1]]);
     if (!existing) return sendJson(res, 404, { error: "Operario no encontrado" });
+    const role = employeeRoleFromBody(body, existing.role);
+    const skills = employeeSkillsFromBody({ ...body, role }, jsonField(existing.skills));
     run(
       `UPDATE employees
        SET name = ?, role = ?, phone = ?, email = ?, status = ?, city = ?, lat = ?, lng = ?,
@@ -2203,7 +3590,7 @@ async function handleApi(req, res, url) {
        WHERE id = ?`,
       [
         body.name ?? existing.name,
-        body.role ?? existing.role,
+        role,
         body.phone ?? existing.phone,
         body.email ?? existing.email,
         body.status ?? existing.status,
@@ -2213,7 +3600,7 @@ async function handleApi(req, res, url) {
         Number(body.hourlyRate ?? existing.hourly_rate),
         Number(body.kmRate ?? existing.km_rate),
         Number(body.dietRate ?? existing.diet_rate),
-        JSON.stringify(body.skills || jsonField(existing.skills)),
+        JSON.stringify(skills),
         body.notes ?? existing.notes,
         body.dni ?? existing.dni,
         body.socialSecurityNumber ?? existing.social_security_number,
@@ -2231,6 +3618,12 @@ async function handleApi(req, res, url) {
         employeeMatch[1]
       ]
     );
+    audit(user, "employee_updated", "employee", employeeMatch[1], {
+      role,
+      status: body.status ?? existing.status,
+      rateChanged: body.hourlyRate !== undefined || body.kmRate !== undefined || body.dietRate !== undefined,
+      clothingChanged: body.shirtSize !== undefined || body.pantsSize !== undefined || body.shoeSize !== undefined
+    });
     return sendJson(res, 200, { employee: parseEmployee(get("SELECT * FROM employees WHERE id = ?", [employeeMatch[1]])) });
   }
 
@@ -2240,6 +3633,9 @@ async function handleApi(req, res, url) {
     const event = get("SELECT * FROM events WHERE id = ?", [body.eventId]);
     const employee = get("SELECT * FROM employees WHERE id = ?", [body.employeeId]);
     if (!event || !employee) return sendJson(res, 404, { error: "Evento u operario no encontrado" });
+    if (eventPerformed(event)) {
+      return sendJson(res, 409, { error: "Evento efectuado: las asignaciones quedan en modo solo revision" });
+    }
     const existing = get("SELECT * FROM assignments WHERE event_id = ? AND employee_id = ?", [
       event.id,
       employee.id
@@ -2270,7 +3666,8 @@ async function handleApi(req, res, url) {
         role
       });
     });
-    return sendJson(res, 201, { assignment: get("SELECT * FROM assignments WHERE id = ?", [id]), issues });
+    const googleSync = await syncEventToGoogleCalendar(event.id, user, "assignment_created", appOriginFromRequest(req));
+    return sendJson(res, 201, { assignment: get("SELECT * FROM assignments WHERE id = ?", [id]), issues, googleSync });
   }
 
   const assignmentMatch = pathname.match(/^\/api\/assignments\/([^/]+)$/);
@@ -2282,6 +3679,9 @@ async function handleApi(req, res, url) {
     const event = get("SELECT * FROM events WHERE id = ?", [existing.event_id]);
     const employee = get("SELECT * FROM employees WHERE id = ?", [existing.employee_id]);
     if (!event || !employee) return sendJson(res, 404, { error: "Evento u operario no encontrado" });
+    if (eventPerformed(event)) {
+      return sendJson(res, 409, { error: "Evento efectuado: solo se permite crear incidencias" });
+    }
     const nextStatus = cleanAssignmentStatus(body.status, existing.status);
     const nextRole = body.role ?? existing.role;
     const issues = nextStatus === "bloqueado" ? [] : validateAssignment(event, employee);
@@ -2305,9 +3705,11 @@ async function handleApi(req, res, url) {
         status: nextStatus
       });
     });
+    const googleSync = await syncEventToGoogleCalendar(event.id, user, "assignment_updated", appOriginFromRequest(req));
     return sendJson(res, 200, {
       assignment: assignmentRowsForEvent(get("SELECT * FROM events WHERE id = ?", [event.id])).find((item) => item.id === existing.id),
-      event: eventDetail(event.id)
+      event: eventDetail(event.id),
+      googleSync
     });
   }
 
@@ -2315,6 +3717,10 @@ async function handleApi(req, res, url) {
     requireAdmin(user);
     const existing = get("SELECT * FROM assignments WHERE id = ?", [assignmentMatch[1]]);
     if (!existing) return sendJson(res, 404, { error: "Asignacion no encontrada" });
+    const event = get("SELECT * FROM events WHERE id = ?", [existing.event_id]);
+    if (eventPerformed(event)) {
+      return sendJson(res, 409, { error: "Evento efectuado: las asignaciones no se pueden eliminar" });
+    }
     const timeEntries = get(
       "SELECT COUNT(*) AS count FROM time_entries WHERE event_id = ? AND employee_id = ?",
       [existing.event_id, existing.employee_id]
@@ -2324,7 +3730,6 @@ async function handleApi(req, res, url) {
         error: "No se puede quitar una asignacion con fichajes. Cambiala a bloqueada para conservar trazabilidad."
       });
     }
-    const event = get("SELECT * FROM events WHERE id = ?", [existing.event_id]);
     transaction(() => {
       run("DELETE FROM assignments WHERE id = ?", [existing.id]);
       if (event?.team_leader_id === existing.employee_id) {
@@ -2336,13 +3741,19 @@ async function handleApi(req, res, url) {
         employeeId: existing.employee_id
       });
     });
-    return sendJson(res, 200, { ok: true, event: eventDetail(existing.event_id) });
+    const googleSync = await syncEventToGoogleCalendar(existing.event_id, user, "assignment_deleted", appOriginFromRequest(req));
+    return sendJson(res, 200, { ok: true, event: eventDetail(existing.event_id), googleSync });
   }
 
   const recommendationsMatch = pathname.match(/^\/api\/planner\/recommendations$/);
   if (recommendationsMatch && method === "GET") {
     requireAdmin(user);
-    return sendJson(res, 200, { recommendations: plannerRecommendations(url.searchParams.get("eventId")) });
+    const eventId = url.searchParams.get("eventId");
+    const event = eventId ? get("SELECT * FROM events WHERE id = ?", [eventId]) : null;
+    if (eventPerformed(event)) {
+      return sendJson(res, 409, { error: "Evento efectuado: el equipo queda en modo revision" });
+    }
+    return sendJson(res, 200, { recommendations: plannerRecommendations(eventId) });
   }
 
   if (pathname === "/api/time-entries/clock" && method === "POST") {
@@ -2365,6 +3776,14 @@ async function handleApi(req, res, url) {
     const geo = isInsideRadius(Number(body.lat), Number(body.lng), event.lat, event.lng, CLOCK_RADIUS_M);
     const accepted = Boolean(assignment && active && geo.inside);
     const type = body.type === "salida" ? "salida" : "entrada";
+    const sequenceError = accepted ? clockSequenceError(event, assignment, employee.id, type) : null;
+    if (sequenceError) {
+      return sendJson(res, 409, {
+        error: sequenceError,
+        distance: geo.distance,
+        radius: CLOCK_RADIUS_M
+      });
+    }
     const leaderClockOut = accepted && type === "salida" && isTeamLeaderForEvent(event, employee, assignment);
     if (leaderClockOut && (!String(body.signatureName || "").trim() || !String(body.signatureDni || "").trim())) {
       return sendJson(res, 428, {
@@ -2419,12 +3838,21 @@ async function handleApi(req, res, url) {
         entry: get("SELECT * FROM time_entries WHERE id = ?", [id])
       });
     }
+    const deliveryNoteResponse =
+      user.role === "employee" && deliveryNote
+        ? {
+            id: deliveryNote.id,
+            status: deliveryNote.status,
+            locked: deliveryNote.locked,
+            signed_at: deliveryNote.signed_at
+          }
+        : deliveryNote;
     return sendJson(res, 201, {
       ok: true,
       distance: geo.distance,
       radius: CLOCK_RADIUS_M,
       entry: get("SELECT * FROM time_entries WHERE id = ?", [id]),
-      deliveryNote
+      deliveryNote: deliveryNoteResponse
     });
   }
 
@@ -2665,6 +4093,12 @@ async function handleApi(req, res, url) {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [id, body.eventId || null, body.employeeId || null, body.type || "otro", body.priority || "media", body.title, body.description || ""]
     );
+    audit(user, "incident_created", "incident", id, {
+      eventId: body.eventId || null,
+      employeeId: body.employeeId || null,
+      type: body.type || "otro",
+      priority: body.priority || "media"
+    });
     return sendJson(res, 201, { incident: get("SELECT * FROM incidents WHERE id = ?", [id]) });
   }
 
@@ -2675,9 +4109,8 @@ async function handleApi(req, res, url) {
     const today = formatDate();
     const serviceSql = `
       SELECT events.id, events.name, events.date, events.start_time, events.end_time, events.location,
-             events.address, events.lat, events.lng, events.status, events.notes, events.budget,
-             events.google_maps_url, events.vehicle_count, events.base_distance_km, events.billable_km,
-             events.distance_price_total, events.service_price,
+             events.address, events.lat, events.lng, events.status, events.notes,
+             events.google_maps_url,
              clients.name AS client_name,
              leaders.name AS team_leader_name,
              leaders.phone AS team_leader_phone,
@@ -2697,14 +4130,14 @@ async function handleApi(req, res, url) {
        ORDER BY events.date ASC, events.start_time ASC
        LIMIT 12`,
       [employee.id, today]
-    );
+    ).map((service) => employeeServiceClockData(service, employee.id));
     const nextAssignment = upcomingServices[0] || null;
     const pastServices = all(
       `${serviceSql} AND (events.date < ? OR events.status = 'finalizado')
        ORDER BY events.date DESC, events.start_time DESC
        LIMIT 12`,
       [employee.id, today]
-    );
+    ).map((service) => employeeServiceClockData(service, employee.id));
     const coworkers = nextAssignment
       ? all(
           `SELECT employees.id, employees.name, employees.role
@@ -2724,9 +4157,7 @@ async function handleApi(req, res, url) {
     );
     const allowances = get(
       `SELECT COALESCE(SUM(km), 0) AS km,
-              COALESCE(SUM(diet), 0) AS diets,
-              COALESCE(SUM(night_hours), 0) AS night_hours,
-              COALESCE(SUM(extras), 0) AS extras
+              COALESCE(SUM(night_hours), 0) AS night_hours
        FROM allowances
        WHERE employee_id = ?`,
       [employee.id]
@@ -2744,7 +4175,7 @@ async function handleApi(req, res, url) {
       [employee.id]
     );
     return sendJson(res, 200, {
-      employee: parseEmployee(employee),
+      employee: employeePortalProfile(employee),
       nextService: nextAssignment,
       upcomingServices,
       pastServices,
@@ -2756,9 +4187,7 @@ async function handleApi(req, res, url) {
         entries: timeStats.entries,
         hours: Math.round(plannedHours * 10) / 10,
         km: Math.round(Number(allowances.km || 0) * 10) / 10,
-        diets: Number(allowances.diets || 0),
         night_hours: Number(allowances.night_hours || 0),
-        extras: Number(allowances.extras || 0),
         incidents
       },
       radius: CLOCK_RADIUS_M
@@ -2804,7 +4233,41 @@ async function handleApi(req, res, url) {
       });
     });
     return sendJson(res, 200, {
-      employee: parseEmployee(get("SELECT * FROM employees WHERE id = ?", [employee.id]))
+      employee: employeePortalProfile(get("SELECT * FROM employees WHERE id = ?", [employee.id]))
+    });
+  }
+
+  const employeeConfirmMatch = pathname.match(/^\/api\/employee\/services\/([^/]+)\/confirm$/);
+  if (employeeConfirmMatch && method === "POST") {
+    requireUser(user);
+    const employee = get("SELECT * FROM employees WHERE user_id = ?", [user.id]);
+    if (!employee) return sendJson(res, 404, { error: "Empleado no encontrado" });
+    const eventId = decodeURIComponent(employeeConfirmMatch[1]);
+    const assignment = get(
+      `SELECT assignments.*, events.name AS event_name, events.date AS event_date
+       FROM assignments
+       JOIN events ON events.id = assignments.event_id
+       WHERE assignments.event_id = ? AND assignments.employee_id = ?`,
+      [eventId, employee.id]
+    );
+    if (!assignment) return sendJson(res, 404, { error: "Servicio no encontrado" });
+    if (assignment.status === "bloqueado") {
+      return sendJson(res, 409, { error: "Servicio bloqueado por administracion" });
+    }
+    if (assignment.status !== "confirmado") {
+      transaction(() => {
+        run("UPDATE assignments SET status = 'confirmado' WHERE id = ?", [assignment.id]);
+        updateEventStatus(eventId);
+        audit(user, "employee_service_confirmed", "assignment", assignment.id, {
+          eventId,
+          employeeId: employee.id,
+          eventName: assignment.event_name
+        });
+      });
+    }
+    return sendJson(res, 200, {
+      ok: true,
+      assignment: get("SELECT * FROM assignments WHERE id = ?", [assignment.id])
     });
   }
 
@@ -2828,6 +4291,12 @@ async function handleApi(req, res, url) {
         "solicitado"
       ]
     );
+    audit(user, "employee_availability_requested", "availability", id, {
+      employeeId: employee.id,
+      startDate: body.startDate,
+      endDate: body.endDate,
+      type: cleanAvailabilityType(body.type)
+    });
     return sendJson(res, 201, { availability: get("SELECT * FROM availability WHERE id = ?", [id]) });
   }
 
@@ -2905,6 +4374,43 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { rows });
   }
 
+  const clientDossierMatch = pathname.match(/^\/api\/events\/([^/]+)\/client-dossier$/);
+  if (clientDossierMatch && method === "GET") {
+    requireAdmin(user);
+    const event = eventDetail(clientDossierMatch[1]);
+    if (!event) return sendJson(res, 404, { error: "Evento no encontrado" });
+    const format = url.searchParams.get("format");
+    const dossier = clientDossierData(event);
+    audit(user, "client_dossier_exported", "event", event.id, {
+      format: format || "html",
+      staff: dossier.totals.staff,
+      blockers: dossier.totals.blockers
+    });
+    if (format === "json") return sendJson(res, 200, dossier);
+    if (format === "csv") {
+      const rows = dossier.rows.map((row) => ({
+        evento: event.name,
+        cliente: dossier.client.name || event.client_name,
+        fecha: event.date,
+        operario: row.assignment.name,
+        rol: row.assignment.role,
+        estado_documental: row.status,
+        documentos: row.documents.map((document) => `${document.type}: ${documentStatusLabel(document.status)}${document.expires_at ? ` (${document.expires_at})` : ""}`).join(" | ")
+      }));
+      return send(res, 200, createCsv(rows), {
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": `attachment; filename=dossier-${safeFileName(event.name)}.csv`
+      });
+    }
+    if (format === "pdf") {
+      return send(res, 200, clientDossierPdf(event), {
+        "content-type": "application/pdf",
+        "content-disposition": `attachment; filename=dossier-${safeFileName(event.name)}.pdf`
+      });
+    }
+    return send(res, 200, clientDossierHtml(event), { "content-type": "text/html; charset=utf-8" });
+  }
+
   const deliveryMatch = pathname.match(/^\/api\/delivery-notes\/([^/]+)$/);
   if (deliveryMatch && method === "GET") {
     requireAdmin(user);
@@ -2921,19 +4427,63 @@ async function handleApi(req, res, url) {
 
   if (pathname === "/api/backups" && method === "GET") {
     requireAdmin(user);
-    return sendJson(res, 200, { backups: all("SELECT * FROM backups ORDER BY created_at DESC") });
+    const backups = all("SELECT * FROM backups ORDER BY created_at DESC").map(backupStatus);
+    return sendJson(res, 200, { backups });
+  }
+
+  const backupVerifyMatch = pathname.match(/^\/api\/backups\/([^/]+)\/verify$/);
+  if (backupVerifyMatch && method === "GET") {
+    requireAdmin(user);
+    const backup = get("SELECT * FROM backups WHERE id = ?", [backupVerifyMatch[1]]);
+    if (!backup) return sendJson(res, 404, { error: "Backup no encontrado" });
+    const checked = backupStatus(backup);
+    audit(user, "backup_verified", "backup", backup.id, {
+      verified: checked.verified,
+      integrity: checked.integrity
+    });
+    return sendJson(res, 200, { backup: checked });
+  }
+
+  const backupDownloadMatch = pathname.match(/^\/api\/backups\/([^/]+)\/file$/);
+  if (backupDownloadMatch && method === "GET") {
+    requireAdmin(user);
+    const backup = get("SELECT * FROM backups WHERE id = ?", [backupDownloadMatch[1]]);
+    if (!backup) return sendJson(res, 404, { error: "Backup no encontrado" });
+    const resolved = safeBackupPath(backup.file_path);
+    if (!resolved || !fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+      return sendJson(res, 409, { error: "El archivo de backup no esta disponible" });
+    }
+    const fileName = path.basename(resolved).replaceAll('"', "");
+    audit(user, "backup_downloaded", "backup", backup.id, {
+      fileName,
+      sizeBytes: fs.statSync(resolved).size
+    });
+    return send(res, 200, fs.readFileSync(resolved), {
+      "content-type": "application/vnd.sqlite3",
+      "content-disposition": `attachment; filename="${fileName}"`,
+      "content-length": fs.statSync(resolved).size
+    });
   }
 
   if (pathname === "/api/backups" && method === "POST") {
     requireAdmin(user);
     const backup = createBackup("manual", `Backup manual por ${user.name}`);
-    return sendJson(res, 201, { backup });
+    const row = get("SELECT * FROM backups WHERE id = ?", [backup.id]);
+    audit(user, "backup_created", "backup", backup.id, {
+      type: backup.type,
+      sizeBytes: backup.size_bytes
+    });
+    return sendJson(res, 201, { backup: backupStatus(row) });
   }
 
   if (pathname === "/api/backups/restore" && method === "POST") {
     requireSuperAdmin(user);
     const body = await readBody(req);
     const backup = requestRestore(body.backupId);
+    audit(user, "backup_restore_requested", "backup", backup.id, {
+      type: backup.type,
+      createdAt: backup.created_at
+    });
     return sendJson(res, 202, {
       backup,
       message: "Restauracion preparada. Reinicia el servidor para aplicar la copia con seguridad."

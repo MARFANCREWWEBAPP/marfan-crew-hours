@@ -24,10 +24,12 @@ test("new installations create schema and seed data once", () => {
 
   assert.equal(users, 4);
   assert.equal(events, 7);
-  assert.equal(migrations, 4);
+  assert.equal(migrations, 6);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('employees') WHERE name = 'shirt_size'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('documents') WHERE name = 'storage_path'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('delivery_notes') WHERE name = 'signature_image'").count, 1);
+  assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('events') WHERE name = 'google_calendar_event_id'").count, 1);
+  assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('events') WHERE name = 'google_sync_status'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM company_settings").count, 7);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM work_roles").count, 9);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'password_reset_tokens'").count, 1);

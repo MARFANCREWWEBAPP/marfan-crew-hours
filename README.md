@@ -64,7 +64,7 @@ Regla importante:
 - Si la base ya existe, no se sobrescribe.
 - Las migraciones se aplican de forma incremental.
 - Las semillas solo se crean en una instalación nueva.
-- Los backups se guardan en `backups/` o en `BACKUP_DIR`.
+- Los backups se guardan en `backups/` o en `BACKUP_DIR`, con verificacion de integridad, descarga protegida y restauracion solo para super admin.
 
 ## Railway
 
@@ -82,18 +82,23 @@ En Railway, montar un volumen persistente en `/data`. Sin volumen, cualquier ser
 ## Módulos incluidos
 
 - Dashboard operativo
+- Búsqueda global de eventos, operarios y clientes
 - Centro Live
 - Calendario Pro
 - Eventos
 - Clientes
 - Operarios
-- Asignaciones con validaciones
-- Fichajes geolocalizados
+- Asignaciones con recomendaciones y prevalidacion visible de bloqueos
+- Fichajes geolocalizados con secuencia entrada/salida y bloqueo de duplicados
+- Portal empleado con confirmacion de asistencia a servicios
+- Calendario personal del empleado con vistas mes, semana, dia y agenda
 - Incidencias
-- Documentación RRHH con archivos protegidos
+- Documentación RRHH con archivos protegidos y pestaña Docs en portal empleado
 - Finanzas
 - Informes JSON/CSV/Excel/PDF
+- Dossier cliente por evento con equipo asignado y estado documental
 - Albarán A4 imprimible con precio, firma cliente y bloqueo
 - Configuracion editable de base, kilometraje y roles
-- Backups manuales y automáticos
+- Backups manuales y automáticos con verificacion, descarga y restauracion segura
 - Super Admin para usuarios y permisos
+- Auditoria Super Admin de accesos, cambios sensibles, backups y exportacion CSV

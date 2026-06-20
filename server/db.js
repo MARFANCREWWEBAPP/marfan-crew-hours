@@ -401,6 +401,33 @@ const migrations = [
 
       CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id, used_at);
     `
+  },
+  {
+    version: 5,
+    name: "google-calendar-import-links",
+    sql: `
+      ALTER TABLE events ADD COLUMN google_calendar_uid TEXT;
+      ALTER TABLE events ADD COLUMN google_calendar_source TEXT;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_events_google_calendar_uid
+        ON events(google_calendar_uid)
+        WHERE google_calendar_uid IS NOT NULL;
+    `
+  },
+  {
+    version: 6,
+    name: "google-calendar-write-sync",
+    sql: `
+      ALTER TABLE events ADD COLUMN google_calendar_event_id TEXT;
+      ALTER TABLE events ADD COLUMN google_calendar_html_link TEXT;
+      ALTER TABLE events ADD COLUMN google_sync_status TEXT;
+      ALTER TABLE events ADD COLUMN google_sync_error TEXT;
+      ALTER TABLE events ADD COLUMN google_synced_at TEXT;
+
+      CREATE INDEX IF NOT EXISTS idx_events_google_calendar_event_id
+        ON events(google_calendar_event_id)
+        WHERE google_calendar_event_id IS NOT NULL;
+    `
   }
 ];
 
