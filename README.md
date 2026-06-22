@@ -14,12 +14,27 @@ Abrir:
 http://localhost:3000
 ```
 
-## Usuarios demo
+## Usuario inicial de produccion
 
-- Super Admin: `super@marfancrew.test` / `super123`
-- Admin: `admin@marfancrew.test` / `admin123`
-- Empleado: `empleado@marfancrew.test` / `empleado123`
-- Empleados importados: usar email o telefono importado / `Marfan2026!`
+En Railway, con `NODE_ENV=production` y `MARFAN_SEED_DEMO_DATA=false`, una base nueva arranca sin datos demo y crea:
+
+- Super Admin: `info@marquee.es` / `Marquee2026!`
+
+Cambia `MARFAN_SUPERADMIN_PASSWORD` en Railway antes de abrir la app a mas usuarios.
+
+## Demo desechable
+
+Para una demo local se puede arrancar con `MARFAN_SEED_DEMO_DATA=true`.
+
+La pantalla de acceso no muestra ni rellena estas credenciales en un entorno real. Para una demo desechable se puede arrancar con `APP_DEMO_MODE=true`.
+
+## Preparar base real
+
+Este comando deja la base local lista para pruebas reales: crea/actualiza a German como superadministrador, borra sesiones, eventos existentes y cuentas/fichas/clientes de demo.
+
+```bash
+npm run prepare:production
+```
 
 ## Precios operativos
 
@@ -71,10 +86,17 @@ Regla importante:
 Variables recomendadas:
 
 ```text
+NODE_ENV=production
 DATA_DIR=/data
 BACKUP_DIR=/data/backups
 SQLITE_PATH=/data/marfan.sqlite
 AUTO_BACKUP_ON_START=true
+APP_DEMO_MODE=false
+MARFAN_SEED_DEMO_DATA=false
+MARFAN_SUPERADMIN_NAME=German
+MARFAN_SUPERADMIN_EMAIL=info@marquee.es
+MARFAN_SUPERADMIN_PASSWORD=Marquee2026!
+GOOGLE_CALENDAR_ID=21102c189e2a9f5fb7072b9475554e93ae0b5124176fdfaa3da9470149b39e37@group.calendar.google.com
 ```
 
 En Railway, montar un volumen persistente en `/data`. Sin volumen, cualquier servicio con SQLite acabará dependiendo del disco efímero del despliegue.
@@ -85,20 +107,24 @@ En Railway, montar un volumen persistente en `/data`. Sin volumen, cualquier ser
 - Búsqueda global de eventos, operarios y clientes
 - Centro Live
 - Calendario Pro
-- Eventos
+- Eventos con duplicado operativo de servicio, requisitos y equipo asignado validado; los efectuados quedan en solo revision
 - Clientes
 - Operarios
 - Asignaciones con recomendaciones y prevalidacion visible de bloqueos
-- Fichajes geolocalizados con secuencia entrada/salida y bloqueo de duplicados
+- Planificador con rol sugerido, distancia, carga reciente, disponibilidad, descanso y documentacion
+- Fichajes geolocalizados con secuencia entrada/salida, evidencia GPS/dispositivo y trazabilidad de correcciones
 - Portal empleado con confirmacion de asistencia a servicios
+- Portal empleado con checklist operativo real y botones de oficina configurables
 - Calendario personal del empleado con vistas mes, semana, dia y agenda
-- Incidencias
-- Documentación RRHH con archivos protegidos y pestaña Docs en portal empleado
-- Finanzas
+- Incidencias con deteccion, resolucion, nota de cierre e informes
+- Documentación RRHH con archivos protegidos, tipos/tamaños validados, trazabilidad de aperturas, pestaña Docs en portal empleado, subida de documentos y revisión desde oficina
+- Finanzas con pluses por evento: kilometros, dietas, nocturnidad y extras por operario
 - Informes JSON/CSV/Excel/PDF
 - Dossier cliente por evento con equipo asignado y estado documental
 - Albarán A4 imprimible con precio, firma cliente y bloqueo
 - Configuracion editable de base, kilometraje y roles
 - Backups manuales y automáticos con verificacion, descarga y restauracion segura
 - Super Admin para usuarios y permisos
+- Recuperación de acceso sin exponer códigos en público y reset seguro por Super Admin
+- Sesiones con cookies HttpOnly/SameSite solo para lecturas seguras, tokens hasheados, limite de intentos de login y cabeceras HTTP defensivas
 - Auditoria Super Admin de accesos, cambios sensibles, backups y exportacion CSV

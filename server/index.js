@@ -10,7 +10,8 @@ const {
   get,
   requestRestore,
   run,
-  transaction
+  transaction,
+  verifySqliteBackupFile
 } = require("./db");
 const { distanceMeters, isInsideRadius } = require("./geo");
 const { randomId, randomToken, verifyPassword, hashPassword } = require("./security");
@@ -18,16 +19,78 @@ const { randomId, randomToken, verifyPassword, hashPassword } = require("./secur
 const PORT = Number(process.env.PORT || 3000);
 const CLIENT_DIR = path.join(process.cwd(), "client");
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
-const CLOCK_RADIUS_M = 150;
+const SECURITY_HEADERS = {
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "SAMEORIGIN",
+  "referrer-policy": "same-origin",
+  "permissions-policy": "camera=(), microphone=(), geolocation=(self)"
+};
+const DEMO_MODE = process.env.APP_DEMO_MODE === "true";
+const DEFAULT_CLOCK_RADIUS_M = 150;
 const MAX_BODY_BYTES = 15_000_000;
+const MAX_DOCUMENT_FILE_BYTES = 8_000_000;
 const DOCUMENT_UPLOAD_DIR = path.join(DATA_DIR, "uploads", "documents");
+const ALLOWED_DOCUMENT_MIME_TYPES = new Set([
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "text/plain",
+  "text/csv",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+]);
+const DOCUMENT_EXTENSION_MIME_TYPES = {
+  ".pdf": "application/pdf",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".txt": "text/plain",
+  ".csv": "text/csv",
+  ".doc": "application/msword",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".xls": "application/vnd.ms-excel",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+};
 const DEFAULT_GOOGLE_CALENDAR_ID = "21102c189e2a9f5fb7072b9475554e93ae0b5124176fdfaa3da9470149b39e37@group.calendar.google.com";
 const DEFAULT_GOOGLE_CALENDAR_EMBED_URL = "https://calendar.google.com/calendar/embed?src=21102c189e2a9f5fb7072b9475554e93ae0b5124176fdfaa3da9470149b39e37%40group.calendar.google.com&ctz=Europe%2FMadrid";
 const GOOGLE_CALENDAR_TIME_ZONE = "Europe/Madrid";
 const GOOGLE_CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events";
 const GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const AUTH_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
+const AUTH_RATE_LIMIT_MAX_FAILURES = 5;
 let googleAccessTokenCache = null;
 const googleOauthLoopbacks = new Map();
+const authFailureBuckets = new Map();
+const backupAutomationState = {
+  running: false,
+  lastRunAt: "",
+  lastResult: null,
+  nextRunAt: ""
+};
+const ADMIN_PERMISSION_DEFS = [
+  ["dashboard", "Dashboard"],
+  ["users", "Administradores"],
+  ["live", "Centro Live"],
+  ["calendar", "Calendario"],
+  ["events", "Eventos"],
+  ["clients", "Clientes"],
+  ["employees", "Operarios"],
+  ["availability", "Disponibilidad"],
+  ["assignments", "Asignaciones"],
+  ["clocking", "Fichajes"],
+  ["incidents", "Incidencias"],
+  ["documents", "Documentacion"],
+  ["finances", "Finanzas"],
+  ["reports", "Informes"],
+  ["settings", "Configuracion"],
+  ["backups", "Backups"],
+  ["imports", "Importaciones"]
+];
+const ADMIN_PERMISSION_KEYS = ADMIN_PERMISSION_DEFS.map(([key]) => key);
 
 fs.mkdirSync(DOCUMENT_UPLOAD_DIR, { recursive: true });
 
@@ -51,7 +114,9 @@ function backupStatus(backup) {
     verified: false,
     integrity: resolved ? "missing" : "invalid_path",
     actual_size_bytes: 0,
-    sha256: null
+    sha256: null,
+    sqlite_quick_check: "",
+    integrity_error: ""
   };
 
   if (!resolved || !fs.existsSync(resolved)) return status;
@@ -62,13 +127,22 @@ function backupStatus(backup) {
   status.exists = true;
   status.actual_size_bytes = stats.size;
   status.sha256 = sha256File(resolved);
-  status.verified = Number(backup.size_bytes || 0) === stats.size;
-  status.integrity = status.verified ? "verified" : "size_mismatch";
+  const sqliteIntegrity = verifySqliteBackupFile(resolved, backup.size_bytes);
+  status.sqlite_quick_check = sqliteIntegrity.quickCheck || "";
+  status.integrity_error = sqliteIntegrity.error || "";
+  if (!sqliteIntegrity.sizeMatches) status.integrity = "size_mismatch";
+  else if (!sqliteIntegrity.ok) status.integrity = sqliteIntegrity.quickCheck ? "sqlite_corrupt" : "sqlite_error";
+  else status.integrity = "verified";
+  status.verified = status.integrity === "verified";
   return status;
 }
 
+function secureHeaders(headers = {}) {
+  return { ...SECURITY_HEADERS, ...headers };
+}
+
 function send(res, status, payload, headers = JSON_HEADERS) {
-  res.writeHead(status, headers);
+  res.writeHead(status, secureHeaders(headers));
   if (Buffer.isBuffer(payload) || payload instanceof Uint8Array) return res.end(payload);
   return res.end(typeof payload === "string" ? payload : JSON.stringify(payload));
 }
@@ -99,30 +173,118 @@ function readBody(req) {
   });
 }
 
-function tokenFromRequest(req) {
+function tokenFromRequest(req, options = {}) {
   const auth = req.headers.authorization || "";
   if (auth.startsWith("Bearer ")) return auth.slice(7);
+  const safeMethod = ["GET", "HEAD"].includes(String(req.method || "GET").toUpperCase());
+  if (!safeMethod && !options.allowCookie) return null;
   const cookie = req.headers.cookie || "";
   const match = cookie.match(/(?:^|;\s*)marfan_session=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+function sessionStorageToken(token) {
+  return crypto.createHash("sha256").update(String(token || "")).digest("hex");
+}
+
+function sessionTokenCandidates(token) {
+  const stored = sessionStorageToken(token);
+  return stored === token ? [stored] : [stored, token];
+}
+
+function requestIsSecure(req) {
+  const forwarded = String(req?.headers?.["x-forwarded-proto"] || "").toLowerCase();
+  return Boolean(req?.socket?.encrypted || forwarded.split(",").map((item) => item.trim()).includes("https"));
+}
+
+function sessionCookie(token, expiresAt, req) {
+  const parts = [
+    `marfan_session=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Expires=${new Date(expiresAt).toUTCString()}`
+  ];
+  if (requestIsSecure(req)) parts.push("Secure");
+  return parts.join("; ");
+}
+
+function clearSessionCookie(req) {
+  return [
+    "marfan_session=",
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Max-Age=0",
+    requestIsSecure(req) ? "Secure" : ""
+  ].filter(Boolean).join("; ");
+}
+
 function currentUser(req) {
   const token = tokenFromRequest(req);
   if (!token) return null;
+  const candidates = sessionTokenCandidates(token);
   const session = get(
     `SELECT sessions.token, sessions.expires_at, users.*
      FROM sessions
      JOIN users ON users.id = sessions.user_id
-     WHERE sessions.token = ? AND users.active = 1`,
-    [token]
+     WHERE sessions.token IN (${candidates.map(() => "?").join(",")}) AND users.active = 1
+     ORDER BY CASE WHEN sessions.token = ? THEN 0 ELSE 1 END
+     LIMIT 1`,
+    [...candidates, candidates[0]]
   );
   if (!session) return null;
   if (new Date(session.expires_at).getTime() < Date.now()) {
-    run("DELETE FROM sessions WHERE token = ?", [token]);
+    run(`DELETE FROM sessions WHERE token IN (${candidates.map(() => "?").join(",")})`, candidates);
     return null;
   }
+  if (session.token !== candidates[0]) {
+    run("UPDATE sessions SET token = ? WHERE token = ?", [candidates[0], session.token]);
+  }
   return publicUser(session);
+}
+
+function requestIp(req) {
+  const forwarded = String(req?.headers?.["x-forwarded-for"] || "").split(",")[0].trim();
+  return forwarded || req?.socket?.remoteAddress || "local";
+}
+
+function authIdentifierKey(identifier) {
+  const raw = String(identifier || "").trim().toLowerCase();
+  return phoneLoginKey(raw) || raw.replace(/\s+/g, "");
+}
+
+function authRateLimitKey(req, purpose, identifier) {
+  return `${purpose}:${requestIp(req)}:${authIdentifierKey(identifier) || "anon"}`;
+}
+
+function authFailureBucket(key, now = Date.now()) {
+  const existing = authFailureBuckets.get(key);
+  if (!existing || existing.resetAt <= now) {
+    const fresh = { count: 0, resetAt: now + AUTH_RATE_LIMIT_WINDOW_MS };
+    authFailureBuckets.set(key, fresh);
+    return fresh;
+  }
+  return existing;
+}
+
+function assertAuthRateLimit(req, purpose, identifier) {
+  const key = authRateLimitKey(req, purpose, identifier);
+  const bucket = authFailureBucket(key);
+  if (bucket.count < AUTH_RATE_LIMIT_MAX_FAILURES) return key;
+  const error = new Error("Demasiados intentos. Espera unos minutos y vuelve a probar.");
+  error.status = 429;
+  error.retryAfterSeconds = Math.max(Math.ceil((bucket.resetAt - Date.now()) / 1000), 1);
+  throw error;
+}
+
+function recordAuthFailure(key) {
+  const bucket = authFailureBucket(key);
+  bucket.count += 1;
+}
+
+function clearAuthFailures(req, purpose, identifier) {
+  authFailureBuckets.delete(authRateLimitKey(req, purpose, identifier));
 }
 
 function requireUser(user) {
@@ -207,6 +369,132 @@ function listAuditLogs(filters = {}) {
   }));
 }
 
+function eventSnapshotPayload(eventId) {
+  const event = eventDetail(eventId);
+  if (!event) return null;
+  return {
+    captured_at: new Date().toISOString(),
+    event
+  };
+}
+
+function createEventSnapshot(eventId, action, actor = null, metadata = {}) {
+  const payload = eventSnapshotPayload(eventId);
+  if (!payload) return null;
+  const id = randomId("evs");
+  run(
+    `INSERT INTO event_snapshots (id, event_id, action, actor_user_id, payload, metadata)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      eventId,
+      action,
+      actor?.id || null,
+      JSON.stringify(payload),
+      JSON.stringify(metadata || {})
+    ]
+  );
+  return {
+    id,
+    event_id: eventId,
+    action,
+    actor_user_id: actor?.id || null,
+    payload,
+    metadata,
+    created_at: new Date().toISOString()
+  };
+}
+
+function listEventSnapshots(eventId, limit = 50) {
+  return all(
+    `SELECT event_snapshots.*,
+            users.name AS actor_name,
+            users.email AS actor_email,
+            users.role AS actor_role
+     FROM event_snapshots
+     LEFT JOIN users ON users.id = event_snapshots.actor_user_id
+     WHERE event_snapshots.event_id = ?
+     ORDER BY event_snapshots.created_at DESC, event_snapshots.id DESC
+     LIMIT ?`,
+    [eventId, Math.min(Math.max(Number(limit || 50), 1), 200)]
+  ).map((row) => ({
+    id: row.id,
+    event_id: row.event_id,
+    action: row.action,
+    actor_user_id: row.actor_user_id,
+    actor_name: row.actor_name || "Sistema",
+    actor_email: row.actor_email || "",
+    actor_role: row.actor_role || "system",
+    payload: jsonField(row.payload, {}),
+    metadata: jsonField(row.metadata, {}),
+    created_at: row.created_at
+  }));
+}
+
+function normalizeAdminPermissions(value, role = "admin") {
+  if (role === "employee") return {};
+  const parsed = typeof value === "string" ? jsonField(value, {}) : (value || {});
+  return Object.fromEntries(ADMIN_PERMISSION_KEYS.map((key) => [key, parsed[key] !== false]));
+}
+
+function permissionsFromBody(body, role, fallback) {
+  if (role === "employee") return {};
+  if (!body || body.permissions === undefined) return normalizeAdminPermissions(fallback, role);
+  const permissions = body.permissions && typeof body.permissions === "object" ? body.permissions : {};
+  return Object.fromEntries(ADMIN_PERMISSION_KEYS.map((key) => [key, permissions[key] !== false]));
+}
+
+function userHasPermission(user, permission) {
+  if (!permission) return true;
+  if (!user) return false;
+  if (user.role === "super_admin") return true;
+  if (user.role !== "admin") return false;
+  return normalizeAdminPermissions(user.permissions, user.role)[permission] !== false;
+}
+
+function userHasAnyPermission(user, permissions) {
+  return permissions.some((permission) => userHasPermission(user, permission));
+}
+
+function adminPermissionsForRequest(pathname, method) {
+  const write = method !== "GET";
+  if (pathname === "/api/dashboard") return ["dashboard"];
+  if (pathname === "/api/live") return ["live"];
+  if (pathname === "/api/users" || pathname.startsWith("/api/users/")) return ["users"];
+  if (pathname === "/api/settings") return ["settings"];
+  if (pathname === "/api/work-roles") return method === "GET" ? ["events", "assignments", "settings"] : ["settings"];
+  if (pathname.startsWith("/api/work-roles/") || pathname === "/api/maps/resolve") return ["settings"];
+  if (pathname === "/api/calendar/marfan.ics") return [];
+  if (pathname === "/api/calendar" || pathname.startsWith("/api/calendar/")) return ["calendar"];
+  if (pathname === "/api/imports") return ["imports"];
+  if (pathname === "/api/imports/templates/employees" || pathname === "/api/imports/employees") return ["employees", "imports"];
+  if (pathname === "/api/imports/templates/clients" || pathname === "/api/imports/clients") return ["clients", "imports"];
+  if (/^\/api\/events\/[^/]+\/client-dossier$/.test(pathname)) return ["reports"];
+  if (pathname === "/api/events" || pathname.startsWith("/api/events/")) return write ? ["events"] : ["dashboard", "live", "calendar", "events", "assignments", "clocking", "incidents", "finances", "reports"];
+  if (pathname === "/api/clients" || pathname.startsWith("/api/clients/")) return write ? ["clients"] : ["clients", "events", "calendar", "assignments", "finances", "reports", "dashboard", "live"];
+  if (pathname === "/api/employees" || pathname.startsWith("/api/employees/")) return write ? ["employees"] : ["employees", "events", "assignments", "clocking", "incidents", "documents", "availability", "finances", "reports", "dashboard", "live"];
+  if (pathname === "/api/assignments" || pathname.startsWith("/api/assignments/") || pathname === "/api/planner/recommendations") return ["assignments"];
+  if (pathname === "/api/time-entries" || pathname.startsWith("/api/time-entries/")) return ["clocking"];
+  if (pathname === "/api/incidents/detect-attendance") return ["live", "incidents"];
+  if (pathname === "/api/incidents" || pathname.startsWith("/api/incidents/")) return ["incidents"];
+  if (pathname === "/api/availability" || pathname.startsWith("/api/availability/")) return ["availability"];
+  if (pathname === "/api/documents" || pathname.startsWith("/api/documents/")) return ["documents"];
+  if (pathname === "/api/allowances" || pathname.startsWith("/api/allowances/")) return ["finances"];
+  if (pathname === "/api/finance/summary") return ["finances"];
+  if (pathname.startsWith("/api/reports/") || pathname.startsWith("/api/delivery-notes/")) return ["reports"];
+  if (pathname === "/api/backups" || pathname.startsWith("/api/backups/")) return ["backups"];
+  return [];
+}
+
+function enforceAdminRoutePermission(user, pathname, method) {
+  if (!user || user.role !== "admin") return;
+  const allowed = adminPermissionsForRequest(pathname, method);
+  if (!allowed.length || userHasAnyPermission(user, allowed)) return;
+  const error = new Error("Modulo no permitido para este administrador");
+  error.status = 403;
+  throw error;
+}
+
 function publicUser(row) {
   return {
     id: row.id,
@@ -215,6 +503,7 @@ function publicUser(row) {
     email: row.email,
     phone: row.phone,
     avatarUrl: row.avatar_url,
+    permissions: normalizeAdminPermissions(row.permissions_json, row.role),
     active: Boolean(row.active)
   };
 }
@@ -297,7 +586,17 @@ function ensureCalendarSettings() {
     google_calendar_delegated_user: "",
     google_calendar_oauth_client_json: "",
     google_calendar_oauth_refresh_token: "",
-    google_calendar_oauth_connected_at: ""
+    google_calendar_oauth_connected_at: "",
+    backup_auto_enabled: "true",
+    backup_auto_interval_hours: "24",
+    backup_auto_retention_days: "30",
+    backup_auto_retention_count: "30",
+    clock_radius_m: String(DEFAULT_CLOCK_RADIUS_M),
+    clock_entry_early_minutes: "90",
+    clock_exit_late_minutes: "240",
+    incident_absence_grace_minutes: "15",
+    office_phone: "+34910000000",
+    office_whatsapp: "34910000000"
   };
   for (const [key, value] of Object.entries(defaults)) {
     run("INSERT OR IGNORE INTO company_settings (key, value) VALUES (?, ?)", [key, value]);
@@ -320,6 +619,7 @@ function settingsForAdmin() {
   const settings = settingMap();
   const serviceAccount = googleServiceAccountCredentials(settings);
   const oauthClient = googleOAuthClientCredentials(settings);
+  const syncSummary = googleSyncSummary();
   return {
     ...settings,
     google_calendar_service_account_json: "",
@@ -329,7 +629,12 @@ function settingsForAdmin() {
     google_calendar_oauth_refresh_token: "",
     google_calendar_oauth_client_id: oauthClient?.client_id || "",
     google_calendar_oauth_client_configured: oauthClient ? "true" : "false",
-    google_calendar_oauth_connected: settings.google_calendar_oauth_refresh_token ? "true" : "false"
+    google_calendar_oauth_connected: settings.google_calendar_oauth_refresh_token ? "true" : "false",
+    google_sync_total_count: syncSummary.total,
+    google_sync_pending_count: syncSummary.pending,
+    google_sync_error_count: syncSummary.error,
+    google_sync_pending_auth_count: syncSummary.pending_auth,
+    google_sync_synced_count: syncSummary.synced
   };
 }
 
@@ -350,6 +655,327 @@ function sanitizeSettingsAudit(body) {
 function numberSetting(settings, key, fallback) {
   const value = Number(settings[key]);
   return Number.isFinite(value) ? value : fallback;
+}
+
+function googleSyncSummary() {
+  const summary = {
+    total: 0,
+    pending: 0,
+    pending_auth: 0,
+    error: 0,
+    synced: 0,
+    disabled: 0,
+    imported: 0
+  };
+  const rows = all(
+    `SELECT COALESCE(google_sync_status, 'pending') AS status, COUNT(*) AS count
+     FROM events
+     WHERE date >= ?
+     GROUP BY COALESCE(google_sync_status, 'pending')`,
+    [formatDate()]
+  );
+  for (const row of rows) {
+    const status = row.status || "pending";
+    summary[status] = Number(row.count || 0);
+    summary.total += Number(row.count || 0);
+  }
+  return summary;
+}
+
+function backupAutomationSettings(settings = settingMap()) {
+  return {
+    enabled: String(settings.backup_auto_enabled ?? "true") !== "false",
+    intervalHours: Math.min(Math.max(numberSetting(settings, "backup_auto_interval_hours", 24), 1), 24 * 14),
+    retentionDays: Math.min(Math.max(numberSetting(settings, "backup_auto_retention_days", 30), 1), 365),
+    retentionCount: Math.min(Math.max(Math.round(numberSetting(settings, "backup_auto_retention_count", 30)), 1), 500)
+  };
+}
+
+function clockPolicy(settings = settingMap()) {
+  return {
+    radiusM: Math.min(Math.max(Math.round(numberSetting(settings, "clock_radius_m", DEFAULT_CLOCK_RADIUS_M)), 25), 5000),
+    entryEarlyMinutes: Math.min(Math.max(Math.round(numberSetting(settings, "clock_entry_early_minutes", 90)), 0), 24 * 60),
+    exitLateMinutes: Math.min(Math.max(Math.round(numberSetting(settings, "clock_exit_late_minutes", 240)), 0), 48 * 60)
+  };
+}
+
+function incidentDetectionSettings(settings = settingMap()) {
+  return {
+    absenceGraceMinutes: Math.min(Math.max(Math.round(numberSetting(settings, "incident_absence_grace_minutes", 15)), 1), 240)
+  };
+}
+
+function localDateTime(dateValue, timeValue) {
+  const [year, month, day] = String(dateValue || formatDate()).split("-").map(Number);
+  const [hour, minute] = String(timeValue || "00:00").split(":").map(Number);
+  return new Date(year, (month || 1) - 1, day || 1, hour || 0, minute || 0, 0, 0);
+}
+
+function eventClockRange(event) {
+  const start = localDateTime(event.date, event.start_time);
+  const end = localDateTime(event.date, event.end_time);
+  if (end.getTime() <= start.getTime()) end.setDate(end.getDate() + 1);
+  return { start, end };
+}
+
+function eventDateSpan(event) {
+  return {
+    startDate: event.date,
+    endDate: toMinutes(event.end_time) <= toMinutes(event.start_time) ? addIsoDays(event.date, 1) : event.date
+  };
+}
+
+function clockWindowState(event, type, policy = clockPolicy(), now = new Date()) {
+  if (!event) return { allowed: false, reason: "Evento no encontrado" };
+  if (event.status === "finalizado") return { allowed: false, reason: "Evento finalizado" };
+  const { start, end } = eventClockRange(event);
+  const openAt = new Date((type === "salida" ? start : start).getTime() - (type === "entrada" ? policy.entryEarlyMinutes : 0) * 60_000);
+  const closeAt = new Date(end.getTime() + policy.exitLateMinutes * 60_000);
+  if (now.getTime() < openAt.getTime()) {
+    return {
+      allowed: false,
+      reason: type === "entrada" ? "Fichaje de entrada aun no disponible" : "Fichaje de salida aun no disponible",
+      openAt,
+      closeAt
+    };
+  }
+  if (now.getTime() > closeAt.getTime()) {
+    return {
+      allowed: false,
+      reason: type === "entrada" ? "Ventana de entrada cerrada" : "Ventana de salida cerrada",
+      openAt,
+      closeAt
+    };
+  }
+  return { allowed: true, reason: "", openAt, closeAt };
+}
+
+function attendanceIncidentPayload(row, type, graceMinutes) {
+  const critical = type === "ausencia";
+  return {
+    type,
+    priority: critical ? "critica" : "alta",
+    title: critical ? "Ausencia detectada" : "Retraso detectado",
+    description: critical
+      ? `${row.employee_name} no tiene fichaje de entrada aceptado en ${row.event_name}. Servicio finalizado sin entrada registrada.`
+      : `${row.employee_name} no tiene fichaje de entrada aceptado en ${row.event_name} tras ${graceMinutes} minutos de margen.`
+  };
+}
+
+function detectAttendanceIncidents({ date = formatDate(), actor = null, now = new Date() } = {}) {
+  const settings = incidentDetectionSettings();
+  const rows = all(
+    `SELECT assignments.id AS assignment_id,
+            assignments.employee_id,
+            assignments.role AS assignment_role,
+            events.id AS event_id,
+            events.name AS event_name,
+            events.date,
+            events.start_time,
+            events.end_time,
+            events.status AS event_status,
+            employees.name AS employee_name
+     FROM assignments
+     JOIN events ON events.id = assignments.event_id
+     JOIN employees ON employees.id = assignments.employee_id
+     WHERE assignments.status != 'bloqueado'
+       AND events.date = ?
+     ORDER BY events.start_time ASC, employees.name ASC`,
+    [date]
+  );
+  const summary = { date, checked: rows.length, created: 0, updated: 0, skipped: 0, incidents: [] };
+  for (const row of rows) {
+    const event = {
+      id: row.event_id,
+      date: row.date,
+      start_time: row.start_time,
+      end_time: row.end_time,
+      status: row.event_status
+    };
+    const { start, end } = eventClockRange(event);
+    const dueAt = new Date(start.getTime() + settings.absenceGraceMinutes * 60_000);
+    if (now.getTime() < dueAt.getTime()) {
+      summary.skipped += 1;
+      continue;
+    }
+    const acceptedIn = get(
+      `SELECT id FROM time_entries
+       WHERE event_id = ? AND employee_id = ? AND accepted = 1 AND type = 'entrada'
+       LIMIT 1`,
+      [row.event_id, row.employee_id]
+    );
+    if (acceptedIn) {
+      summary.skipped += 1;
+      continue;
+    }
+    const type = now.getTime() > end.getTime() || event.status === "finalizado" ? "ausencia" : "retraso";
+    const payload = attendanceIncidentPayload(row, type, settings.absenceGraceMinutes);
+    const existing = get(
+      `SELECT * FROM incidents
+       WHERE event_id = ? AND employee_id = ? AND status != 'resuelta' AND type IN ('ausencia', 'retraso')
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [row.event_id, row.employee_id]
+    );
+    if (existing) {
+      if (type === "ausencia" && existing.type !== "ausencia") {
+        run(
+          `UPDATE incidents
+           SET type = ?, priority = ?, title = ?, description = ?
+           WHERE id = ?`,
+          [payload.type, payload.priority, payload.title, payload.description, existing.id]
+        );
+        audit(actor, "incident_auto_upgraded", "incident", existing.id, {
+          eventId: row.event_id,
+          employeeId: row.employee_id,
+          from: existing.type,
+          to: type
+        });
+        createEventSnapshot(row.event_id, "incident_auto_upgraded", actor, {
+          incidentId: existing.id,
+          employeeId: row.employee_id,
+          from: existing.type,
+          to: type
+        });
+        summary.updated += 1;
+        summary.incidents.push({ id: existing.id, eventId: row.event_id, employeeId: row.employee_id, type, action: "updated" });
+      } else {
+        summary.skipped += 1;
+      }
+      continue;
+    }
+    const id = randomId("inc");
+    run(
+      `INSERT INTO incidents (id, event_id, employee_id, type, priority, title, description)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, row.event_id, row.employee_id, payload.type, payload.priority, payload.title, payload.description]
+    );
+    audit(actor, "incident_auto_detected", "incident", id, {
+      eventId: row.event_id,
+      employeeId: row.employee_id,
+      type
+    });
+    createEventSnapshot(row.event_id, "incident_auto_detected", actor, {
+      incidentId: id,
+      employeeId: row.employee_id,
+      type
+    });
+    summary.created += 1;
+    summary.incidents.push({ id, eventId: row.event_id, employeeId: row.employee_id, type, action: "created" });
+  }
+  return summary;
+}
+
+function latestAutoBackup() {
+  return get("SELECT * FROM backups WHERE type = 'auto' ORDER BY created_at DESC LIMIT 1");
+}
+
+function nextAutoBackupAt(settings = settingMap()) {
+  const config = backupAutomationSettings(settings);
+  if (!config.enabled) return "";
+  const latest = latestAutoBackup();
+  if (!latest) return new Date().toISOString();
+  const latestTime = new Date(latest.created_at).getTime();
+  if (!Number.isFinite(latestTime)) return new Date().toISOString();
+  return new Date(latestTime + config.intervalHours * 60 * 60 * 1000).toISOString();
+}
+
+function pruneAutomaticBackups(settings = settingMap()) {
+  const config = backupAutomationSettings(settings);
+  const cutoff = new Date(Date.now() - config.retentionDays * 24 * 60 * 60 * 1000).toISOString();
+  const byAge = all("SELECT * FROM backups WHERE type = 'auto' AND created_at < ? ORDER BY created_at ASC", [cutoff]);
+  const allAuto = all("SELECT * FROM backups WHERE type = 'auto' ORDER BY created_at DESC");
+  const keep = new Set(allAuto.slice(0, config.retentionCount).map((backup) => backup.id));
+  const byCount = allAuto.filter((backup) => !keep.has(backup.id));
+  const candidates = new Map([...byAge, ...byCount].map((backup) => [backup.id, backup]));
+  const removed = [];
+  for (const backup of candidates.values()) {
+    const resolved = safeBackupPath(backup.file_path);
+    if (resolved && fs.existsSync(resolved)) fs.rmSync(resolved, { force: true });
+    run("DELETE FROM backups WHERE id = ?", [backup.id]);
+    removed.push(backup.id);
+  }
+  if (removed.length) {
+    audit(null, "backup_pruned", "backup", "auto", {
+      removed: removed.length,
+      retentionDays: config.retentionDays,
+      retentionCount: config.retentionCount
+    });
+  }
+  return removed.length;
+}
+
+function backupRestorePending() {
+  const markerPath = path.join(DATA_DIR, "restore-request.json");
+  if (!fs.existsSync(markerPath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(markerPath, "utf8"));
+  } catch {
+    return { invalid: true };
+  }
+}
+
+function backupOverview() {
+  const settings = settingMap();
+  const backups = all("SELECT * FROM backups ORDER BY created_at DESC").map(backupStatus);
+  const latest = latestAutoBackup();
+  return {
+    backups,
+    automation: {
+      ...backupAutomationSettings(settings),
+      latestAutoAt: latest?.created_at || "",
+      nextAutoAt: nextAutoBackupAt(settings),
+      lastRunAt: backupAutomationState.lastRunAt,
+      lastResult: backupAutomationState.lastResult,
+      running: backupAutomationState.running,
+      restorePending: backupRestorePending()
+    }
+  };
+}
+
+function automaticBackupDue(settings = settingMap()) {
+  const config = backupAutomationSettings(settings);
+  if (!config.enabled) return false;
+  const next = nextAutoBackupAt(settings);
+  return Boolean(next && new Date(next).getTime() <= Date.now());
+}
+
+function runAutomaticBackup(reason = "scheduled") {
+  if (backupAutomationState.running) return { skipped: true, reason: "running" };
+  const settings = settingMap();
+  const config = backupAutomationSettings(settings);
+  if (!config.enabled) return { skipped: true, reason: "disabled" };
+  backupAutomationState.running = true;
+  try {
+    const backup = createBackup("auto", reason === "manual" ? "Backup automatico manual" : "Backup automatico programado");
+    const pruned = pruneAutomaticBackups(settings);
+    backupAutomationState.lastRunAt = new Date().toISOString();
+    backupAutomationState.lastResult = { backupId: backup.id, pruned, reason };
+    backupAutomationState.nextRunAt = nextAutoBackupAt(settings);
+    audit(null, "backup_auto_created", "backup", backup.id, {
+      reason,
+      sizeBytes: backup.size_bytes,
+      pruned
+    });
+    return { backup, pruned };
+  } finally {
+    backupAutomationState.running = false;
+  }
+}
+
+function runAutomaticBackupIfDue() {
+  try {
+    if (!automaticBackupDue()) {
+      backupAutomationState.nextRunAt = nextAutoBackupAt();
+      return null;
+    }
+    return runAutomaticBackup("scheduled");
+  } catch (error) {
+    backupAutomationState.lastRunAt = new Date().toISOString();
+    backupAutomationState.lastResult = { error: error.message };
+    console.error("Backup automatico fallido", error);
+    return null;
+  }
 }
 
 function listWorkRoles() {
@@ -395,6 +1021,199 @@ function cleanAssignmentStatus(status, fallback = "confirmado") {
   return ["confirmado", "pendiente", "bloqueado"].includes(status) ? status : fallback;
 }
 
+function cleanContactEmail(value) {
+  const email = String(value ?? "").trim().toLowerCase();
+  return email || null;
+}
+
+function cleanContactPhone(value) {
+  const phone = String(value ?? "").trim();
+  return phone || null;
+}
+
+function passwordPolicyMessage(password) {
+  const value = String(password || "");
+  if (value.length < 8) return "La contrasena debe tener al menos 8 caracteres";
+  if (!/[A-Za-z]/.test(value) || !/\d/.test(value)) {
+    return "La contrasena debe incluir letras y numeros";
+  }
+  return "";
+}
+
+function validateNewPassword(password) {
+  const message = passwordPolicyMessage(password);
+  if (message) {
+    const error = new Error(message);
+    error.status = 400;
+    throw error;
+  }
+  return String(password);
+}
+
+function phoneDigits(value) {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
+function phoneLoginKey(value) {
+  const digits = phoneDigits(value);
+  if (digits.length < 9) return "";
+  const withoutInternationalPrefix = digits.startsWith("0034")
+    ? digits.slice(4)
+    : digits.startsWith("34") && digits.length > 9
+      ? digits.slice(2)
+      : digits;
+  return withoutInternationalPrefix.length >= 9 ? withoutInternationalPrefix.slice(-9) : "";
+}
+
+function phonesMatchForLogin(storedPhone, identifier) {
+  const storedKey = phoneLoginKey(storedPhone);
+  const identifierKey = phoneLoginKey(identifier);
+  return Boolean(storedKey && identifierKey && storedKey === identifierKey);
+}
+
+function findActiveLoginAccount(identifier) {
+  const rawIdentifier = String(identifier || "").trim();
+  const emailIdentifier = rawIdentifier.toLowerCase();
+  const accountByEmail = emailIdentifier
+    ? get("SELECT * FROM users WHERE active = 1 AND lower(email) = ? LIMIT 1", [emailIdentifier])
+    : null;
+  if (accountByEmail) return accountByEmail;
+
+  if (!phoneLoginKey(rawIdentifier)) return null;
+  const matches = all("SELECT * FROM users WHERE active = 1 AND phone IS NOT NULL AND trim(phone) != ''")
+    .filter((account) => phonesMatchForLogin(account.phone, rawIdentifier));
+  if (matches.length > 1) {
+    const error = new Error("Hay varios usuarios con ese telefono. Usa el email o avisa a oficina.");
+    error.status = 409;
+    throw error;
+  }
+  return matches[0] || null;
+}
+
+function findDuplicateUserContact({ email, phone, excludeUserId = "" }) {
+  const cleanEmail = cleanContactEmail(email);
+  if (cleanEmail) {
+    const duplicateByEmail = get(
+      `SELECT users.*, employees.id AS employee_id
+       FROM users
+       LEFT JOIN employees ON employees.user_id = users.id
+       WHERE lower(users.email) = ? AND users.id != ?
+       LIMIT 1`,
+      [cleanEmail, excludeUserId]
+    );
+    if (duplicateByEmail) return duplicateByEmail;
+  }
+  const phoneKey = phoneLoginKey(phone);
+  if (!phoneKey) return null;
+  return all(
+    `SELECT users.*, employees.id AS employee_id
+     FROM users
+     LEFT JOIN employees ON employees.user_id = users.id
+     WHERE users.id != ? AND users.phone IS NOT NULL AND trim(users.phone) != ''`,
+    [excludeUserId]
+  ).find((account) => phonesMatchForLogin(account.phone, phone)) || null;
+}
+
+function findDuplicateEmployeeContact({ email, phone, excludeEmployeeId = "" }) {
+  const cleanEmail = cleanContactEmail(email);
+  if (cleanEmail) {
+    const duplicateByEmail = get(
+      "SELECT * FROM employees WHERE lower(email) = ? AND id != ? LIMIT 1",
+      [cleanEmail, excludeEmployeeId]
+    );
+    if (duplicateByEmail) return duplicateByEmail;
+  }
+  const phoneKey = phoneLoginKey(phone);
+  if (!phoneKey) return null;
+  return all(
+    "SELECT * FROM employees WHERE id != ? AND phone IS NOT NULL AND trim(phone) != ''",
+    [excludeEmployeeId]
+  ).find((employee) => phonesMatchForLogin(employee.phone, phone)) || null;
+}
+
+function validateUserContact({ userId = "", employeeId = "", email, phone }) {
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    const error = new Error("Email no valido");
+    error.status = 400;
+    throw error;
+  }
+  if (findDuplicateUserContact({ email, phone, excludeUserId: userId })) {
+    const error = new Error("Ese email o telefono ya pertenece a otro usuario");
+    error.status = 409;
+    throw error;
+  }
+  if (findDuplicateEmployeeContact({ email, phone, excludeEmployeeId: employeeId })) {
+    const error = new Error("Ese email o telefono ya pertenece a otro operario");
+    error.status = 409;
+    throw error;
+  }
+}
+
+function validateEmployeeProfileContact({ employeeId, userId, email, phone }) {
+  if (!email && !phone) {
+    const error = new Error("Email o telefono obligatorio para mantener el acceso");
+    error.status = 400;
+    throw error;
+  }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    const error = new Error("Email no valido");
+    error.status = 400;
+    throw error;
+  }
+  const duplicateUserByEmail = email
+    ? get("SELECT id FROM users WHERE lower(email) = ? AND id != ? LIMIT 1", [email, userId])
+    : null;
+  const duplicateUserByPhone = findDuplicateUserContact({ phone, excludeUserId: userId });
+  if (duplicateUserByEmail || duplicateUserByPhone) {
+    const error = new Error("Ese email o telefono ya pertenece a otro usuario");
+    error.status = 409;
+    throw error;
+  }
+  const duplicateEmployeeByEmail = email
+    ? get("SELECT id FROM employees WHERE lower(email) = ? AND id != ? LIMIT 1", [email, employeeId])
+    : null;
+  const duplicateEmployeeByPhone = findDuplicateEmployeeContact({ phone, excludeEmployeeId: employeeId });
+  if (duplicateEmployeeByEmail || duplicateEmployeeByPhone) {
+    const error = new Error("Ese email o telefono ya pertenece a otro operario");
+    error.status = 409;
+    throw error;
+  }
+}
+
+function validateAdminEmployeeContact({ employeeId = "", userId = "", email, phone, requireContact = false }) {
+  if (requireContact && !email && !phone) {
+    const error = new Error("Email o telefono obligatorio para crear acceso al portal");
+    error.status = 400;
+    throw error;
+  }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    const error = new Error("Email no valido");
+    error.status = 400;
+    throw error;
+  }
+  if (findDuplicateEmployeeContact({ email, phone, excludeEmployeeId: employeeId })) {
+    const error = new Error("Ese email o telefono ya pertenece a otro operario");
+    error.status = 409;
+    throw error;
+  }
+  const duplicateUser = findDuplicateUserContact({ email, phone, excludeUserId: userId });
+  if (duplicateUser && (duplicateUser.role !== "employee" || duplicateUser.employee_id)) {
+    const error = new Error("Ese email o telefono ya pertenece a otro usuario");
+    error.status = 409;
+    throw error;
+  }
+}
+
+function cleanIncidentType(type) {
+  return ["ausencia", "retraso", "accidente", "cliente", "horas extra", "documentacion", "otro"].includes(type) ? type : "otro";
+}
+
+function employeeIncidentPriority(type) {
+  if (type === "accidente") return "critica";
+  if (["ausencia", "retraso"].includes(type)) return "alta";
+  return "media";
+}
+
 function isTeamLeaderRole(role) {
   return String(role || "").toLowerCase().includes("jefe");
 }
@@ -409,6 +1228,426 @@ function employeeSkillsFromBody(body, fallback = []) {
   const skills = Array.isArray(body.skills) ? body.skills : fallback;
   if (!isTeamLeaderRole(employeeRoleFromBody(body, ""))) return skills;
   return Array.from(new Set([...skills, "jefe"]));
+}
+
+function importClean(value) {
+  const text = String(value ?? "").trim();
+  if (!text || text.toLowerCase() === "nan") return "";
+  if (/^\d+\.0$/.test(text)) return text.slice(0, -2);
+  return text;
+}
+
+function importHeaderKey(value) {
+  return importClean(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function detectCsvDelimiter(line) {
+  const delimiters = [";", ",", "\t"];
+  const counts = delimiters.map((delimiter) => ({
+    delimiter,
+    count: String(line || "").split(delimiter).length - 1
+  }));
+  return counts.sort((a, b) => b.count - a.count)[0]?.delimiter || ";";
+}
+
+function parseDelimitedRows(text) {
+  const source = String(text || "").replace(/^\uFEFF/, "");
+  const firstLine = source.split(/\r?\n/).find((line) => line.trim()) || "";
+  const delimiter = detectCsvDelimiter(firstLine);
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (char === '"') {
+      if (quoted && next === '"') {
+        cell += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+    if (!quoted && char === delimiter) {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+    if (!quoted && (char === "\n" || char === "\r")) {
+      if (char === "\r" && next === "\n") index += 1;
+      row.push(cell);
+      if (row.some((item) => importClean(item))) rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+  row.push(cell);
+  if (row.some((item) => importClean(item))) rows.push(row);
+  if (rows.length < 2) return [];
+  const headers = rows[0].map(importHeaderKey);
+  return rows.slice(1).map((cells) => {
+    const item = {};
+    headers.forEach((header, index) => {
+      if (header) item[header] = importClean(cells[index]);
+    });
+    return item;
+  });
+}
+
+function importValue(row, aliases) {
+  for (const alias of aliases) {
+    const value = row[importHeaderKey(alias)];
+    if (importClean(value)) return importClean(value);
+  }
+  return "";
+}
+
+function splitImportSkills(value, fallback = []) {
+  const raw = importClean(value);
+  if (!raw) return fallback;
+  return raw.split(/[,;|]/).map((item) => item.trim().toLowerCase()).filter(Boolean);
+}
+
+const EMPLOYEE_IMPORT_HEADERS = [
+  "NOMBRE",
+  "APELLIDOS",
+  "TELEFONO",
+  "CORREO ELECTRONICO",
+  "D.N.I.",
+  "NºSEG.SOCIAL",
+  "Nº DE CUENTA BANCARIA",
+  "ROL",
+  "SKILLS",
+  "DIRECCION",
+  "PROVINCIA",
+  "CP",
+  "CIUDAD",
+  "CAMISETA",
+  "PANTALON",
+  "CALZADO",
+  "CHAQUETA",
+  "EPI",
+  "CONTACTO EMERGENCIA",
+  "TARIFA HORA",
+  "KM",
+  "DIETA"
+];
+
+const CLIENT_IMPORT_HEADERS = [
+  "CLIENTE",
+  "RAZON SOCIAL",
+  "CIF",
+  "PERSONA CONTACTO",
+  "MAIL",
+  "TELEFONO",
+  "DIRECCION",
+  "PROVINCIA",
+  "OBSERVACIONES"
+];
+
+function importTemplateCsv(headers) {
+  return `${headers.join(";")}\n`;
+}
+
+function findImportedUser(email, phone) {
+  const cleanEmail = importClean(email).toLowerCase();
+  const cleanPhone = importClean(phone);
+  if (cleanEmail) {
+    const user = get("SELECT * FROM users WHERE lower(email) = ? LIMIT 1", [cleanEmail]);
+    if (user) return user;
+  }
+  if (cleanPhone) {
+    const user = findDuplicateUserContact({ phone: cleanPhone });
+    if (user) return get("SELECT * FROM users WHERE id = ?", [user.id]);
+  }
+  return null;
+}
+
+function ensureEmployeePortalUser({ name, email, phone, defaultPassword }) {
+  const cleanEmail = importClean(email).toLowerCase();
+  const cleanPhone = importClean(phone);
+  if (!cleanEmail && !cleanPhone) return { userId: null, created: false };
+  const user = findImportedUser(cleanEmail, cleanPhone);
+  if (user) {
+    if (user.role !== "employee") {
+      const error = new Error("El email o telefono ya pertenece a un usuario administrador");
+      error.status = 409;
+      throw error;
+    }
+    run(
+      `UPDATE users
+       SET role = 'employee', name = ?, email = COALESCE(NULLIF(?, ''), email),
+           phone = COALESCE(NULLIF(?, ''), phone), active = 1
+       WHERE id = ?`,
+      [name, cleanEmail, cleanPhone, user.id]
+    );
+    return { userId: user.id, created: false };
+  }
+  const credentials = hashPassword(validateNewPassword(defaultPassword || "Marfan2026!"));
+  const userId = randomId("usr");
+  run(
+    `INSERT INTO users (id, role, name, email, phone, password_hash, salt, active)
+     VALUES (?, 'employee', ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, 1)`,
+    [userId, name, cleanEmail, cleanPhone, credentials.hash, credentials.salt]
+  );
+  return { userId, created: true };
+}
+
+function ensureImportedEmployeeUser({ name, email, phone, defaultPassword }) {
+  return ensureEmployeePortalUser({ name, email, phone, defaultPassword });
+}
+
+function findImportedEmployee({ dni, email, phone }) {
+  const cleanDni = importClean(dni);
+  const cleanEmail = importClean(email).toLowerCase();
+  const cleanPhone = importClean(phone);
+  if (cleanDni) {
+    const employee = get("SELECT * FROM employees WHERE dni = ? LIMIT 1", [cleanDni]);
+    if (employee) return employee;
+  }
+  if (cleanEmail) {
+    const employee = get("SELECT * FROM employees WHERE lower(email) = ? LIMIT 1", [cleanEmail]);
+    if (employee) return employee;
+  }
+  if (cleanPhone) {
+    const employee = findDuplicateEmployeeContact({ phone: cleanPhone });
+    if (employee) return employee;
+  }
+  return null;
+}
+
+function findImportedClient({ taxId, name }) {
+  const cleanTaxId = importClean(taxId);
+  const cleanName = importClean(name);
+  if (cleanTaxId) {
+    const client = get("SELECT * FROM clients WHERE tax_id = ? LIMIT 1", [cleanTaxId]);
+    if (client) return client;
+  }
+  if (cleanName) {
+    const client = get("SELECT * FROM clients WHERE lower(name) = ? LIMIT 1", [cleanName.toLowerCase()]);
+    if (client) return client;
+  }
+  return null;
+}
+
+function recordDataImport({ source, rowsRead, inserted, updated, skipped, metadata }) {
+  const id = randomId("imp");
+  run(
+    `INSERT INTO data_imports (id, source, rows_read, inserted, updated, skipped, metadata)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, source, rowsRead, inserted, updated, skipped, JSON.stringify(metadata || {})]
+  );
+  return get("SELECT * FROM data_imports WHERE id = ?", [id]);
+}
+
+function importEmployeesCsv({ text, source, defaultPassword, actor }) {
+  const rows = parseDelimitedRows(text).slice(0, 5000);
+  let inserted = 0;
+  let updated = 0;
+  let skipped = 0;
+  let usersCreated = 0;
+  const now = new Date().toISOString();
+  const sourceName = importClean(source) || "operarios.csv";
+  transaction(() => {
+    for (const row of rows) {
+      const firstName = importValue(row, ["NOMBRE", "nombre"]);
+      const lastName = importValue(row, ["APELLIDOS", "apellido", "apellidos"]);
+      const fullName = importValue(row, ["NOMBRE COMPLETO", "OPERARIO", "EMPLEADO", "name"]);
+      const name = importClean(fullName || [firstName, lastName].filter(Boolean).join(" "));
+      if (!name) {
+        skipped += 1;
+        continue;
+      }
+      const phone = importValue(row, ["TELEFONO", "TELÉFONO", "MOVIL", "MÓVIL", "phone"]);
+      const email = importValue(row, ["CORREO ELECTRONICO", "CORREO ELECTRÓNICO", "EMAIL", "MAIL"]).toLowerCase();
+      const dni = importValue(row, ["D.N.I.", "DNI", "NIF"]);
+      const role = importValue(row, ["ROL", "PUESTO", "ROLE"]) || "Operario";
+      const skills = splitImportSkills(importValue(row, ["SKILLS", "HABILIDADES", "APTITUDES"]), [role.toLowerCase()]);
+      const { userId, created } = ensureImportedEmployeeUser({ name, email, phone, defaultPassword });
+      if (created) usersCreated += 1;
+      const existing = findImportedEmployee({ dni, email, phone });
+      const values = {
+        phone,
+        email,
+        dni,
+        socialSecurityNumber: importValue(row, ["NºSEG.SOCIAL", "NSS", "SEGURIDAD SOCIAL", "NUMERO SEGURIDAD SOCIAL"]),
+        bankAccount: importValue(row, ["Nº DE CUENTA BANCARIA", "CUENTA BANCARIA", "IBAN"]),
+        address: importValue(row, ["DIRECCION", "DIRECCIÓN", "ADDRESS"]),
+        province: importValue(row, ["PROVINCIA", "PROVINCE"]),
+        postalCode: importValue(row, ["CP", "CODIGO POSTAL", "CÓDIGO POSTAL"]),
+        birthDate: importValue(row, ["FECHA NACIMIENTO", "NACIMIENTO"]),
+        shirtSize: importValue(row, ["CAMISETA", "TALLA CAMISETA", "SHIRT"]),
+        pantsSize: importValue(row, ["PANTALON", "PANTALÓN", "TALLA PANTALON", "TALLA PANTALÓN"]),
+        shoeSize: importValue(row, ["CALZADO", "ZAPATO", "TALLA ZAPATO"]),
+        jacketSize: importValue(row, ["CHAQUETA", "TALLA CHAQUETA"]),
+        epiSize: importValue(row, ["EPI", "TALLA EPI"]),
+        emergencyContact: importValue(row, ["CONTACTO EMERGENCIA", "EMERGENCIA"]),
+        city: importValue(row, ["CIUDAD", "LOCALIDAD"]),
+        hourlyRate: Number(importValue(row, ["TARIFA HORA", "PRECIO HORA", "HORA"]) || 0),
+        kmRate: Number(importValue(row, ["KM", "PRECIO KM"]) || 0.24),
+        dietRate: Number(importValue(row, ["DIETA", "DIETAS"]) || 0)
+      };
+      if (existing) {
+        run(
+          `UPDATE employees
+           SET user_id = COALESCE(user_id, ?), name = ?, role = COALESCE(NULLIF(?, ''), role),
+               phone = COALESCE(NULLIF(?, ''), phone), email = COALESCE(NULLIF(?, ''), email),
+               city = COALESCE(NULLIF(?, ''), city), hourly_rate = COALESCE(NULLIF(?, 0), hourly_rate),
+               km_rate = COALESCE(NULLIF(?, 0), km_rate), diet_rate = COALESCE(NULLIF(?, 0), diet_rate),
+               skills = ?, dni = COALESCE(NULLIF(?, ''), dni),
+               social_security_number = COALESCE(NULLIF(?, ''), social_security_number),
+               bank_account = COALESCE(NULLIF(?, ''), bank_account),
+               address = COALESCE(NULLIF(?, ''), address), province = COALESCE(NULLIF(?, ''), province),
+               postal_code = COALESCE(NULLIF(?, ''), postal_code), birth_date = COALESCE(NULLIF(?, ''), birth_date),
+               shirt_size = COALESCE(NULLIF(?, ''), shirt_size), pants_size = COALESCE(NULLIF(?, ''), pants_size),
+               shoe_size = COALESCE(NULLIF(?, ''), shoe_size), jacket_size = COALESCE(NULLIF(?, ''), jacket_size),
+               epi_size = COALESCE(NULLIF(?, ''), epi_size), emergency_contact = COALESCE(NULLIF(?, ''), emergency_contact),
+               status = 'activo', source_ref = ?, imported_at = ?
+           WHERE id = ?`,
+          [
+            userId,
+            name,
+            role,
+            phone,
+            email,
+            values.city,
+            values.hourlyRate,
+            values.kmRate,
+            values.dietRate,
+            JSON.stringify(employeeSkillsFromBody({ role }, skills)),
+            dni,
+            values.socialSecurityNumber,
+            values.bankAccount,
+            values.address,
+            values.province,
+            values.postalCode,
+            values.birthDate,
+            values.shirtSize,
+            values.pantsSize,
+            values.shoeSize,
+            values.jacketSize,
+            values.epiSize,
+            values.emergencyContact,
+            sourceName,
+            now,
+            existing.id
+          ]
+        );
+        updated += 1;
+      } else {
+        run(
+          `INSERT INTO employees
+            (id, user_id, name, role, phone, email, status, city, hourly_rate, km_rate, diet_rate, skills,
+             dni, social_security_number, bank_account, address, province, postal_code, birth_date,
+             shirt_size, pants_size, shoe_size, jacket_size, epi_size, emergency_contact, source_ref, imported_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'activo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            randomId("emp"),
+            userId,
+            name,
+            role,
+            phone,
+            email,
+            values.city,
+            values.hourlyRate,
+            values.kmRate,
+            values.dietRate,
+            JSON.stringify(employeeSkillsFromBody({ role }, skills)),
+            dni,
+            values.socialSecurityNumber,
+            values.bankAccount,
+            values.address,
+            values.province,
+            values.postalCode,
+            values.birthDate,
+            values.shirtSize,
+            values.pantsSize,
+            values.shoeSize,
+            values.jacketSize,
+            values.epiSize,
+            values.emergencyContact,
+            sourceName,
+            now
+          ]
+        );
+        inserted += 1;
+      }
+    }
+  });
+  const importRow = recordDataImport({
+    source: sourceName,
+    rowsRead: rows.length,
+    inserted,
+    updated,
+    skipped,
+    metadata: { kind: "employees", usersCreated }
+  });
+  audit(actor, "data_import_completed", "data_import", importRow.id, { kind: "employees", inserted, updated, skipped, usersCreated });
+  return { import: importRow, rowsRead: rows.length, inserted, updated, skipped, usersCreated };
+}
+
+function importClientsCsv({ text, source, actor }) {
+  const rows = parseDelimitedRows(text).slice(0, 5000);
+  let inserted = 0;
+  let updated = 0;
+  let skipped = 0;
+  const sourceName = importClean(source) || "clientes.csv";
+  transaction(() => {
+    for (const row of rows) {
+      const name = importValue(row, ["CLIENTE", "NOMBRE", "RAZON SOCIAL", "RAZÓN SOCIAL"]);
+      if (!name) {
+        skipped += 1;
+        continue;
+      }
+      const legalName = importValue(row, ["RAZON SOCIAL", "RAZÓN SOCIAL"]) || name;
+      const taxId = importValue(row, ["CIF", "NIF", "TAX ID"]);
+      const contactName = importValue(row, ["PERSONA CONTACTO", "CONTACTO", "CONTACT NAME"]);
+      const email = importValue(row, ["MAIL", "EMAIL", "CORREO"]);
+      const phone = importValue(row, ["TELEFONO", "TELÉFONO", "PHONE"]);
+      const address = importValue(row, ["DIRECCION", "DIRECCIÓN", "ADDRESS"]);
+      const province = importValue(row, ["PROVINCIA", "PROVINCE"]);
+      const notes = importValue(row, ["OBSERVACIONES", "NOTAS", "NOTES"]);
+      const existing = findImportedClient({ taxId, name });
+      if (existing) {
+        run(
+          `UPDATE clients
+           SET name = ?, legal_name = ?, tax_id = COALESCE(NULLIF(?, ''), tax_id),
+               contact_name = COALESCE(NULLIF(?, ''), contact_name),
+               email = COALESCE(NULLIF(?, ''), email), phone = COALESCE(NULLIF(?, ''), phone),
+               address = COALESCE(NULLIF(?, ''), address), province = COALESCE(NULLIF(?, ''), province),
+               notes = COALESCE(NULLIF(?, ''), notes), source_ref = ?
+           WHERE id = ?`,
+          [name, legalName, taxId, contactName, email, phone, address, province, notes, sourceName, existing.id]
+        );
+        updated += 1;
+      } else {
+        run(
+          `INSERT INTO clients (id, name, legal_name, tax_id, contact_name, email, phone, address, province, notes, source_ref)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [randomId("cli"), name, legalName, taxId, contactName, email, phone, address, province, notes, sourceName]
+        );
+        inserted += 1;
+      }
+    }
+  });
+  const importRow = recordDataImport({
+    source: sourceName,
+    rowsRead: rows.length,
+    inserted,
+    updated,
+    skipped,
+    metadata: { kind: "clients" }
+  });
+  audit(actor, "data_import_completed", "data_import", importRow.id, { kind: "clients", inserted, updated, skipped });
+  return { import: importRow, rowsRead: rows.length, inserted, updated, skipped };
 }
 
 function eventPerformed(event, today = formatDate()) {
@@ -685,6 +1924,64 @@ function listDocuments({ employeeId } = {}) {
     .sort((a, b) => documentSeverity(a.status) - documentSeverity(b.status) || String(a.expires_at || "9999").localeCompare(String(b.expires_at || "9999")));
 }
 
+function documentComplianceSummary(documents = listDocuments()) {
+  const byEmployee = new Map();
+  const totals = {
+    total: documents.length,
+    vigente: 0,
+    proximo: 0,
+    caducado: 0,
+    pendiente: 0,
+    employeesBlocked: 0,
+    employeesWarning: 0,
+    employeesOk: 0
+  };
+  for (const document of documents) {
+    if (totals[document.status] !== undefined) totals[document.status] += 1;
+    if (!byEmployee.has(document.employee_id)) {
+      byEmployee.set(document.employee_id, {
+        employee_id: document.employee_id,
+        employee_name: document.employee_name,
+        employee_role: document.employee_role,
+        total: 0,
+        vigente: 0,
+        proximo: 0,
+        caducado: 0,
+        pendiente: 0,
+        blockers: [],
+        warnings: [],
+        status: "vigente"
+      });
+    }
+    const row = byEmployee.get(document.employee_id);
+    row.total += 1;
+    if (row[document.status] !== undefined) row[document.status] += 1;
+    if (["caducado", "pendiente"].includes(document.status)) row.blockers.push(document);
+    if (document.status === "proximo") row.warnings.push(document);
+  }
+  const employees = Array.from(byEmployee.values()).map((row) => {
+    row.status = row.blockers.length ? "bloqueado" : row.warnings.length ? "aviso" : "vigente";
+    if (row.status === "bloqueado") totals.employeesBlocked += 1;
+    else if (row.status === "aviso") totals.employeesWarning += 1;
+    else totals.employeesOk += 1;
+    return row;
+  }).sort((a, b) => documentSeverity(a.status === "bloqueado" ? "caducado" : a.status === "aviso" ? "proximo" : "vigente") - documentSeverity(b.status === "bloqueado" ? "caducado" : b.status === "aviso" ? "proximo" : "vigente") || a.employee_name.localeCompare(b.employee_name));
+  return { totals, employees };
+}
+
+function syncStoredDocumentStatuses(actor = null) {
+  const documents = all("SELECT id, status, expires_at FROM documents");
+  let updated = 0;
+  for (const document of documents) {
+    const nextStatus = effectiveDocumentStatus(document);
+    if (nextStatus === document.status) continue;
+    run("UPDATE documents SET status = ? WHERE id = ?", [nextStatus, document.id]);
+    updated += 1;
+  }
+  audit(actor, "document_statuses_synced", "document", "all", { updated });
+  return { updated };
+}
+
 function eventFinancials(eventId) {
   const event = get("SELECT * FROM events WHERE id = ?", [eventId]);
   if (!event) return null;
@@ -732,8 +2029,8 @@ function finalizeFinanceBucket(bucket) {
   return bucket;
 }
 
-function financeSummary() {
-  const events = listEvents();
+function financeSummary(filters = {}) {
+  const events = listEvents(filters);
   const totals = emptyFinanceBucket("Total");
   const byClient = new Map();
   const byMonth = new Map();
@@ -763,6 +2060,33 @@ function financeSummary() {
     byMonth.set(monthKey, month);
   }
 
+  const employeeWhere = ["assignments.status != 'bloqueado'"];
+  const employeeParams = [];
+  if (filters.from) {
+    employeeWhere.push("events.date >= ?");
+    employeeParams.push(filters.from);
+  }
+  if (filters.to) {
+    employeeWhere.push("events.date <= ?");
+    employeeParams.push(filters.to);
+  }
+  if (filters.clientId) {
+    employeeWhere.push("events.client_id = ?");
+    employeeParams.push(filters.clientId);
+  }
+  if (filters.employeeId) {
+    employeeWhere.push("assignments.employee_id = ?");
+    employeeParams.push(filters.employeeId);
+  }
+  if (filters.status) {
+    employeeWhere.push("events.status = ?");
+    employeeParams.push(filters.status);
+  }
+  if (filters.search) {
+    employeeWhere.push("(events.name LIKE ? OR clients.name LIKE ? OR events.location LIKE ?)");
+    employeeParams.push(`%${filters.search}%`, `%${filters.search}%`, `%${filters.search}%`);
+  }
+
   const employeeRows = all(
     `SELECT assignments.employee_id, employees.name, employees.role, employees.hourly_rate, employees.km_rate,
             events.id AS event_id, events.name AS event_name, events.start_time, events.end_time,
@@ -775,6 +2099,7 @@ function financeSummary() {
      FROM assignments
      JOIN employees ON employees.id = assignments.employee_id
      JOIN events ON events.id = assignments.event_id
+     JOIN clients ON clients.id = events.client_id
      LEFT JOIN allowances ON allowances.event_id = assignments.event_id AND allowances.employee_id = assignments.employee_id
      LEFT JOIN (
        SELECT event_id, COUNT(*) AS count
@@ -782,7 +2107,8 @@ function financeSummary() {
        WHERE status != 'bloqueado'
        GROUP BY event_id
      ) active_counts ON active_counts.event_id = assignments.event_id
-     WHERE assignments.status != 'bloqueado'`
+     WHERE ${employeeWhere.join(" AND ")}`,
+    employeeParams
   );
   const byEmployee = new Map();
   for (const row of employeeRows) {
@@ -827,6 +2153,7 @@ function financeSummary() {
     .sort((a, b) => b.benefit - a.benefit);
 
   return {
+    filters,
     totals: finalizeFinanceBucket(totals),
     byClient: Array.from(byClient.values()).map(finalizeFinanceBucket).sort((a, b) => b.revenue - a.revenue),
     byMonth: Array.from(byMonth.values()).map(finalizeFinanceBucket).sort((a, b) => String(a.id).localeCompare(String(b.id))),
@@ -842,8 +2169,8 @@ function financeSummary() {
   };
 }
 
-function financeReportRows() {
-  const summary = financeSummary();
+function financeReportRows(filters = {}) {
+  const summary = financeSummary(filters);
   const rows = [];
   for (const item of summary.byClient) {
     rows.push({
@@ -900,6 +2227,256 @@ function financeReportRows() {
   return rows;
 }
 
+function allowanceNumber(value, fallback = 0) {
+  const number = Number(value ?? fallback ?? 0);
+  return Number.isFinite(number) ? Math.max(number, 0) : 0;
+}
+
+function allowanceValuesFromBody(body = {}, existing = {}) {
+  return {
+    km: Math.round(allowanceNumber(body.km, existing.km) * 10) / 10,
+    diet: roundMoney(body.diet ?? existing.diet),
+    nightHours: Math.round(allowanceNumber(body.nightHours ?? body.night_hours, existing.night_hours) * 10) / 10,
+    extras: roundMoney(body.extras ?? existing.extras)
+  };
+}
+
+function listAllowances(filters = {}) {
+  const where = [];
+  const params = [];
+  if (filters.id) {
+    where.push("allowances.id = ?");
+    params.push(filters.id);
+  }
+  if (filters.eventId) {
+    where.push("allowances.event_id = ?");
+    params.push(filters.eventId);
+  }
+  if (filters.employeeId) {
+    where.push("allowances.employee_id = ?");
+    params.push(filters.employeeId);
+  }
+  const sql = `
+    SELECT allowances.*,
+           events.name AS event_name, events.date AS event_date, events.start_time, events.end_time,
+           events.status AS event_status, events.location AS event_location,
+           employees.name AS employee_name, employees.role AS employee_role, employees.km_rate,
+           assignments.role AS assignment_role,
+           COALESCE(delivery_notes.locked, 0) AS delivery_note_locked
+    FROM allowances
+    JOIN events ON events.id = allowances.event_id
+    JOIN employees ON employees.id = allowances.employee_id
+    LEFT JOIN assignments ON assignments.event_id = allowances.event_id AND assignments.employee_id = allowances.employee_id
+    LEFT JOIN delivery_notes ON delivery_notes.event_id = events.id
+    ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+    ORDER BY events.date DESC, events.start_time DESC, employees.name
+  `;
+  return all(sql, params).map((row) => ({
+    ...row,
+    km: Math.round(Number(row.km || 0) * 10) / 10,
+    diet: roundMoney(row.diet),
+    night_hours: Math.round(Number(row.night_hours || 0) * 10) / 10,
+    extras: roundMoney(row.extras),
+    locked: eventPerformed({ date: row.event_date, status: row.event_status }) || Number(row.delivery_note_locked || 0) === 1
+  }));
+}
+
+function allowanceById(id) {
+  return listAllowances({ id })[0] || null;
+}
+
+function ensureAllowanceEventEditable(eventId) {
+  const event = get(
+    `SELECT events.*, COALESCE(delivery_notes.locked, 0) AS delivery_note_locked
+     FROM events
+     LEFT JOIN delivery_notes ON delivery_notes.event_id = events.id
+     WHERE events.id = ?`,
+    [eventId]
+  );
+  if (!event) {
+    const error = new Error("Evento no encontrado");
+    error.status = 404;
+    throw error;
+  }
+  if (eventPerformed(event)) {
+    const error = new Error("Evento efectuado: los pluses quedan en modo solo revision");
+    error.status = 409;
+    throw error;
+  }
+  if (Number(event.delivery_note_locked || 0) === 1) {
+    const error = new Error("Albaran firmado: no se pueden modificar pluses");
+    error.status = 409;
+    throw error;
+  }
+  return event;
+}
+
+function assignedAllowanceEmployee(eventId, employeeId) {
+  return get(
+    `SELECT assignments.*, employees.name AS employee_name
+     FROM assignments
+     JOIN employees ON employees.id = assignments.employee_id
+     WHERE assignments.event_id = ? AND assignments.employee_id = ? AND assignments.status != 'bloqueado'`,
+    [eventId, employeeId]
+  );
+}
+
+function employeeReportRows(filters = {}) {
+  const params = [];
+  const where = [];
+  if (filters.employeeId) {
+    where.push("employees.id = ?");
+    params.push(filters.employeeId);
+  }
+  if (filters.search) {
+    where.push(`(
+      employees.name LIKE ? OR
+      employees.role LIKE ? OR
+      employees.phone LIKE ? OR
+      employees.email LIKE ? OR
+      employees.dni LIKE ?
+    )`);
+    params.push(`%${filters.search}%`, `%${filters.search}%`, `%${filters.search}%`, `%${filters.search}%`, `%${filters.search}%`);
+  }
+  const employees = all(
+    `SELECT * FROM employees
+     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+     ORDER BY employees.name`,
+    params
+  ).map(parseEmployee);
+  const compliance = new Map(documentComplianceSummary(listDocuments()).employees.map((row) => [row.employee_id, row]));
+  return employees.map((employee) => {
+    const docs = compliance.get(employee.id) || {
+      total: 0,
+      vigente: 0,
+      proximo: 0,
+      caducado: 0,
+      pendiente: 0,
+      blockers: [],
+      warnings: [],
+      status: "sin_documentos"
+    };
+    return {
+      id: employee.id,
+      nombre: employee.name,
+      rol: employee.role,
+      estado_operario: employee.status,
+      telefono: employee.phone || "",
+      email: employee.email || "",
+      dni: employee.dni || "",
+      ciudad: employee.city || employee.province || "",
+      camiseta: employee.shirt_size || "",
+      pantalon: employee.pants_size || "",
+      calzado: employee.shoe_size || "",
+      chaqueta: employee.jacket_size || "",
+      epi: employee.epi_size || "",
+      skills: (employee.skills || []).join(", "),
+      estado_documental: docs.status,
+      documentos_total: docs.total,
+      documentos_vigentes: docs.vigente,
+      documentos_proximos: docs.proximo,
+      documentos_caducados: docs.caducado,
+      documentos_pendientes: docs.pendiente,
+      bloqueos: (docs.blockers || []).map((doc) => `${doc.type}: ${doc.name}`).join(" | "),
+      avisos: (docs.warnings || []).map((doc) => `${doc.type}: ${doc.name}${doc.expires_at ? ` (${doc.expires_at})` : ""}`).join(" | "),
+      origen: employee.source_ref || "",
+      importado: employee.imported_at || ""
+    };
+  });
+}
+
+function incidentReportRows(filters = {}) {
+  const params = [];
+  const where = [];
+  const dateExpression = "COALESCE(events.date, substr(incidents.created_at, 1, 10))";
+  if (filters.from) {
+    where.push(`${dateExpression} >= ?`);
+    params.push(filters.from);
+  }
+  if (filters.to) {
+    where.push(`${dateExpression} <= ?`);
+    params.push(filters.to);
+  }
+  if (filters.clientId) {
+    where.push("events.client_id = ?");
+    params.push(filters.clientId);
+  }
+  if (filters.employeeId) {
+    where.push("incidents.employee_id = ?");
+    params.push(filters.employeeId);
+  }
+  if (["abierta", "resuelta"].includes(filters.status)) {
+    where.push("incidents.status = ?");
+    params.push(filters.status);
+  }
+  if (filters.search) {
+    where.push(`(
+      incidents.title LIKE ? OR
+      incidents.description LIKE ? OR
+      incidents.resolution_note LIKE ? OR
+      incidents.type LIKE ? OR
+      employees.name LIKE ? OR
+      events.name LIKE ? OR
+      clients.name LIKE ?
+    )`);
+    params.push(
+      `%${filters.search}%`,
+      `%${filters.search}%`,
+      `%${filters.search}%`,
+      `%${filters.search}%`,
+      `%${filters.search}%`,
+      `%${filters.search}%`,
+      `%${filters.search}%`
+    );
+  }
+  return all(
+    `SELECT incidents.*,
+            events.name AS event_name,
+            events.date AS event_date,
+            events.start_time AS event_start_time,
+            events.end_time AS event_end_time,
+            events.location AS event_location,
+            clients.name AS client_name,
+            employees.name AS employee_name
+     FROM incidents
+     LEFT JOIN events ON events.id = incidents.event_id
+     LEFT JOIN clients ON clients.id = events.client_id
+     LEFT JOIN employees ON employees.id = incidents.employee_id
+     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+     ORDER BY CASE incidents.status WHEN 'abierta' THEN 1 ELSE 2 END,
+              CASE incidents.priority WHEN 'critica' THEN 1 WHEN 'alta' THEN 2 WHEN 'media' THEN 3 ELSE 4 END,
+              incidents.created_at DESC`,
+    params
+  ).map((row) => ({
+    id: row.id,
+    fecha_incidencia: String(row.created_at || "").slice(0, 10),
+    estado: row.status,
+    prioridad: row.priority,
+    tipo: row.type,
+    titulo: row.title,
+    descripcion: row.description || "",
+    evento: row.event_name || "",
+    fecha_evento: row.event_date || "",
+    horario: [row.event_start_time, row.event_end_time].filter(Boolean).join(" - "),
+    ubicacion: row.event_location || "",
+    cliente: row.client_name || "",
+    operario: row.employee_name || "",
+    resolucion: row.resolution_note || "",
+    resuelta: row.resolved_at || ""
+  }));
+}
+
+function reportFiltersFromUrl(url) {
+  return {
+    from: url.searchParams.get("from") || "",
+    to: url.searchParams.get("to") || "",
+    clientId: url.searchParams.get("clientId") || "",
+    employeeId: url.searchParams.get("employeeId") || "",
+    status: url.searchParams.get("status") || "",
+    search: url.searchParams.get("search") || ""
+  };
+}
+
 function enrichEvent(row) {
   if (!row) return null;
   const assigned = get("SELECT COUNT(*) AS count FROM assignments WHERE event_id = ? AND status != 'bloqueado'", [row.id]).count;
@@ -930,7 +2507,7 @@ function enrichEvent(row) {
   };
 }
 
-function listEvents({ from, to, search } = {}) {
+function listEvents({ from, to, search, clientId, employeeId, status } = {}) {
   const params = [];
   const where = [];
   if (from) {
@@ -944,6 +2521,23 @@ function listEvents({ from, to, search } = {}) {
   if (search) {
     where.push("(events.name LIKE ? OR clients.name LIKE ? OR events.location LIKE ?)");
     params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+  }
+  if (clientId) {
+    where.push("events.client_id = ?");
+    params.push(clientId);
+  }
+  if (employeeId) {
+    where.push(`EXISTS (
+      SELECT 1 FROM assignments
+      WHERE assignments.event_id = events.id
+        AND assignments.employee_id = ?
+        AND assignments.status != 'bloqueado'
+    )`);
+    params.push(employeeId);
+  }
+  if (status) {
+    where.push("events.status = ?");
+    params.push(status);
   }
   const sql = `
     SELECT events.*, clients.name AS client_name, employees.name AS team_leader_name
@@ -1129,29 +2723,38 @@ function liveClockState(event, assignment, entries) {
   return "sin_fichar";
 }
 
-function clockProgress(event, assignment, entries) {
+function clockProgress(event, assignment, entries, policy = clockPolicy()) {
   const accepted = entries.filter((entry) => entry.accepted).sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
   const state = liveClockState(event, assignment, entries);
   const lastEntry = accepted[0] || null;
-  const canClockIn = ["sin_fichar", "pendiente", "tarde"].includes(state);
-  const canClockOut = state === "en_curso";
+  const entryWindow = clockWindowState(event, "entrada", policy);
+  const exitWindow = clockWindowState(event, "salida", policy);
+  const canClockIn = ["sin_fichar", "pendiente", "tarde"].includes(state) && entryWindow.allowed;
+  const canClockOut = state === "en_curso" && exitWindow.allowed;
+  const blockReason =
+    ["sin_fichar", "pendiente", "tarde"].includes(state) && !entryWindow.allowed ? entryWindow.reason :
+    state === "en_curso" && !exitWindow.allowed ? exitWindow.reason :
+    "";
   return {
     state,
     lastEntry,
     nextType: canClockIn ? "entrada" : canClockOut ? "salida" : null,
     canClockIn,
-    canClockOut
+    canClockOut,
+    blockReason,
+    entryOpenAt: entryWindow.openAt?.toISOString?.() || "",
+    exitCloseAt: exitWindow.closeAt?.toISOString?.() || ""
   };
 }
 
-function employeeServiceClockData(service, employeeId) {
+function employeeServiceClockData(service, employeeId, policy = clockPolicy()) {
   const entries = all(
     `SELECT * FROM time_entries
      WHERE event_id = ? AND employee_id = ?
      ORDER BY timestamp DESC`,
     [service.id, employeeId]
   );
-  const progress = clockProgress(service, { status: service.assignment_status }, entries);
+  const progress = clockProgress(service, { status: service.assignment_status }, entries, policy);
   return {
     ...service,
     clock_state: progress.state,
@@ -1159,18 +2762,81 @@ function employeeServiceClockData(service, employeeId) {
     last_clock_type: progress.lastEntry?.type || null,
     last_clock_at: progress.lastEntry?.timestamp || null,
     can_clock_in: progress.canClockIn ? 1 : 0,
-    can_clock_out: progress.canClockOut ? 1 : 0
+    can_clock_out: progress.canClockOut ? 1 : 0,
+    clock_block_reason: progress.blockReason,
+    clock_entry_open_at: progress.entryOpenAt,
+    clock_exit_close_at: progress.exitCloseAt
   };
 }
 
-function clockSequenceError(event, assignment, employeeId, type) {
+function employeeServiceChecklist(service, documents = []) {
+  const docBlockers = documents.filter((document) => ["caducado", "pendiente"].includes(document.status));
+  const docWarnings = documents.filter((document) => document.status === "proximo");
+  const checkedIn = ["en_curso", "finalizado"].includes(service.clock_state);
+  const checkedOut = service.clock_state === "finalizado";
+  const items = [
+    {
+      key: "confirmed",
+      label: "Asistencia confirmada",
+      status: service.assignment_status === "confirmado" ? "done" : "pending",
+      detail: service.assignment_status === "confirmado" ? "Servicio confirmado" : "Confirma asistencia antes del servicio"
+    },
+    {
+      key: "documents",
+      label: docBlockers.length ? "Documentacion pendiente" : docWarnings.length ? "Documentacion con aviso" : "Documentacion OK",
+      status: docBlockers.length ? "pending" : docWarnings.length ? "warning" : "done",
+      detail: docBlockers.length
+        ? `${docBlockers.length} documento(s) por revisar`
+        : docWarnings.length
+          ? `${docWarnings.length} documento(s) proximos a caducar`
+          : "Sin bloqueos documentales"
+    },
+    {
+      key: "location",
+      label: service.lat && service.lng ? "Ubicacion del recinto lista" : "Ubicacion pendiente",
+      status: service.lat && service.lng ? "done" : "pending",
+      detail: service.lat && service.lng ? service.location : "Falta ubicacion GPS del evento"
+    },
+    {
+      key: "clock_in",
+      label: checkedIn ? "Entrada registrada" : "Entrada pendiente",
+      status: checkedIn ? "done" : "pending",
+      detail: checkedIn ? "Fichaje de entrada completado" : "Ficha entrada al llegar al recinto"
+    },
+    {
+      key: "clock_out",
+      label: checkedOut ? "Salida registrada" : "Salida pendiente",
+      status: checkedOut ? "done" : "pending",
+      detail: checkedOut ? "Servicio cerrado por tu parte" : "Ficha salida al finalizar"
+    }
+  ];
+  if (Number(service.is_team_leader || 0)) {
+    items.push({
+      key: "client_signature",
+      label: Number(service.delivery_note_locked || 0) ? "Firma cliente completada" : "Firma cliente pendiente",
+      status: Number(service.delivery_note_locked || 0) ? "done" : "pending",
+      detail: Number(service.delivery_note_locked || 0)
+        ? "Albaran firmado y bloqueado"
+        : "Recoge firma del cliente al fichar salida"
+    });
+  }
+  const completed = items.filter((item) => item.status === "done").length;
+  return {
+    completed,
+    total: items.length,
+    percent: items.length ? Math.round((completed / items.length) * 100) : 0,
+    items
+  };
+}
+
+function clockSequenceError(event, assignment, employeeId, type, policy = clockPolicy()) {
   const entries = all(
     `SELECT * FROM time_entries
      WHERE event_id = ? AND employee_id = ?
      ORDER BY timestamp DESC`,
     [event.id, employeeId]
   );
-  const progress = clockProgress(event, assignment, entries);
+  const progress = clockProgress(event, assignment, entries, policy);
   if (type === "entrada" && !progress.canClockIn) {
     return progress.state === "en_curso" ? "Entrada ya registrada" : "Servicio ya finalizado para este operario";
   }
@@ -1277,6 +2943,7 @@ function eventDetail(eventId) {
   );
   event.incidents = all("SELECT * FROM incidents WHERE event_id = ? ORDER BY created_at DESC", [eventId]);
   event.deliveryNote = get("SELECT * FROM delivery_notes WHERE event_id = ?", [eventId]) || null;
+  event.allowances = listAllowances({ eventId });
   return event;
 }
 
@@ -1288,34 +2955,46 @@ function eventDetailByGoogleUid(googleUid) {
 function validateAssignment(event, employee) {
   const employeeId = employee.id || employee.employee_id;
   const issues = [];
+  const currentRange = eventClockRange(event);
   const existing = all(
     `SELECT events.*
      FROM assignments
      JOIN events ON events.id = assignments.event_id
      WHERE assignments.employee_id = ? AND assignments.status != 'bloqueado'
-       AND events.date = ? AND events.id != ?`,
-    [employeeId, event.date, event.id]
+       AND events.date BETWEEN ? AND ? AND events.id != ?`,
+    [employeeId, addIsoDays(event.date, -1), addIsoDays(event.date, 1), event.id]
   );
-  const start = toMinutes(event.start_time);
-  const end = toMinutes(event.end_time);
   for (const other of existing) {
-    if (rangesOverlap(start, end, toMinutes(other.start_time), toMinutes(other.end_time))) {
+    const otherRange = eventClockRange(other);
+    if (dateRangesOverlap(currentRange, otherRange)) {
       issues.push({ type: "solape", severity: "block", message: `Solape con ${other.name}` });
+      continue;
     }
-    const rest = Math.abs(start - toMinutes(other.end_time)) / 60;
+    const rest = restHoursBetweenRanges(currentRange, otherRange);
     if (rest < 10) {
-      issues.push({ type: "descanso", severity: "warning", message: "Descanso inferior a 10 horas" });
+      issues.push({
+        type: "descanso",
+        severity: "warning",
+        message: `Descanso inferior a 10 horas con ${other.name}`
+      });
     }
   }
 
+  const dateSpan = eventDateSpan(event);
   const unavailable = get(
     `SELECT * FROM availability
-     WHERE employee_id = ? AND start_date <= ? AND end_date >= ? AND status = 'aprobado'
+     WHERE employee_id = ?
+       AND status != 'rechazado'
+       AND start_date <= ?
+       AND end_date >= ?
+     ORDER BY CASE status WHEN 'aprobado' THEN 1 WHEN 'solicitado' THEN 2 ELSE 3 END
      LIMIT 1`,
-    [employeeId, event.date, event.date]
+    [employeeId, dateSpan.endDate, dateSpan.startDate]
   );
-  if (unavailable) {
-    issues.push({ type: "disponibilidad", severity: "block", message: "El operario no esta disponible" });
+  if (unavailable?.status === "aprobado") {
+    issues.push({ type: "disponibilidad", severity: "block", message: `No disponible: ${cleanAvailabilityType(unavailable.type)}` });
+  } else if (unavailable?.status === "solicitado") {
+    issues.push({ type: "disponibilidad", severity: "warning", message: `Disponibilidad solicitada pendiente: ${cleanAvailabilityType(unavailable.type)}` });
   }
 
   const documents = listDocuments({ employeeId });
@@ -1349,9 +3028,56 @@ function rangesOverlap(aStart, aEnd, bStart, bEnd) {
   return Math.max(aStart, bStart) < Math.min(aEnd, bEnd);
 }
 
+function dateRangesOverlap(a, b) {
+  return Math.max(a.start.getTime(), b.start.getTime()) < Math.min(a.end.getTime(), b.end.getTime());
+}
+
+function restHoursBetweenRanges(a, b) {
+  const gapMs = a.start.getTime() >= b.end.getTime()
+    ? a.start.getTime() - b.end.getTime()
+    : b.start.getTime() - a.end.getTime();
+  return Math.max(gapMs, 0) / 3_600_000;
+}
+
+function roleKey(role) {
+  return String(role || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function roleFitForEmployee(employee, targetRoles) {
+  const employeeRoleKey = roleKey(employee.role);
+  const skillKeys = (employee.skills || []).map(roleKey);
+  const exact = targetRoles.find((role) => roleKey(role.role) === employeeRoleKey);
+  if (exact) return { role: exact.role, fit: "rol exacto", bonus: 25 };
+  const skill = targetRoles.find((role) => skillKeys.some((item) => item && (item === roleKey(role.role) || roleKey(role.role).includes(item) || item.includes(roleKey(role.role)))));
+  if (skill) return { role: skill.role, fit: "skill compatible", bonus: 18 };
+  return { role: targetRoles[0]?.role || employee.role, fit: "cobertura general", bonus: 0 };
+}
+
+function missingEventRoles(eventId) {
+  const requirements = all("SELECT role, count FROM event_requirements WHERE event_id = ? ORDER BY role", [eventId]);
+  const assignedRows = all(
+    "SELECT role, COUNT(*) AS count FROM assignments WHERE event_id = ? AND status != 'bloqueado' GROUP BY role",
+    [eventId]
+  );
+  const assignedByRole = new Map(assignedRows.map((row) => [roleKey(row.role), Number(row.count || 0)]));
+  const missing = requirements
+    .map((requirement) => ({
+      role: requirement.role,
+      missing: Math.max(Number(requirement.count || 0) - Number(assignedByRole.get(roleKey(requirement.role)) || 0), 0)
+    }))
+    .filter((role) => role.missing > 0);
+  return missing.length ? missing : requirements.map((requirement) => ({ role: requirement.role, missing: 0 }));
+}
+
 function plannerRecommendations(eventId) {
   const event = get("SELECT * FROM events WHERE id = ?", [eventId]);
   if (!event) return [];
+  const targetRoles = missingEventRoles(eventId);
   const assigned = new Set(
     all("SELECT employee_id FROM assignments WHERE event_id = ?", [eventId]).map((row) => row.employee_id)
   );
@@ -1367,21 +3093,27 @@ function plannerRecommendations(eventId) {
       ), 0) AS total
        FROM assignments
        JOIN events ON events.id = assignments.event_id
-       WHERE assignments.employee_id = ? AND events.date >= date('now', '-30 day')`,
+      WHERE assignments.employee_id = ? AND events.date >= date('now', '-30 day')`,
       [employee.id]
     ).total;
-    const roleMatch = employee.skills.some((skill) => event.notes?.toLowerCase().includes(String(skill).toLowerCase()));
+    const roleFit = roleFitForEmployee(employee, targetRoles);
+    const noteMatch = employee.skills.some((skill) => event.notes?.toLowerCase().includes(String(skill).toLowerCase()));
     let score = 80;
-    score += roleMatch ? 10 : 0;
+    score += roleFit.bonus;
+    score += noteMatch ? 5 : 0;
     score -= Math.min(Math.round(distance / 1000), 25);
     score -= Math.min(Math.round(hours / 8), 15);
     score -= issues.some((issue) => issue.severity === "block") ? 80 : 0;
+    score -= issues.filter((issue) => issue.severity === "warning").length * 8;
     score -= assigned.has(employee.id) ? 50 : 0;
     return {
       employee,
       score: Math.max(score, 0),
       distance,
       assigned: assigned.has(employee.id),
+      suggestedRole: roleFit.role,
+      roleFit: roleFit.fit,
+      recentHours: Math.round(Number(hours || 0) * 10) / 10,
       issues
     };
   }).sort((a, b) => b.score - a.score);
@@ -1447,6 +3179,17 @@ function appOriginFromRequest(req) {
   const protocol = req.headers["x-forwarded-proto"] || "http";
   const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
   return `${protocol}://${host}`;
+}
+
+function requestIp(req) {
+  const forwarded = String(req.headers["x-forwarded-for"] || "")
+    .split(",")[0]
+    .trim();
+  return forwarded || req.socket?.remoteAddress || "";
+}
+
+function requestUserAgent(req) {
+  return String(req.headers["user-agent"] || "").slice(0, 300);
 }
 
 function assignmentSummary(assignments = []) {
@@ -1579,6 +3322,7 @@ function importGoogleCalendarEvent(body, actor) {
     ]
   );
   audit(actor, "google_event_imported", "event", id, { googleUid, source: body.source || "google" });
+  createEventSnapshot(id, "google_event_imported", actor, { googleUid, source: body.source || "google" });
   return { event: eventDetail(id), created: true };
 }
 
@@ -1708,30 +3452,43 @@ function googleApiEventToCalendarEvent(item, index = 0) {
   };
 }
 
+function googleCalendarAuthenticatedApiAvailable(settings) {
+  const oauthRefreshToken = String(settings.google_calendar_oauth_refresh_token || process.env.GOOGLE_OAUTH_REFRESH_TOKEN || "").trim();
+  const oauthClient = googleOAuthClientCredentials(settings);
+  const serviceCredentials = googleServiceAccountCredentials(settings);
+  return Boolean((oauthRefreshToken && oauthClient) || serviceCredentials);
+}
+
 async function googleCalendarApiEvents(settings, { from, to } = {}) {
   const apiKey = String(settings.google_calendar_api_key || "").trim();
   const calendarId = String(settings.google_calendar_id || DEFAULT_GOOGLE_CALENDAR_ID).trim();
-  if (!apiKey || !calendarId) return null;
+  const useAuthenticatedApi = googleCalendarAuthenticatedApiAvailable(settings);
+  if ((!apiKey && !useAuthenticatedApi) || !calendarId) return null;
   const params = new URLSearchParams({
-    key: apiKey,
     singleEvents: "true",
     orderBy: "startTime",
     maxResults: "2500",
     timeZone: "Europe/Madrid"
   });
+  const headers = {};
+  if (useAuthenticatedApi) {
+    headers.authorization = `Bearer ${await googleCalendarAccessToken(settings)}`;
+  } else {
+    params.set("key", apiKey);
+  }
   const min = googleApiDateBound(from);
   const max = googleApiDateBound(to, true);
   if (min) params.set("timeMin", min);
   if (max) params.set("timeMax", max);
   const sourceUrl = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`;
-  const response = await fetch(`${sourceUrl}?${params}`);
+  const response = await fetch(`${sourceUrl}?${params}`, { headers });
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     throw new Error(`Google Calendar API ${response.status}${detail ? `: ${detail.slice(0, 140)}` : ""}`);
   }
   const payload = await response.json();
   const events = (payload.items || []).map(googleApiEventToCalendarEvent).filter((event) => event.date);
-  return { events, status: "connected_api", sourceUrl };
+  return { events, status: useAuthenticatedApi ? "connected_oauth" : "connected_api", sourceUrl };
 }
 
 async function googleCalendarEvents({ from, to } = {}) {
@@ -1858,13 +3615,14 @@ async function googleCalendarAccessToken(settings) {
   if (oauthRefreshToken && oauthClient) {
     return googleOAuthAccessToken(settings, oauthClient, oauthRefreshToken);
   }
-  if (oauthClient && !oauthRefreshToken) {
+  const serviceCredentials = googleServiceAccountCredentials(settings);
+  if (oauthClient && !oauthRefreshToken && !serviceCredentials) {
     const error = new Error("Google Calendar OAuth pendiente de conectar");
     error.status = "pending_auth";
     throw error;
   }
 
-  const credentials = googleServiceAccountCredentials(settings, { throwOnInvalid: true });
+  const credentials = serviceCredentials || googleServiceAccountCredentials(settings, { throwOnInvalid: true });
   if (!credentials) {
     const error = new Error("Falta conectar Google Calendar o configurar una cuenta de servicio");
     error.status = "pending_auth";
@@ -2176,7 +3934,6 @@ async function syncEventToGoogleCalendar(eventId, actor, reason = "event_updated
   if (!event) return { status: "missing" };
 
   try {
-    googleServiceAccountCredentials(settings, { throwOnInvalid: true });
     let googleEventId = event.google_calendar_event_id;
     if (!googleEventId && event.google_calendar_uid) {
       const found = await findGoogleCalendarEventByICalUid(settings, event.google_calendar_uid);
@@ -2205,19 +3962,54 @@ async function syncEventToGoogleCalendar(eventId, actor, reason = "event_updated
   }
 }
 
-function createPdfLines(title, lines) {
-  const escapePdf = (value) => String(value)
+function escapePdf(value) {
+  return String(value)
     .replaceAll("\\", "\\\\")
     .replaceAll("(", "\\(")
     .replaceAll(")", "\\)");
-  const safeText = (value, max = 112) => escapePdf(String(value ?? "").replace(/\s+/g, " ").trim()).slice(0, max);
+}
+
+function pdfSafeText(value, max = 112) {
+  const ascii = String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\x20-\x7E]/g, " ");
+  return escapePdf(ascii.replace(/\s+/g, " ").trim()).slice(0, max);
+}
+
+function createPdfDocument(ops) {
+  const content = ops.join("\n");
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
+    `<< /Length ${Buffer.byteLength(content, "utf8")} >>\nstream\n${content}\nendstream`
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(pdf, "utf8"));
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefOffset = Buffer.byteLength(pdf, "utf8");
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i < offsets.length; i += 1) {
+    pdf += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return Buffer.from(pdf, "utf8");
+}
+
+function createPdfLines(title, lines) {
   const ops = [];
   const fill = (r, g, b) => ops.push(`${r} ${g} ${b} rg`);
   const stroke = (r, g, b) => ops.push(`${r} ${g} ${b} RG`);
   const rect = (x, y, w, h, mode = "f") => ops.push(`${x} ${y} ${w} ${h} re ${mode}`);
   const text = (value, x, y, size = 9, font = "F1", color = [0.06, 0.09, 0.16]) => {
     fill(...color);
-    ops.push("BT", `/${font} ${size} Tf`, `${x} ${y} Td`, `(${safeText(value, 160)}) Tj`, "ET");
+    ops.push("BT", `/${font} ${size} Tf`, `${x} ${y} Td`, `(${pdfSafeText(value, 160)}) Tj`, "ET");
   };
 
   fill(0.965, 0.976, 0.988);
@@ -2279,29 +4071,7 @@ function createPdfLines(title, lines) {
   rect(0, 0, 595, 36);
   text("MARFAN CREW ERP", 40, 14, 9, "F2", [1, 1, 1]);
   text("Documento corporativo generado automaticamente", 374, 14, 7, "F1", [0.78, 0.86, 0.94]);
-  const content = ops.join("\n");
-
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-    `<< /Length ${Buffer.byteLength(content, "utf8")} >>\nstream\n${content}\nendstream`
-  ];
-  let pdf = "%PDF-1.4\n";
-  const offsets = [0];
-  objects.forEach((object, index) => {
-    offsets.push(Buffer.byteLength(pdf, "utf8"));
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
-  const xrefOffset = Buffer.byteLength(pdf, "utf8");
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (let i = 1; i < offsets.length; i += 1) {
-    pdf += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
-  }
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-  return Buffer.from(pdf, "utf8");
+  return createPdfDocument(ops);
 }
 
 function createPdfReport(title, rows) {
@@ -2329,30 +4099,64 @@ function safeFileName(name) {
   return cleaned || "documento";
 }
 
+function cleanDocumentMime(value, fileName = "") {
+  const declared = String(value || "").split(";")[0].trim().toLowerCase();
+  const byExtension = DOCUMENT_EXTENSION_MIME_TYPES[path.extname(fileName || "").toLowerCase()];
+  const mime = declared || byExtension || "application/octet-stream";
+  if (!ALLOWED_DOCUMENT_MIME_TYPES.has(mime)) {
+    const error = new Error("Tipo de archivo no permitido. Usa PDF, imagen, Word, Excel, CSV o TXT.");
+    error.status = 415;
+    throw error;
+  }
+  return mime;
+}
+
+function decodeDocumentBase64(rawValue) {
+  const raw = String(rawValue || "");
+  const base64 = raw.includes(",") ? raw.split(",").pop() : raw;
+  const compact = base64.replace(/\s+/g, "");
+  if (!compact || !/^[A-Za-z0-9+/]*={0,2}$/.test(compact) || compact.length % 4 === 1) {
+    const error = new Error("Archivo no valido");
+    error.status = 400;
+    throw error;
+  }
+  return Buffer.from(compact, "base64");
+}
+
 function saveDocumentFile(documentId, body) {
+  const safeName = body.fileName ? safeFileName(body.fileName) : null;
   if (!body.fileDataBase64) {
+    const declaredSize = body.fileSize ? Number(body.fileSize) : null;
+    if (declaredSize && declaredSize > MAX_DOCUMENT_FILE_BYTES) {
+      const error = new Error("Archivo demasiado grande. Maximo 8 MB por documento.");
+      error.status = 413;
+      throw error;
+    }
     return {
-      fileName: body.fileName || null,
-      fileMime: body.fileMime || null,
-      fileSize: body.fileSize ? Number(body.fileSize) : null,
+      fileName: safeName,
+      fileMime: body.fileMime ? cleanDocumentMime(body.fileMime, safeName || "") : null,
+      fileSize: declaredSize,
       storagePath: null
     };
   }
-  const base64 = String(body.fileDataBase64).includes(",")
-    ? String(body.fileDataBase64).split(",").pop()
-    : String(body.fileDataBase64);
-  const buffer = Buffer.from(base64, "base64");
+  const buffer = decodeDocumentBase64(body.fileDataBase64);
   if (!buffer.length) {
     const error = new Error("Archivo vacio");
     error.status = 400;
     throw error;
   }
-  const fileName = safeFileName(body.fileName || `${documentId}.bin`);
+  if (buffer.length > MAX_DOCUMENT_FILE_BYTES) {
+    const error = new Error("Archivo demasiado grande. Maximo 8 MB por documento.");
+    error.status = 413;
+    throw error;
+  }
+  const fileName = safeName || `${documentId}.pdf`;
+  const fileMime = cleanDocumentMime(body.fileMime, fileName);
   const storagePath = path.join(DOCUMENT_UPLOAD_DIR, `${documentId}-${fileName}`);
   fs.writeFileSync(storagePath, buffer);
   return {
     fileName,
-    fileMime: body.fileMime || "application/octet-stream",
+    fileMime,
     fileSize: buffer.length,
     storagePath
   };
@@ -2436,7 +4240,7 @@ function signDeliveryNote(event, body) {
 function listUsers() {
   return all(
     `SELECT users.id, users.role, users.name, users.email, users.phone, users.avatar_url, users.active,
-            users.last_login_at, users.created_at,
+            users.last_login_at, users.created_at, users.permissions_json,
             employees.id AS employee_id, employees.role AS employee_role, employees.status AS employee_status
      FROM users
      LEFT JOIN employees ON employees.user_id = users.id
@@ -2449,6 +4253,7 @@ function listUsers() {
     phone: row.phone,
     avatarUrl: row.avatar_url,
     active: Boolean(row.active),
+    permissions: normalizeAdminPermissions(row.permissions_json, row.role),
     lastLoginAt: row.last_login_at,
     createdAt: row.created_at,
     employeeId: row.employee_id,
@@ -2507,44 +4312,112 @@ function deliveryNotePdf(event) {
   const note = event.deliveryNote || {};
   const servicePrice = Number(note.service_price ?? event.service_price ?? event.budget ?? 0);
   const rows = deliveryNoteRows(event);
-  const lines = [
-    `Albaran A4 - ${event.name}`,
-    `MARFAN CREW ERP · Generado: ${new Date().toLocaleString("es-ES")}`,
-    `Evento: ${event.id} · Fecha: ${event.date} · Horario: ${event.start_time}-${event.end_time}`,
-    `Cliente: ${event.client_name} · Ubicacion: ${event.location}`,
-    `Direccion: ${event.address || event.location}`,
-    `Jefe de equipo: ${event.team_leader_name || "Pendiente"}`,
-    "",
-    `Precio servicio: ${servicePrice.toFixed(2)} EUR`,
-    `Roles: ${Number(event.role_price_total || 0).toFixed(2)} EUR · Nocturnidad: ${Number(event.night_price_total || 0).toFixed(2)} EUR`,
-    `Distancia base: ${Number(event.base_distance_km || 0).toFixed(1)} km · Km facturables: ${Number(event.billable_km || 0).toFixed(1)} km · Vehiculos: ${Number(event.vehicle_count || 1)}`,
-    `Kilometraje: ${Number(event.distance_price_total || 0).toFixed(2)} EUR`,
-    "",
-    "Operarios | Rol | Horario | Km | Dieta | Noct. | Extras"
+  const ops = [];
+  const fill = (r, g, b) => ops.push(`${r} ${g} ${b} rg`);
+  const stroke = (r, g, b) => ops.push(`${r} ${g} ${b} RG`);
+  const rect = (x, y, w, h, mode = "f") => ops.push(`${x} ${y} ${w} ${h} re ${mode}`);
+  const text = (value, x, y, size = 9, font = "F1", color = [0.06, 0.09, 0.16], max = 90) => {
+    fill(...color);
+    ops.push("BT", `/${font} ${size} Tf`, `${x} ${y} Td`, `(${pdfSafeText(value, max)}) Tj`, "ET");
+  };
+  const moneyText = (value) => `${Number(value || 0).toFixed(2)} EUR`;
+  const card = (x, y, w, h, label, value, tone = "light") => {
+    const bg = tone === "dark" ? [0.024, 0.063, 0.11] : tone === "green" ? [0.027, 0.58, 0.33] : [1, 1, 1];
+    const border = tone === "dark" || tone === "green" ? bg : [0.84, 0.87, 0.91];
+    fill(...bg);
+    stroke(...border);
+    rect(x, y, w, h, "B");
+    text(label.toUpperCase(), x + 12, y + h - 18, 7, "F2", tone === "light" ? [0.39, 0.45, 0.55] : [0.84, 0.91, 0.97], 40);
+    text(value, x + 12, y + 14, tone === "green" ? 18 : 11, "F2", tone === "light" ? [0.06, 0.09, 0.16] : [1, 1, 1], 64);
+  };
+
+  fill(0.965, 0.976, 0.988);
+  rect(0, 0, 595, 842);
+  fill(0.024, 0.063, 0.11);
+  rect(0, 748, 595, 94);
+  fill(0.027, 0.58, 0.33);
+  rect(0, 748, 12, 94);
+  fill(1, 1, 1);
+  rect(40, 779, 36, 36);
+  text("M", 52, 790, 18, "F2", [0.024, 0.063, 0.11], 2);
+  text("MARFAN CREW", 88, 804, 12, "F2", [1, 1, 1], 34);
+  text("Albaran corporativo de servicio", 88, 787, 8, "F1", [0.78, 0.86, 0.94], 58);
+  text(`Generado ${new Date().toLocaleString("es-ES")}`, 390, 804, 8, "F1", [0.78, 0.86, 0.94], 52);
+  text(`Ref. ${event.id}`, 390, 787, 8, "F2", [1, 1, 1], 45);
+
+  text("ALBARAN DE SERVICIO", 40, 714, 20, "F2", [0.024, 0.063, 0.11], 46);
+  text(event.name, 40, 692, 12, "F2", [0.16, 0.22, 0.31], 74);
+  const signed = Boolean(note.locked);
+  fill(signed ? 0.86 : 1, signed ? 0.98 : 0.95, signed ? 0.9 : 0.78);
+  stroke(signed ? 0.03 : 0.71, signed ? 0.46 : 0.28, signed ? 0.28 : 0.03);
+  rect(412, 700, 143, 24, "B");
+  text(signed ? "FIRMADO Y BLOQUEADO" : "PENDIENTE DE FIRMA", 425, 708, 8, "F2", signed ? [0.03, 0.46, 0.28] : [0.71, 0.28, 0.03], 34);
+
+  card(40, 618, 330, 58, "Cliente", `${event.client_name} · ${event.location}`, "light");
+  card(390, 618, 165, 58, "Precio servicio", moneyText(servicePrice), "green");
+  card(40, 546, 120, 54, "Fecha", event.date, "light");
+  card(174, 546, 120, 54, "Horario", `${event.start_time}-${event.end_time}`, "light");
+  card(308, 546, 120, 54, "Jefe equipo", event.team_leader_name || "Pendiente", "light");
+  card(442, 546, 113, 54, "Equipo", `${rows.length} operarios`, "dark");
+
+  text("Datos de facturacion", 40, 514, 12, "F2", [0.024, 0.063, 0.11], 40);
+  fill(1, 1, 1);
+  stroke(0.84, 0.87, 0.91);
+  rect(40, 456, 515, 44, "B");
+  text(`Direccion: ${event.address || event.location}`, 54, 482, 8, "F1", [0.16, 0.22, 0.31], 105);
+  text(`Base Ciro Alegria 89 Malaga -> ${Number(event.base_distance_km || 0).toFixed(1)} km`, 54, 466, 8, "F1", [0.16, 0.22, 0.31], 80);
+  text(`Roles ${moneyText(event.role_price_total)} · Nocturnidad ${moneyText(event.night_price_total)} · Km ${moneyText(event.distance_price_total)}`, 300, 466, 8, "F2", [0.06, 0.09, 0.16], 70);
+  text(`Km facturables ${Number(event.billable_km || 0).toFixed(1)} · Vehiculos ${Number(event.vehicle_count || 1)} · Tarifa ${Number(event.kilometre_price || 0).toFixed(2)} EUR/km`, 300, 482, 8, "F1", [0.16, 0.22, 0.31], 70);
+
+  text("Equipo, horario y pluses", 40, 424, 12, "F2", [0.024, 0.063, 0.11], 40);
+  fill(0.024, 0.063, 0.11);
+  rect(40, 399, 515, 20);
+  const columns = [
+    ["Operario", 50],
+    ["Rol", 190],
+    ["Horario", 302],
+    ["Km", 378],
+    ["Dieta", 420],
+    ["Noct.", 468],
+    ["Extras", 512]
   ];
-  for (const { assignment, allowance } of rows.slice(0, 28)) {
-    lines.push([
-      assignment.name,
-      assignment.role,
-      `${event.start_time}-${event.end_time}`,
-      Number(allowance.km || 0).toFixed(1),
-      `${Number(allowance.diet || 0).toFixed(2)} EUR`,
-      Number(allowance.night_hours || 0).toFixed(1),
-      `${Number(allowance.extras || 0).toFixed(2)} EUR`
-    ].join(" | "));
+  for (const [label, x] of columns) text(label, x, 405, 7.5, "F2", [1, 1, 1], 18);
+  let y = 379;
+  for (const { assignment, allowance } of rows.slice(0, 10)) {
+    fill(y % 40 === 19 ? 1 : 0.985, y % 40 === 19 ? 1 : 0.988, y % 40 === 19 ? 1 : 0.992);
+    stroke(0.89, 0.91, 0.94);
+    rect(40, y - 6, 515, 20, "B");
+    text(assignment.name, 50, y, 7.5, "F1", [0.06, 0.09, 0.16], 30);
+    text(assignment.role, 190, y, 7.5, "F1", [0.06, 0.09, 0.16], 24);
+    text(`${event.start_time}-${event.end_time}`, 302, y, 7.5, "F1", [0.06, 0.09, 0.16], 16);
+    text(Number(allowance.km || 0).toFixed(1), 378, y, 7.5, "F1", [0.06, 0.09, 0.16], 8);
+    text(Number(allowance.diet || 0).toFixed(2), 420, y, 7.5, "F1", [0.06, 0.09, 0.16], 9);
+    text(Number(allowance.night_hours || 0).toFixed(1), 468, y, 7.5, "F1", [0.06, 0.09, 0.16], 8);
+    text(Number(allowance.extras || 0).toFixed(2), 512, y, 7.5, "F1", [0.06, 0.09, 0.16], 9);
+    y -= 21;
   }
-  if (rows.length > 28) lines.push(`... ${rows.length - 28} operarios adicionales`);
-  if (!rows.length) lines.push("Sin operarios asignados");
-  lines.push(
-    "",
-    `Notas: ${event.notes || ""}`,
-    "",
-    `Firma cliente: ${note.signature_name || ""} · DNI: ${note.signature_dni || ""}`,
-    `Firma grafica: ${note.signature_image ? "capturada digitalmente" : "no capturada"}`,
-    `Estado: ${note.locked ? "Firmado y bloqueado" : "Pendiente de firma"} · Fecha firma: ${note.signed_at || ""}`,
-    `Observaciones cliente: ${note.client_notes || ""}`
-  );
-  return createPdfLines(`Albaran ${event.name}`, lines);
+  if (!rows.length) text("Sin operarios asignados", 50, y, 8, "F1", [0.39, 0.45, 0.55], 40);
+  if (rows.length > 10) text(`Mas ${rows.length - 10} operarios en el albaran HTML`, 50, y, 8, "F2", [0.55, 0.29, 0.02], 45);
+
+  fill(1, 1, 1);
+  stroke(0.84, 0.87, 0.91);
+  rect(40, 90, 245, 118, "B");
+  rect(310, 90, 245, 118, "B");
+  text("Firma cliente", 56, 184, 11, "F2", [0.024, 0.063, 0.11], 28);
+  text(note.signature_image ? "Firma grafica capturada digitalmente" : "Firma grafica no capturada", 56, 162, 8, "F1", [0.39, 0.45, 0.55], 48);
+  text(`Nombre: ${note.signature_name || ""}`, 56, 130, 8.5, "F1", [0.06, 0.09, 0.16], 52);
+  text(`DNI/NIF: ${note.signature_dni || ""}`, 56, 114, 8.5, "F1", [0.06, 0.09, 0.16], 40);
+  text("Control MARFAN", 326, 184, 11, "F2", [0.024, 0.063, 0.11], 28);
+  text(`Estado: ${signed ? "Firmado y bloqueado" : "Pendiente"}`, 326, 162, 8.5, "F2", signed ? [0.03, 0.46, 0.28] : [0.71, 0.28, 0.03], 42);
+  text(`Fecha firma: ${note.signed_at || ""}`, 326, 146, 8, "F1", [0.16, 0.22, 0.31], 44);
+  text(`Observaciones: ${note.client_notes || ""}`, 326, 128, 8, "F1", [0.16, 0.22, 0.31], 50);
+  text(`Notas servicio: ${event.notes || ""}`, 326, 112, 7.5, "F1", [0.39, 0.45, 0.55], 58);
+
+  fill(0.024, 0.063, 0.11);
+  rect(0, 0, 595, 36);
+  text("MARFAN CREW ERP", 40, 14, 9, "F2", [1, 1, 1], 36);
+  text("Precio, equipo, kilometraje y firma de cliente", 330, 14, 7, "F1", [0.78, 0.86, 0.94], 54);
+  return createPdfDocument(ops);
 }
 
 function deliveryNoteHtml(event) {
@@ -2571,8 +4444,10 @@ function deliveryNoteHtml(event) {
         <style>
           @page { size: A4; margin: 18mm; }
           body { font-family: Arial, sans-serif; color: #101828; margin: 0; }
-          header { display: flex; justify-content: space-between; border-bottom: 2px solid #101828; padding-bottom: 16px; margin-bottom: 18px; }
-          h1 { margin: 0; font-size: 28px; }
+	          header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #101828; padding-bottom: 16px; margin-bottom: 18px; }
+	          .brand-block { display: flex; align-items: center; gap: 14px; }
+	          .brand-logo { width: 58px; height: 58px; object-fit: contain; }
+	          h1 { margin: 0; font-size: 28px; }
           h2 { font-size: 16px; margin: 22px 0 8px; }
           .muted { color: #667085; }
           .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 24px; }
@@ -2582,16 +4457,16 @@ function deliveryNoteHtml(event) {
           .signature { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 36px; }
           .box { border: 1px solid #98a2b3; min-height: 110px; padding: 12px; }
           .signature-img { max-width: 100%; max-height: 70px; display: block; margin: 10px 0; }
-          .brand { font-weight: 800; letter-spacing: 0; }
+	          .brand { font-weight: 800; letter-spacing: 0; }
           @media print { button { display: none; } }
         </style>
       </head>
       <body>
-        <button onclick="window.print()">Imprimir / guardar PDF</button>
-        <header>
-          <div><div class="brand">MARFAN CREW ERP</div><div class="muted">Albaran A4 por evento</div></div>
-          <div><strong>${escHtml(event.id)}</strong><br /><span class="muted">${escHtml(event.date)}</span></div>
-        </header>
+	        <button onclick="window.print()">Imprimir / guardar PDF</button>
+	        <header>
+	          <div class="brand-block"><img class="brand-logo" src="/assets/logo.png" alt="MARFAN CREW" /><div><div class="brand">MARFAN CREW ERP</div><div class="muted">Albaran A4 por evento</div></div></div>
+	          <div><strong>${escHtml(event.id)}</strong><br /><span class="muted">${escHtml(event.date)}</span></div>
+	        </header>
         <h1>${escHtml(event.name)}</h1>
         <p class="muted">${escHtml(event.client_name)} · ${escHtml(event.location)}</p>
         <section class="grid">
@@ -2686,7 +4561,10 @@ function clientDossierPdf(event) {
   ];
   for (const row of dossier.rows.slice(0, 24)) {
     const docs = row.documents.length
-      ? row.documents.map((document) => `${document.type}:${documentStatusLabel(document.status)}${document.expires_at ? ` ${document.expires_at}` : ""}`).join(", ")
+      ? row.documents.map((document) => {
+        const file = document.has_file ? " archivo" : "";
+        return `${document.type}:${documentStatusLabel(document.status)}${document.expires_at ? ` ${document.expires_at}` : ""}${file}`;
+      }).join(", ")
       : "Sin documentos";
     lines.push([
       row.assignment.name,
@@ -2717,6 +4595,7 @@ function clientDossierHtml(event) {
             <strong>${escHtml(document.type)}</strong>
             <span>${escHtml(documentStatusLabel(document.status))}</span>
             <small>${escHtml(document.expires_at || "Sin caducidad")}</small>
+            ${document.has_file ? `<a href="/api/documents/${encodeURIComponent(document.id)}/file" target="_blank" rel="noopener">Abrir archivo</a>` : "<em>Sin archivo</em>"}
           </div>
         `).join("") : "<span class=\"muted\">Sin documentos registrados</span>"}
       </td>
@@ -2730,7 +4609,9 @@ function clientDossierHtml(event) {
         <style>
           @page { size: A4; margin: 16mm; }
           body { font-family: Arial, sans-serif; color: #101828; margin: 0; }
-          header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 2px solid #101828; padding-bottom: 16px; margin-bottom: 18px; }
+          header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 2px solid #101828; padding-bottom: 16px; margin-bottom: 18px; align-items: center; }
+          .brand-block { display: flex; align-items: center; gap: 14px; }
+          .brand-logo { width: 58px; height: 58px; object-fit: contain; }
           h1 { margin: 0; font-size: 28px; }
           h2 { font-size: 16px; margin: 22px 0 8px; }
           .brand { font-weight: 800; letter-spacing: 0; }
@@ -2746,7 +4627,9 @@ function clientDossierHtml(event) {
           .tag.ok { color: #067647; background: #dcfae6; }
           .tag.aviso { color: #b54708; background: #fef0c7; }
           .tag.bloqueado { color: #b42318; background: #fee4e2; }
-          .doc-line { display: grid; grid-template-columns: 90px 1fr 90px; gap: 8px; padding: 3px 0; border-bottom: 1px solid #eaecf0; }
+          .doc-line { display: grid; grid-template-columns: 90px 1fr 90px 86px; gap: 8px; padding: 4px 0; border-bottom: 1px solid #eaecf0; align-items: center; }
+          .doc-line a { color: #101828; font-weight: 800; text-decoration: none; border-bottom: 1px solid #101828; }
+          .doc-line em { color: #98a2b3; font-style: normal; }
           .note { border: 1px solid #d0d5dd; padding: 12px; margin-top: 18px; background: #f9fafb; }
           @media print { button { display: none; } }
         </style>
@@ -2754,7 +4637,7 @@ function clientDossierHtml(event) {
       <body>
         <button onclick="window.print()">Imprimir / guardar PDF</button>
         <header>
-          <div><div class="brand">MARFAN CREW ERP</div><div class="muted">Dossier operativo para cliente</div></div>
+          <div class="brand-block"><img class="brand-logo" src="/assets/logo.png" alt="MARFAN CREW" /><div><div class="brand">MARFAN CREW ERP</div><div class="muted">Dossier operativo para cliente</div></div></div>
           <div><strong>${escHtml(event.id)}</strong><br /><span class="muted">${escHtml(new Date().toLocaleString("es-ES"))}</span></div>
         </header>
         <h1>${escHtml(event.name)}</h1>
@@ -2782,7 +4665,7 @@ function clientDossierHtml(event) {
           <tbody>${rows || "<tr><td colspan='4'>Sin operarios asignados</td></tr>"}</tbody>
         </table>
         <div class="note">
-          Este dossier resume equipo, roles y estado documental del evento. Los archivos originales permanecen protegidos en la plataforma y solo son accesibles por usuarios autorizados.
+          Este dossier resume equipo, roles y estado documental del evento. Los archivos adjuntos se abren desde MARFAN y requieren una sesion autorizada.
         </div>
       </body>
     </html>`;
@@ -2805,28 +4688,44 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { ok: true, name: "MARFAN CREW ERP" });
   }
 
+  if (pathname === "/api/public/config" && method === "GET") {
+    return sendJson(res, 200, {
+      appName: "MARFAN CREW ERP",
+      demoMode: DEMO_MODE,
+      demoAccounts: DEMO_MODE
+        ? {
+            admin: { identifier: "admin@marfancrew.test", password: "admin123" },
+            employee: { identifier: "600777888", password: "empleado123" }
+          }
+        : null
+    });
+  }
+
+  enforceAdminRoutePermission(user, pathname, method);
+
   if (pathname === "/api/auth/login" && method === "POST") {
     const body = await readBody(req);
-    const identifier = String(body.identifier || "").trim().toLowerCase();
-    const account = get(
-      "SELECT * FROM users WHERE active = 1 AND (lower(email) = ? OR phone = ?) LIMIT 1",
-      [identifier, body.identifier]
-    );
+    const rateKey = assertAuthRateLimit(req, "login", body.identifier);
+    const account = findActiveLoginAccount(body.identifier);
     if (!account || !verifyPassword(body.password || "", account.salt, account.password_hash)) {
+      recordAuthFailure(rateKey);
       return sendJson(res, 401, { error: "Credenciales incorrectas" });
     }
     if (body.mode === "employee" && account.role !== "employee") {
+      recordAuthFailure(rateKey);
       return sendJson(res, 403, { error: "Usa el login de administrador" });
     }
     if (body.mode === "admin" && account.role === "employee") {
+      recordAuthFailure(rateKey);
       return sendJson(res, 403, { error: "Usa el login de empleado" });
     }
+    clearAuthFailures(req, "login", body.identifier);
 
     const token = randomToken();
     const days = body.remember ? 30 : 1;
     const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
     run("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)", [
-      token,
+      sessionStorageToken(token),
       account.id,
       expiresAt
     ]);
@@ -2835,25 +4734,32 @@ async function handleApi(req, res, url) {
       mode: body.mode || "admin",
       remember: Boolean(body.remember)
     });
-    return sendJson(res, 200, { token, user: publicUser(account), expiresAt });
+    return send(res, 200, { token, user: publicUser(account), expiresAt }, {
+      ...JSON_HEADERS,
+      "set-cookie": sessionCookie(token, expiresAt, req)
+    });
   }
 
   if (pathname === "/api/auth/logout" && method === "POST") {
-    const token = tokenFromRequest(req);
+    const token = tokenFromRequest(req, { allowCookie: true });
     if (user) audit(user, "logout", "session", user.id);
-    if (token) run("DELETE FROM sessions WHERE token = ?", [token]);
-    return sendJson(res, 200, { ok: true });
+    if (token) {
+      const candidates = sessionTokenCandidates(token);
+      run(`DELETE FROM sessions WHERE token IN (${candidates.map(() => "?").join(",")})`, candidates);
+    }
+    return send(res, 200, { ok: true }, {
+      ...JSON_HEADERS,
+      "set-cookie": clearSessionCookie(req)
+    });
   }
 
   if (pathname === "/api/auth/recover" && method === "POST") {
     const body = await readBody(req);
-    const identifier = String(body.identifier || "").trim().toLowerCase();
-    const account = get(
-      "SELECT id FROM users WHERE active = 1 AND (lower(email) = ? OR phone = ?) LIMIT 1",
-      [identifier, body.identifier]
-    );
+    const rateKey = assertAuthRateLimit(req, "recover", body.identifier);
+    const account = findActiveLoginAccount(body.identifier);
     let resetCode = null;
     if (account) {
+      clearAuthFailures(req, "recover", body.identifier);
       resetCode = recoveryCode();
       const token = hashPassword(resetCode);
       const resetId = randomId("rst");
@@ -2873,12 +4779,14 @@ async function handleApi(req, res, url) {
           expiresAt
         });
       });
+    } else {
+      recordAuthFailure(rateKey);
     }
     return sendJson(res, 200, {
       ok: true,
-      message: "Si el usuario existe, se ha generado un codigo temporal de recuperacion.",
-      recoveryCode: resetCode,
-      expiresInMinutes: resetCode ? 20 : undefined
+      message: "Si el usuario existe, oficina recibira una solicitud de recuperacion.",
+      recoveryCode: DEMO_MODE ? resetCode : undefined,
+      expiresInMinutes: DEMO_MODE && resetCode ? 20 : undefined
     });
   }
 
@@ -2886,12 +4794,19 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const code = String(body.recoveryCode || body.code || "").trim().toUpperCase();
     const password = String(body.password || "");
-    if (!code || password.length < 6) {
-      return sendJson(res, 400, { error: "Codigo y contrasena de al menos 6 caracteres obligatorios" });
+    const rateKey = assertAuthRateLimit(req, "reset", code || "empty");
+    if (!code) {
+      recordAuthFailure(rateKey);
+      return sendJson(res, 400, { error: "Codigo obligatorio" });
     }
+    const safePassword = validateNewPassword(password);
     const reset = findValidRecoveryToken(code);
-    if (!reset) return sendJson(res, 400, { error: "Codigo caducado o no valido" });
-    const credentials = hashPassword(password);
+    if (!reset) {
+      recordAuthFailure(rateKey);
+      return sendJson(res, 400, { error: "Codigo caducado o no valido" });
+    }
+    clearAuthFailures(req, "reset", code || "empty");
+    const credentials = hashPassword(safePassword);
     transaction(() => {
       run(
         `UPDATE users
@@ -2948,7 +4863,15 @@ async function handleApi(req, res, url) {
       "google_calendar_sync_enabled",
       "google_calendar_service_account_json",
       "google_calendar_delegated_user",
-      "google_calendar_oauth_client_json"
+      "google_calendar_oauth_client_json",
+      "backup_auto_enabled",
+      "backup_auto_interval_hours",
+      "backup_auto_retention_days",
+      "backup_auto_retention_count",
+      "clock_radius_m",
+      "clock_entry_early_minutes",
+      "clock_exit_late_minutes",
+      "incident_absence_grace_minutes"
     ];
     transaction(() => {
       for (const key of allowed) {
@@ -2976,6 +4899,52 @@ async function handleApi(req, res, url) {
     const appUrl = body.returnUrl || appOriginFromRequest(req);
     const result = await startGoogleOAuthLoopback({ client, actor: user, appUrl });
     return sendJson(res, 200, result);
+  }
+
+  if (pathname === "/api/calendar/google-sync/retry" && method === "POST") {
+    requireAdmin(user);
+    const body = await readBody(req);
+    if (body.eventId) {
+      const event = eventDetail(body.eventId);
+      if (!event) return sendJson(res, 404, { error: "Evento no encontrado" });
+      const googleSync = await syncEventToGoogleCalendar(event.id, user, "manual_retry", appOriginFromRequest(req));
+      return sendJson(res, 200, { event: eventDetail(event.id), googleSync, summary: googleSyncSummary() });
+    }
+
+    const limit = Math.min(Math.max(Number(body.limit || 50), 1), 200);
+    const from = body.from || formatDate();
+    const rows = all(
+      `SELECT id
+       FROM events
+       WHERE date >= ?
+         AND (
+           google_sync_status IS NULL
+           OR google_sync_status IN ('pending', 'pending_auth', 'error', 'imported', 'disabled')
+           OR google_calendar_event_id IS NULL
+         )
+       ORDER BY date ASC, start_time ASC
+       LIMIT ?`,
+      [from, limit]
+    );
+    const results = [];
+    for (const row of rows) {
+      const googleSync = await syncEventToGoogleCalendar(row.id, user, "manual_bulk_retry", appOriginFromRequest(req));
+      results.push({ eventId: row.id, status: googleSync.status, error: googleSync.error || "" });
+    }
+    return sendJson(res, 200, {
+      processed: results.length,
+      synced: results.filter((item) => item.status === "synced").length,
+      pendingAuth: results.filter((item) => item.status === "pending_auth").length,
+      failed: results.filter((item) => item.status === "error").length,
+      disabled: results.filter((item) => item.status === "disabled").length,
+      results,
+      summary: googleSyncSummary()
+    });
+  }
+
+  if (pathname === "/api/work-roles" && method === "GET") {
+    requireAdmin(user);
+    return sendJson(res, 200, { roles: listWorkRoles() });
   }
 
   if (pathname === "/api/work-roles" && method === "POST") {
@@ -3055,23 +5024,31 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const requestedRole = ["super_admin", "admin", "employee"].includes(body.role) ? body.role : "admin";
     const role = user.role === "super_admin" ? requestedRole : "admin";
-    if (!body.name || !body.password || (!body.email && !body.phone)) {
+    const email = cleanContactEmail(body.email);
+    const phone = cleanContactPhone(body.phone);
+    if (!body.name || !body.password || (!email && !phone)) {
       return sendJson(res, 400, { error: "Nombre, contrasena y email o telefono son obligatorios" });
     }
-    const credentials = hashPassword(body.password);
+    const safePassword = validateNewPassword(body.password);
+    validateUserContact({ email, phone });
+    const credentials = hashPassword(safePassword);
     const id = randomId("usr");
+    const permissions = user.role === "super_admin"
+      ? permissionsFromBody(body, role)
+      : normalizeAdminPermissions(null, role);
     transaction(() => {
       run(
-        `INSERT INTO users (id, role, name, email, phone, password_hash, salt, active)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+        `INSERT INTO users (id, role, name, email, phone, password_hash, salt, permissions_json, active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
         [
           id,
           role,
           body.name,
-          body.email || null,
-          body.phone || null,
+          email || null,
+          phone || null,
           credentials.hash,
-          credentials.salt
+          credentials.salt,
+          JSON.stringify(permissions)
         ]
       );
 
@@ -3086,8 +5063,8 @@ async function handleApi(req, res, url) {
             id,
             body.name,
             body.employeeRole || "Montaje",
-            body.phone || "",
-            body.email || "",
+            phone || "",
+            email || "",
             body.city || "",
             Number(body.lat || 40.4168),
             Number(body.lng || -3.7038),
@@ -3099,7 +5076,7 @@ async function handleApi(req, res, url) {
         );
       }
 
-      audit(user, "user_created", "user", id, { role });
+      audit(user, "user_created", "user", id, { role, permissions });
     });
     return sendJson(res, 201, { user: listUsers().find((item) => item.id === id) });
   }
@@ -3112,28 +5089,42 @@ async function handleApi(req, res, url) {
     const role = body.role && ["super_admin", "admin", "employee"].includes(body.role) ? body.role : undefined;
     const nextActive = body.active === undefined ? undefined : Boolean(body.active);
     const target = ensureCanChangeUser(user, targetId, role, nextActive);
-    const password = body.password ? hashPassword(body.password) : null;
+    const password = body.password ? hashPassword(validateNewPassword(body.password)) : null;
     const finalRole = role || target.role;
+    const permissions = permissionsFromBody(body, finalRole, target.permissions_json);
+    const linkedEmployee = get("SELECT id FROM employees WHERE user_id = ?", [targetId]);
+    const nextEmail = body.email === undefined ? cleanContactEmail(target.email) : cleanContactEmail(body.email);
+    const nextPhone = body.phone === undefined ? cleanContactPhone(target.phone) : cleanContactPhone(body.phone);
+    if (!nextEmail && !nextPhone) {
+      return sendJson(res, 400, { error: "Email o telefono obligatorio" });
+    }
+    validateUserContact({
+      userId: targetId,
+      employeeId: linkedEmployee?.id || "",
+      email: nextEmail,
+      phone: nextPhone
+    });
     transaction(() => {
       run(
         `UPDATE users
          SET role = ?, name = ?, email = ?, phone = ?, active = ?,
              password_hash = COALESCE(?, password_hash),
-             salt = COALESCE(?, salt)
+             salt = COALESCE(?, salt),
+             permissions_json = ?
          WHERE id = ?`,
         [
           finalRole,
           body.name ?? target.name,
-          body.email ?? target.email,
-          body.phone ?? target.phone,
+          nextEmail,
+          nextPhone,
           nextActive === undefined ? target.active : (nextActive ? 1 : 0),
           password?.hash || null,
           password?.salt || null,
+          JSON.stringify(permissions),
           targetId
         ]
       );
 
-      const linkedEmployee = get("SELECT id FROM employees WHERE user_id = ?", [targetId]);
       if (finalRole === "employee" && !linkedEmployee) {
         run(
           `INSERT INTO employees
@@ -3144,8 +5135,8 @@ async function handleApi(req, res, url) {
             targetId,
             body.name ?? target.name,
             body.employeeRole || "Montaje",
-            body.phone ?? target.phone ?? "",
-            body.email ?? target.email ?? "",
+            nextPhone || "",
+            nextEmail || "",
             body.city || "",
             Number(body.lat || 40.4168),
             Number(body.lng || -3.7038),
@@ -3157,11 +5148,12 @@ async function handleApi(req, res, url) {
         );
       }
 
-      if (nextActive === false) run("DELETE FROM sessions WHERE user_id = ?", [targetId]);
+      if (nextActive === false || password) run("DELETE FROM sessions WHERE user_id = ?", [targetId]);
       audit(user, "user_updated", "user", targetId, {
         role: finalRole,
         active: nextActive === undefined ? Boolean(target.active) : nextActive,
-        passwordChanged: Boolean(password)
+        passwordChanged: Boolean(password),
+        permissions
       });
     });
     return sendJson(res, 200, { user: listUsers().find((item) => item.id === targetId) });
@@ -3214,6 +5206,28 @@ async function handleApi(req, res, url) {
     return sendJson(res, result.created ? 201 : 200, result);
   }
 
+  if (pathname === "/api/calendar/import-google-events" && method === "POST") {
+    requireAdmin(user);
+    const body = await readBody(req);
+    const incoming = Array.isArray(body.events) ? body.events : [];
+    const events = incoming.slice(0, 100).filter((item) => item && typeof item === "object");
+    const results = events.map((item) => importGoogleCalendarEvent(item, user));
+    const created = results.filter((item) => item.created).length;
+    const existing = results.length - created;
+    audit(user, "google_events_bulk_imported", "event", "bulk", {
+      requested: incoming.length,
+      processed: results.length,
+      created,
+      existing
+    });
+    return sendJson(res, 200, {
+      processed: results.length,
+      created,
+      existing,
+      events: results.map((item) => item.event)
+    });
+  }
+
   if (pathname === "/api/calendar/marfan.ics" && method === "GET") {
     const settings = settingMap();
     if (url.searchParams.get("token") !== settings.calendar_feed_token) {
@@ -3225,6 +5239,57 @@ async function handleApi(req, res, url) {
       "content-disposition": "inline; filename=marfan-crew.ics",
       "cache-control": "private, max-age=300"
     });
+  }
+
+  if (pathname === "/api/imports" && method === "GET") {
+    requireAdmin(user);
+    return sendJson(res, 200, {
+      imports: all("SELECT * FROM data_imports ORDER BY created_at DESC LIMIT 50").map((item) => ({
+        ...item,
+        metadata: jsonField(item.metadata, {})
+      }))
+    });
+  }
+
+  if (pathname === "/api/imports/templates/employees" && method === "GET") {
+    requireAdmin(user);
+    return send(res, 200, importTemplateCsv(EMPLOYEE_IMPORT_HEADERS), {
+      "content-type": "text/csv; charset=utf-8",
+      "content-disposition": "attachment; filename=plantilla-operarios-marfan.csv"
+    });
+  }
+
+  if (pathname === "/api/imports/templates/clients" && method === "GET") {
+    requireAdmin(user);
+    return send(res, 200, importTemplateCsv(CLIENT_IMPORT_HEADERS), {
+      "content-type": "text/csv; charset=utf-8",
+      "content-disposition": "attachment; filename=plantilla-clientes-marfan.csv"
+    });
+  }
+
+  if (pathname === "/api/imports/employees" && method === "POST") {
+    requireAdmin(user);
+    const body = await readBody(req);
+    if (!String(body.fileText || "").trim()) return sendJson(res, 400, { error: "Archivo CSV obligatorio" });
+    const result = importEmployeesCsv({
+      text: body.fileText,
+      source: body.fileName || "operarios.csv",
+      defaultPassword: body.defaultPassword || "Marfan2026!",
+      actor: user
+    });
+    return sendJson(res, 201, result);
+  }
+
+  if (pathname === "/api/imports/clients" && method === "POST") {
+    requireAdmin(user);
+    const body = await readBody(req);
+    if (!String(body.fileText || "").trim()) return sendJson(res, 400, { error: "Archivo CSV obligatorio" });
+    const result = importClientsCsv({
+      text: body.fileText,
+      source: body.fileName || "clientes.csv",
+      actor: user
+    });
+    return sendJson(res, 201, result);
   }
 
   if (pathname === "/api/events" && method === "GET") {
@@ -3299,6 +5364,13 @@ async function handleApi(req, res, url) {
         requiredTotal,
         servicePrice: pricing.servicePrice
       });
+      createEventSnapshot(id, "event_created", user, {
+        name: body.name,
+        clientId: body.clientId,
+        date: body.date,
+        requiredTotal,
+        servicePrice: pricing.servicePrice
+      });
     });
     const googleSync = await syncEventToGoogleCalendar(id, user, "event_created", appOriginFromRequest(req));
     return sendJson(res, 201, { event: eventDetail(id), googleSync });
@@ -3318,6 +5390,9 @@ async function handleApi(req, res, url) {
     const eventId = eventMatch[1];
     const existing = get("SELECT * FROM events WHERE id = ?", [eventId]);
     if (!existing) return sendJson(res, 404, { error: "Evento no encontrado" });
+    if (eventPerformed(existing)) {
+      return sendJson(res, 409, { error: "Evento efectuado: solo se permite revisar o crear incidencias" });
+    }
     const mapsCoords = extractGoogleMapsCoordinates(body.googleMapsUrl ?? existing.google_maps_url ?? "");
     const lat = Number(body.lat ?? mapsCoords?.lat ?? existing.lat);
     const lng = Number(body.lng ?? mapsCoords?.lng ?? existing.lng);
@@ -3368,8 +5443,22 @@ async function handleApi(req, res, url) {
       requirementsChanged: Boolean(body.requirements),
       requiredTotal
     });
+    createEventSnapshot(eventId, "event_updated", user, {
+      requirementsChanged: Boolean(body.requirements),
+      requiredTotal
+    });
     const googleSync = await syncEventToGoogleCalendar(eventId, user, "event_updated", appOriginFromRequest(req));
     return sendJson(res, 200, { event: eventDetail(eventId), googleSync });
+  }
+
+  const eventSnapshotsMatch = pathname.match(/^\/api\/events\/([^/]+)\/snapshots$/);
+  if (eventSnapshotsMatch && method === "GET") {
+    requireAdmin(user);
+    const event = get("SELECT id FROM events WHERE id = ?", [eventSnapshotsMatch[1]]);
+    if (!event) return sendJson(res, 404, { error: "Evento no encontrado" });
+    return sendJson(res, 200, {
+      snapshots: listEventSnapshots(event.id, url.searchParams.get("limit") || 50)
+    });
   }
 
   const closeEventMatch = pathname.match(/^\/api\/events\/([^/]+)\/close$/);
@@ -3379,6 +5468,7 @@ async function handleApi(req, res, url) {
     if (!event) return sendJson(res, 404, { error: "Evento no encontrado" });
     run("UPDATE events SET status = 'finalizado', closed_at = CURRENT_TIMESTAMP WHERE id = ?", [event.id]);
     audit(user, "event_closed", "event", event.id, { closedBy: user.id });
+    createEventSnapshot(event.id, "event_closed", user, { closedBy: user.id });
     const googleSync = await syncEventToGoogleCalendar(event.id, user, "event_closed", appOriginFromRequest(req));
     return sendJson(res, 200, { event: eventDetail(event.id), googleSync });
   }
@@ -3388,8 +5478,14 @@ async function handleApi(req, res, url) {
     requireAdmin(user);
     const source = eventDetail(duplicateMatch[1]);
     if (!source) return sendJson(res, 404, { error: "Evento no encontrado" });
+    if (eventPerformed(source)) {
+      return sendJson(res, 409, { error: "Evento efectuado: solo se permite revisar o crear incidencias" });
+    }
     const body = await readBody(req);
     const id = randomId("evt");
+    const targetDate = body.date || source.date;
+    const copiedAssignments = [];
+    const skippedAssignments = [];
     transaction(() => {
       run(
         `INSERT INTO events
@@ -3401,7 +5497,7 @@ async function handleApi(req, res, url) {
           id,
           `${source.name} copia`,
           source.client_id,
-          body.date || source.date,
+          targetDate,
           source.start_time,
           source.end_time,
           source.location,
@@ -3432,15 +5528,72 @@ async function handleApi(req, res, url) {
           requirement.count
         ]);
       }
+      const targetEvent = get("SELECT * FROM events WHERE id = ?", [id]);
+      for (const assignment of source.assignments || []) {
+        if (assignment.status === "bloqueado") {
+          skippedAssignments.push({
+            employeeId: assignment.employee_id,
+            employeeName: assignment.name,
+            reason: "Asignacion bloqueada en evento origen"
+          });
+          continue;
+        }
+        const employee = get("SELECT * FROM employees WHERE id = ?", [assignment.employee_id]);
+        if (!employee) {
+          skippedAssignments.push({
+            employeeId: assignment.employee_id,
+            employeeName: assignment.name,
+            reason: "Operario no encontrado"
+          });
+          continue;
+        }
+        const issues = validateAssignment(targetEvent, employee);
+        const blocker = issues.find((issue) => issue.severity === "block");
+        if (blocker) {
+          skippedAssignments.push({
+            employeeId: assignment.employee_id,
+            employeeName: assignment.name,
+            reason: blocker.message
+          });
+          continue;
+        }
+        const assignmentId = randomId("asg");
+        run(
+          "INSERT INTO assignments (id, event_id, employee_id, role, status) VALUES (?, ?, ?, ?, ?)",
+          [assignmentId, id, assignment.employee_id, assignment.role, assignment.status || "confirmado"]
+        );
+        copiedAssignments.push({
+          id: assignmentId,
+          employeeId: assignment.employee_id,
+          employeeName: assignment.name,
+          role: assignment.role,
+          status: assignment.status || "confirmado",
+          warnings: issues.filter((issue) => issue.severity === "warning")
+        });
+      }
+      if (copiedAssignments.some((assignment) => String(assignment.role || "").toLowerCase().includes("jefe"))) {
+        const leader = copiedAssignments.find((assignment) => String(assignment.role || "").toLowerCase().includes("jefe"));
+        run("UPDATE events SET team_leader_id = ? WHERE id = ?", [leader.employeeId, id]);
+      } else if (!copiedAssignments.some((assignment) => assignment.employeeId === source.team_leader_id)) {
+        run("UPDATE events SET team_leader_id = NULL WHERE id = ?", [id]);
+      }
       updateEventStatus(id);
       updateEventPricing(id, pricingForEvent(id));
       audit(user, "event_duplicated", "event", id, {
         sourceEventId: source.id,
-        date: body.date || source.date
+        date: targetDate,
+        copiedAssignments: copiedAssignments.length,
+        skippedAssignments: skippedAssignments.length
+      });
+      createEventSnapshot(id, "event_duplicated", user, {
+        sourceEventId: source.id,
+        date: targetDate,
+        copiedAssignments,
+        skippedAssignments
       });
     });
     const googleSync = await syncEventToGoogleCalendar(id, user, "event_duplicated", appOriginFromRequest(req));
-    return sendJson(res, 201, { event: eventDetail(id), googleSync });
+    return sendJson(res, 201, { event: eventDetail(id), googleSync, copiedAssignments, skippedAssignments });
   }
 
   if (pathname === "/api/clients" && method === "GET") {
@@ -3528,48 +5681,69 @@ async function handleApi(req, res, url) {
     const id = randomId("emp");
     const role = employeeRoleFromBody(body, "Montaje");
     const skills = employeeSkillsFromBody({ ...body, role }, body.skills || []);
-    run(
-      `INSERT INTO employees
-        (id, name, role, phone, email, city, lat, lng, hourly_rate, km_rate, diet_rate, skills, notes,
-         dni, social_security_number, bank_account, address, province, postal_code, birth_date,
-         shirt_size, pants_size, shoe_size, jacket_size, epi_size, emergency_contact)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        body.name,
+    const email = cleanContactEmail(body.email);
+    const phone = cleanContactPhone(body.phone);
+    const wantsPortal = body.portalAccess !== false;
+    validateAdminEmployeeContact({ employeeId: id, email, phone, requireContact: wantsPortal });
+    let portal = { userId: null, created: false };
+    transaction(() => {
+      if (wantsPortal) {
+        portal = ensureEmployeePortalUser({
+          name: body.name,
+          email,
+          phone,
+          defaultPassword: body.portalPassword || "Marfan2026!"
+        });
+      }
+      run(
+        `INSERT INTO employees
+          (id, user_id, name, role, phone, email, city, lat, lng, hourly_rate, km_rate, diet_rate, skills, notes,
+           dni, social_security_number, bank_account, address, province, postal_code, birth_date,
+           shirt_size, pants_size, shoe_size, jacket_size, epi_size, emergency_contact)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          portal.userId,
+          body.name,
+          role,
+          phone || "",
+          email || "",
+          body.city || "",
+          Number(body.lat || 40.4168),
+          Number(body.lng || -3.7038),
+          Number(body.hourlyRate || 15),
+          Number(body.kmRate || 0.24),
+          Number(body.dietRate || 0),
+          JSON.stringify(skills),
+          body.notes || "",
+          body.dni || null,
+          body.socialSecurityNumber || null,
+          body.bankAccount || null,
+          body.address || null,
+          body.province || null,
+          body.postalCode || null,
+          body.birthDate || null,
+          body.shirtSize || null,
+          body.pantsSize || null,
+          body.shoeSize || null,
+          body.jacketSize || null,
+          body.epiSize || null,
+          body.emergencyContact || null
+        ]
+      );
+      audit(user, "employee_created", "employee", id, {
+        name: body.name,
         role,
-        body.phone || "",
-        body.email || "",
-        body.city || "",
-        Number(body.lat || 40.4168),
-        Number(body.lng || -3.7038),
-        Number(body.hourlyRate || 15),
-        Number(body.kmRate || 0.24),
-        Number(body.dietRate || 0),
-        JSON.stringify(skills),
-        body.notes || "",
-        body.dni || null,
-        body.socialSecurityNumber || null,
-        body.bankAccount || null,
-        body.address || null,
-        body.province || null,
-        body.postalCode || null,
-        body.birthDate || null,
-        body.shirtSize || null,
-        body.pantsSize || null,
-        body.shoeSize || null,
-        body.jacketSize || null,
-        body.epiSize || null,
-        body.emergencyContact || null
-      ]
-    );
-    audit(user, "employee_created", "employee", id, {
-      name: body.name,
-      role,
-      email: body.email || "",
-      phone: body.phone || ""
+        email: email || "",
+        phone: phone || "",
+        portalUserId: portal.userId,
+        portalUserCreated: portal.created
+      });
     });
-    return sendJson(res, 201, { employee: parseEmployee(get("SELECT * FROM employees WHERE id = ?", [id])) });
+    return sendJson(res, 201, {
+      employee: parseEmployee(get("SELECT * FROM employees WHERE id = ?", [id])),
+      portalAccess: portal
+    });
   }
 
   const employeeMatch = pathname.match(/^\/api\/employees\/([^/]+)$/);
@@ -3580,51 +5754,88 @@ async function handleApi(req, res, url) {
     if (!existing) return sendJson(res, 404, { error: "Operario no encontrado" });
     const role = employeeRoleFromBody(body, existing.role);
     const skills = employeeSkillsFromBody({ ...body, role }, jsonField(existing.skills));
-    run(
-      `UPDATE employees
-       SET name = ?, role = ?, phone = ?, email = ?, status = ?, city = ?, lat = ?, lng = ?,
+    const nextName = body.name ?? existing.name;
+    const nextEmail = body.email === undefined ? cleanContactEmail(existing.email) : cleanContactEmail(body.email);
+    const nextPhone = body.phone === undefined ? cleanContactPhone(existing.phone) : cleanContactPhone(body.phone);
+    const nextStatus = body.status ?? existing.status;
+    const wantsPortal = body.portalAccess === true || body.portalAccess === "true";
+    validateAdminEmployeeContact({
+      employeeId: existing.id,
+      userId: existing.user_id || "",
+      email: nextEmail,
+      phone: nextPhone,
+      requireContact: Boolean(existing.user_id || wantsPortal)
+    });
+    let portal = { userId: existing.user_id || null, created: false };
+    transaction(() => {
+      if (existing.user_id) {
+        run(
+          `UPDATE users
+           SET name = ?, email = NULLIF(?, ''), phone = NULLIF(?, ''), active = ?
+           WHERE id = ?`,
+          [nextName, nextEmail || "", nextPhone || "", nextStatus === "activo" ? 1 : 0, existing.user_id]
+        );
+      } else if (wantsPortal) {
+        portal = ensureEmployeePortalUser({
+          name: nextName,
+          email: nextEmail,
+          phone: nextPhone,
+          defaultPassword: body.portalPassword || "Marfan2026!"
+        });
+      }
+      run(
+        `UPDATE employees
+       SET user_id = ?, name = ?, role = ?, phone = ?, email = ?, status = ?, city = ?, lat = ?, lng = ?,
            hourly_rate = ?, km_rate = ?, diet_rate = ?, skills = ?, notes = ?, dni = ?,
            social_security_number = ?, bank_account = ?, address = ?, province = ?, postal_code = ?,
            birth_date = ?, shirt_size = ?, pants_size = ?, shoe_size = ?, jacket_size = ?,
            epi_size = ?, emergency_contact = ?
        WHERE id = ?`,
-      [
-        body.name ?? existing.name,
+        [
+          portal.userId || null,
+          nextName,
+          role,
+          nextPhone || "",
+          nextEmail || "",
+          nextStatus,
+          body.city ?? existing.city,
+          Number(body.lat ?? existing.lat),
+          Number(body.lng ?? existing.lng),
+          Number(body.hourlyRate ?? existing.hourly_rate),
+          Number(body.kmRate ?? existing.km_rate),
+          Number(body.dietRate ?? existing.diet_rate),
+          JSON.stringify(skills),
+          body.notes ?? existing.notes,
+          body.dni ?? existing.dni,
+          body.socialSecurityNumber ?? existing.social_security_number,
+          body.bankAccount ?? existing.bank_account,
+          body.address ?? existing.address,
+          body.province ?? existing.province,
+          body.postalCode ?? existing.postal_code,
+          body.birthDate ?? existing.birth_date,
+          body.shirtSize ?? existing.shirt_size,
+          body.pantsSize ?? existing.pants_size,
+          body.shoeSize ?? existing.shoe_size,
+          body.jacketSize ?? existing.jacket_size,
+          body.epiSize ?? existing.epi_size,
+          body.emergencyContact ?? existing.emergency_contact,
+          employeeMatch[1]
+        ]
+      );
+      audit(user, "employee_updated", "employee", employeeMatch[1], {
         role,
-        body.phone ?? existing.phone,
-        body.email ?? existing.email,
-        body.status ?? existing.status,
-        body.city ?? existing.city,
-        Number(body.lat ?? existing.lat),
-        Number(body.lng ?? existing.lng),
-        Number(body.hourlyRate ?? existing.hourly_rate),
-        Number(body.kmRate ?? existing.km_rate),
-        Number(body.dietRate ?? existing.diet_rate),
-        JSON.stringify(skills),
-        body.notes ?? existing.notes,
-        body.dni ?? existing.dni,
-        body.socialSecurityNumber ?? existing.social_security_number,
-        body.bankAccount ?? existing.bank_account,
-        body.address ?? existing.address,
-        body.province ?? existing.province,
-        body.postalCode ?? existing.postal_code,
-        body.birthDate ?? existing.birth_date,
-        body.shirtSize ?? existing.shirt_size,
-        body.pantsSize ?? existing.pants_size,
-        body.shoeSize ?? existing.shoe_size,
-        body.jacketSize ?? existing.jacket_size,
-        body.epiSize ?? existing.epi_size,
-        body.emergencyContact ?? existing.emergency_contact,
-        employeeMatch[1]
-      ]
-    );
-    audit(user, "employee_updated", "employee", employeeMatch[1], {
-      role,
-      status: body.status ?? existing.status,
-      rateChanged: body.hourlyRate !== undefined || body.kmRate !== undefined || body.dietRate !== undefined,
-      clothingChanged: body.shirtSize !== undefined || body.pantsSize !== undefined || body.shoeSize !== undefined
+        status: nextStatus,
+        rateChanged: body.hourlyRate !== undefined || body.kmRate !== undefined || body.dietRate !== undefined,
+        clothingChanged: body.shirtSize !== undefined || body.pantsSize !== undefined || body.shoeSize !== undefined,
+        portalUserId: portal.userId,
+        portalUserCreated: portal.created,
+        portalSynced: Boolean(existing.user_id || wantsPortal)
+      });
     });
-    return sendJson(res, 200, { employee: parseEmployee(get("SELECT * FROM employees WHERE id = ?", [employeeMatch[1]])) });
+    return sendJson(res, 200, {
+      employee: parseEmployee(get("SELECT * FROM employees WHERE id = ?", [employeeMatch[1]])),
+      portalAccess: portal
+    });
   }
 
   if (pathname === "/api/assignments" && method === "POST") {
@@ -3665,6 +5876,12 @@ async function handleApi(req, res, url) {
         employeeId: body.employeeId,
         role
       });
+      createEventSnapshot(event.id, "assignment_created", user, {
+        assignmentId: id,
+        employeeId: body.employeeId,
+        role,
+        status
+      });
     });
     const googleSync = await syncEventToGoogleCalendar(event.id, user, "assignment_created", appOriginFromRequest(req));
     return sendJson(res, 201, { assignment: get("SELECT * FROM assignments WHERE id = ?", [id]), issues, googleSync });
@@ -3704,6 +5921,12 @@ async function handleApi(req, res, url) {
         role: nextRole,
         status: nextStatus
       });
+      createEventSnapshot(event.id, "assignment_updated", user, {
+        assignmentId: existing.id,
+        employeeId: existing.employee_id,
+        role: nextRole,
+        status: nextStatus
+      });
     });
     const googleSync = await syncEventToGoogleCalendar(event.id, user, "assignment_updated", appOriginFromRequest(req));
     return sendJson(res, 200, {
@@ -3740,6 +5963,10 @@ async function handleApi(req, res, url) {
         eventId: existing.event_id,
         employeeId: existing.employee_id
       });
+      createEventSnapshot(existing.event_id, "assignment_deleted", user, {
+        assignmentId: existing.id,
+        employeeId: existing.employee_id
+      });
     });
     const googleSync = await syncEventToGoogleCalendar(existing.event_id, user, "assignment_deleted", appOriginFromRequest(req));
     return sendJson(res, 200, { ok: true, event: eventDetail(existing.event_id), googleSync });
@@ -3772,16 +5999,25 @@ async function handleApi(req, res, url) {
       event.id,
       employee.id
     ]);
-    const active = event.status !== "finalizado" && event.date === formatDate();
-    const geo = isInsideRadius(Number(body.lat), Number(body.lng), event.lat, event.lng, CLOCK_RADIUS_M);
-    const accepted = Boolean(assignment && active && geo.inside);
     const type = body.type === "salida" ? "salida" : "entrada";
-    const sequenceError = accepted ? clockSequenceError(event, assignment, employee.id, type) : null;
+    const policy = clockPolicy();
+    const windowState = clockWindowState(event, type, policy);
+    const lat = Number(body.lat);
+    const lng = Number(body.lng);
+    const accuracy = Number(body.accuracy);
+    const ipAddress = requestIp(req);
+    const userAgent = requestUserAgent(req);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return sendJson(res, 400, { error: "Ubicacion GPS obligatoria" });
+    }
+    const geo = isInsideRadius(lat, lng, event.lat, event.lng, policy.radiusM);
+    const accepted = Boolean(assignment && windowState.allowed && geo.inside);
+    const sequenceError = accepted ? clockSequenceError(event, assignment, employee.id, type, policy) : null;
     if (sequenceError) {
       return sendJson(res, 409, {
         error: sequenceError,
         distance: geo.distance,
-        radius: CLOCK_RADIUS_M
+        radius: policy.radiusM
       });
     }
     const leaderClockOut = accepted && type === "salida" && isTeamLeaderForEvent(event, employee, assignment);
@@ -3796,19 +6032,22 @@ async function handleApi(req, res, url) {
     transaction(() => {
       run(
         `INSERT INTO time_entries
-          (id, event_id, employee_id, type, lat, lng, distance_m, within_radius, accepted, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, event_id, employee_id, type, lat, lng, distance_m, within_radius, accepted, notes, gps_accuracy_m, ip_address, user_agent)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           event.id,
           employee.id,
           accepted ? type : `${type}_bloqueada`,
-          Number(body.lat),
-          Number(body.lng),
+          lat,
+          lng,
           geo.distance,
           geo.inside ? 1 : 0,
           accepted ? 1 : 0,
-          accepted ? "" : "Intento de fichaje bloqueado"
+          accepted ? "" : windowState.reason || "Intento de fichaje bloqueado",
+          Number.isFinite(accuracy) ? accuracy : null,
+          ipAddress,
+          userAgent
         ]
       );
       if (leaderClockOut) {
@@ -3816,25 +6055,51 @@ async function handleApi(req, res, url) {
         audit(user, "delivery_note_signed", "event", event.id, {
           deliveryNoteId: deliveryNote.id,
           signer: body.signatureName,
-          servicePrice: Number(event.service_price || event.budget || 0)
+          servicePrice: Number(event.service_price || event.budget || 0),
+          ipAddress
+        });
+      }
+      if (accepted) {
+        createEventSnapshot(event.id, leaderClockOut ? "delivery_note_signed" : "time_entry_created", user, {
+          timeEntryId: id,
+          employeeId: employee.id,
+          type,
+          accepted,
+          distance: geo.distance,
+          accuracy: Number.isFinite(accuracy) ? accuracy : null,
+          ipAddress,
+          deliveryNoteId: deliveryNote?.id || null
         });
       }
     });
     if (!accepted) {
       const reason = !assignment
         ? "Operario no asignado"
-        : !active
-          ? "Evento no activo"
+        : !windowState.allowed
+          ? windowState.reason
           : "Fuera del radio GPS";
+      const incidentId = randomId("inc");
       run(
         `INSERT INTO incidents (id, event_id, employee_id, type, priority, title, description)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [randomId("inc"), event.id, employee.id, "fichaje", "alta", "Fichaje bloqueado", `${reason}. Distancia: ${geo.distance} m.`]
+        [incidentId, event.id, employee.id, "fichaje", "alta", "Fichaje bloqueado", `${reason}. Distancia: ${geo.distance} m.`]
       );
+      createEventSnapshot(event.id, "time_entry_blocked", user, {
+        timeEntryId: id,
+        incidentId,
+        employeeId: employee.id,
+        type,
+        reason,
+        distance: geo.distance,
+        accuracy: Number.isFinite(accuracy) ? accuracy : null,
+        ipAddress
+      });
       return sendJson(res, 409, {
         error: reason,
         distance: geo.distance,
-        radius: CLOCK_RADIUS_M,
+        radius: policy.radiusM,
+        windowOpenAt: windowState.openAt?.toISOString?.() || "",
+        windowCloseAt: windowState.closeAt?.toISOString?.() || "",
         entry: get("SELECT * FROM time_entries WHERE id = ?", [id])
       });
     }
@@ -3850,7 +6115,7 @@ async function handleApi(req, res, url) {
     return sendJson(res, 201, {
       ok: true,
       distance: geo.distance,
-      radius: CLOCK_RADIUS_M,
+      radius: policy.radiusM,
       entry: get("SELECT * FROM time_entries WHERE id = ?", [id]),
       deliveryNote: deliveryNoteResponse
     });
@@ -3877,10 +6142,12 @@ async function handleApi(req, res, url) {
     }
     return sendJson(res, 200, {
       entries: all(
-        `SELECT time_entries.*, events.name AS event_name, events.date AS event_date, employees.name AS employee_name
+        `SELECT time_entries.*, events.name AS event_name, events.date AS event_date, employees.name AS employee_name,
+                corrected_by.name AS corrected_by_name
          FROM time_entries
          JOIN events ON events.id = time_entries.event_id
          JOIN employees ON employees.id = time_entries.employee_id
+         LEFT JOIN users corrected_by ON corrected_by.id = time_entries.corrected_by_user_id
          ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
          ORDER BY time_entries.timestamp DESC
          LIMIT 200`,
@@ -3898,31 +6165,79 @@ async function handleApi(req, res, url) {
     const cleanType = ["entrada", "salida", "entrada_bloqueada", "salida_bloqueada"].includes(body.type)
       ? body.type
       : existing.type;
+    const nextTimestamp = body.timestamp || existing.timestamp;
+    const nextAccepted = body.accepted === undefined ? Number(existing.accepted || 0) : (body.accepted ? 1 : 0);
+    const nextNotes = body.notes ?? existing.notes;
+    const correctionChanged =
+      cleanType !== existing.type ||
+      nextTimestamp !== existing.timestamp ||
+      nextAccepted !== Number(existing.accepted || 0) ||
+      nextNotes !== existing.notes;
+    const correctionReason = String(body.correctionReason || body.notes || "Correccion manual oficina").trim();
     run(
       `UPDATE time_entries
-       SET type = ?, timestamp = ?, accepted = ?, notes = ?
+       SET type = ?, timestamp = ?, accepted = ?, notes = ?,
+           corrected_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE corrected_at END,
+           corrected_by_user_id = CASE WHEN ? THEN ? ELSE corrected_by_user_id END,
+           correction_reason = CASE WHEN ? THEN ? ELSE correction_reason END
        WHERE id = ?`,
       [
         cleanType,
-        body.timestamp || existing.timestamp,
-        body.accepted === undefined ? existing.accepted : (body.accepted ? 1 : 0),
-        body.notes ?? existing.notes,
+        nextTimestamp,
+        nextAccepted,
+        nextNotes,
+        correctionChanged ? 1 : 0,
+        correctionChanged ? 1 : 0,
+        user.id,
+        correctionChanged ? 1 : 0,
+        correctionReason,
         existing.id
       ]
     );
     audit(user, "time_entry_corrected", "time_entry", existing.id, {
       type: cleanType,
-      accepted: body.accepted,
-      timestamp: body.timestamp || existing.timestamp
+      accepted: Boolean(nextAccepted),
+      timestamp: nextTimestamp,
+      correctionChanged,
+      correctionReason: correctionChanged ? correctionReason : ""
+    });
+    createEventSnapshot(existing.event_id, "time_entry_corrected", user, {
+      timeEntryId: existing.id,
+      type: cleanType,
+      accepted: Boolean(nextAccepted),
+      timestamp: nextTimestamp,
+      correctionChanged,
+      correctionReason: correctionChanged ? correctionReason : ""
     });
     return sendJson(res, 200, {
       entry: get(
-        `SELECT time_entries.*, events.name AS event_name, events.date AS event_date, employees.name AS employee_name
+        `SELECT time_entries.*, events.name AS event_name, events.date AS event_date, employees.name AS employee_name,
+                corrected_by.name AS corrected_by_name
          FROM time_entries
          JOIN events ON events.id = time_entries.event_id
          JOIN employees ON employees.id = time_entries.employee_id
+         LEFT JOIN users corrected_by ON corrected_by.id = time_entries.corrected_by_user_id
          WHERE time_entries.id = ?`,
         [existing.id]
+      )
+    });
+  }
+
+  if (pathname === "/api/incidents/detect-attendance" && method === "POST") {
+    requireAdmin(user);
+    const body = await readBody(req);
+    const result = detectAttendanceIncidents({
+      date: body.date || formatDate(),
+      actor: user
+    });
+    return sendJson(res, 200, {
+      ...result,
+      incidents: all(
+        `SELECT incidents.*, events.name AS event_name, employees.name AS employee_name
+         FROM incidents
+         LEFT JOIN events ON events.id = incidents.event_id
+         LEFT JOIN employees ON employees.id = incidents.employee_id
+         ORDER BY incidents.created_at DESC`
       )
     });
   }
@@ -3947,14 +6262,26 @@ async function handleApi(req, res, url) {
     const existing = get("SELECT * FROM incidents WHERE id = ?", [incidentMatch[1]]);
     if (!existing) return sendJson(res, 404, { error: "Incidencia no encontrada" });
     const nextStatus = ["abierta", "resuelta"].includes(body.status) ? body.status : existing.status;
+    const resolutionNote = String(body.resolutionNote ?? existing.resolution_note ?? "").trim();
     run(
       `UPDATE incidents
        SET status = ?,
-           resolved_at = CASE WHEN ? = 'resuelta' THEN CURRENT_TIMESTAMP ELSE NULL END
+           resolved_at = CASE WHEN ? = 'resuelta' THEN CURRENT_TIMESTAMP ELSE NULL END,
+           resolution_note = CASE WHEN ? = 'resuelta' THEN ? ELSE NULL END
        WHERE id = ?`,
-      [nextStatus, nextStatus, existing.id]
+      [nextStatus, nextStatus, nextStatus, resolutionNote, existing.id]
     );
-    audit(user, "incident_updated", "incident", existing.id, { status: nextStatus });
+    audit(user, "incident_updated", "incident", existing.id, {
+      status: nextStatus,
+      resolutionNote: nextStatus === "resuelta" ? resolutionNote : ""
+    });
+    if (existing.event_id) {
+      createEventSnapshot(existing.event_id, "incident_updated", user, {
+        incidentId: existing.id,
+        status: nextStatus,
+        resolutionNote: nextStatus === "resuelta" ? resolutionNote : ""
+      });
+    }
     return sendJson(res, 200, {
       incident: get(
         `SELECT incidents.*, events.name AS event_name, employees.name AS employee_name
@@ -4030,7 +6357,15 @@ async function handleApi(req, res, url) {
 
   if (pathname === "/api/documents" && method === "GET") {
     requireAdmin(user);
-    return sendJson(res, 200, { documents: listDocuments() });
+    const documents = listDocuments();
+    return sendJson(res, 200, { documents, compliance: documentComplianceSummary(documents) });
+  }
+
+  if (pathname === "/api/documents/sync-statuses" && method === "POST") {
+    requireAdmin(user);
+    const result = syncStoredDocumentStatuses(user);
+    const documents = listDocuments();
+    return sendJson(res, 200, { ...result, documents, compliance: documentComplianceSummary(documents) });
   }
 
   if (pathname === "/api/documents" && method === "POST") {
@@ -4069,6 +6404,35 @@ async function handleApi(req, res, url) {
     });
   }
 
+  const documentMatch = pathname.match(/^\/api\/documents\/([^/]+)$/);
+  if (documentMatch && method === "PATCH") {
+    requireAdmin(user);
+    const body = await readBody(req);
+    const existing = get("SELECT * FROM documents WHERE id = ?", [documentMatch[1]]);
+    if (!existing) return sendJson(res, 404, { error: "Documento no encontrado" });
+    const nextStatus = ["vigente", "proximo", "caducado", "pendiente"].includes(body.status)
+      ? body.status
+      : existing.status;
+    const nextType = String(body.type ?? existing.type).trim() || existing.type;
+    const nextName = String(body.name ?? existing.name).trim() || existing.name;
+    const nextExpiresAt = body.expiresAt === undefined ? existing.expires_at : (body.expiresAt || null);
+    run(
+      `UPDATE documents
+       SET type = ?, name = ?, status = ?, expires_at = ?
+       WHERE id = ?`,
+      [nextType, nextName, nextStatus, nextExpiresAt, existing.id]
+    );
+    audit(user, "document_updated", "document", existing.id, {
+      previousStatus: existing.status,
+      status: nextStatus,
+      type: nextType,
+      expiresAt: nextExpiresAt
+    });
+    return sendJson(res, 200, {
+      document: listDocuments({ employeeId: existing.employee_id }).find((document) => document.id === existing.id)
+    });
+  }
+
   const documentFileMatch = pathname.match(/^\/api\/documents\/([^/]+)\/file$/);
   if (documentFileMatch && method === "GET") {
     requireUser(user);
@@ -4077,6 +6441,12 @@ async function handleApi(req, res, url) {
     if (!canAccessDocument(user, document)) return sendJson(res, 403, { error: "Permiso insuficiente" });
     const filePath = documentFilePath(document);
     if (!filePath) return sendJson(res, 404, { error: "Archivo no disponible" });
+    audit(user, "document_file_opened", "document", document.id, {
+      employeeId: document.employee_id,
+      fileName: document.file_name || document.name,
+      fileMime: document.file_mime || "application/octet-stream",
+      fileSize: document.file_size || fs.statSync(filePath).size
+    });
     return send(res, 200, fs.readFileSync(filePath), {
       "content-type": document.file_mime || "application/octet-stream",
       "content-disposition": `inline; filename="${safeFileName(document.file_name || document.name)}"`,
@@ -4099,6 +6469,14 @@ async function handleApi(req, res, url) {
       type: body.type || "otro",
       priority: body.priority || "media"
     });
+    if (body.eventId) {
+      createEventSnapshot(body.eventId, "incident_created", user, {
+        incidentId: id,
+        employeeId: body.employeeId || null,
+        type: body.type || "otro",
+        priority: body.priority || "media"
+      });
+    }
     return sendJson(res, 201, { incident: get("SELECT * FROM incidents WHERE id = ?", [id]) });
   }
 
@@ -4107,6 +6485,7 @@ async function handleApi(req, res, url) {
     const employee = get("SELECT * FROM employees WHERE user_id = ?", [user.id]);
     if (!employee) return sendJson(res, 404, { error: "Empleado no encontrado" });
     const today = formatDate();
+    const policy = clockPolicy();
     const serviceSql = `
       SELECT events.id, events.name, events.date, events.start_time, events.end_time, events.location,
              events.address, events.lat, events.lng, events.status, events.notes,
@@ -4125,30 +6504,37 @@ async function handleApi(req, res, url) {
        LEFT JOIN delivery_notes ON delivery_notes.event_id = events.id
        WHERE assignments.employee_id = ? AND assignments.status != 'bloqueado'
     `;
-    const upcomingServices = all(
+    const upcomingServicesRaw = all(
       `${serviceSql} AND events.date >= ?
        ORDER BY events.date ASC, events.start_time ASC
        LIMIT 12`,
       [employee.id, today]
-    ).map((service) => employeeServiceClockData(service, employee.id));
-    const nextAssignment = upcomingServices[0] || null;
-    const pastServices = all(
+    ).map((service) => employeeServiceClockData(service, employee.id, policy));
+    const nextAssignmentRaw = upcomingServicesRaw[0] || null;
+    const pastServicesRaw = all(
       `${serviceSql} AND (events.date < ? OR events.status = 'finalizado')
        ORDER BY events.date DESC, events.start_time DESC
        LIMIT 12`,
       [employee.id, today]
-    ).map((service) => employeeServiceClockData(service, employee.id));
-    const coworkers = nextAssignment
+    ).map((service) => employeeServiceClockData(service, employee.id, policy));
+    const coworkers = nextAssignmentRaw
       ? all(
           `SELECT employees.id, employees.name, employees.role
            FROM assignments
            JOIN employees ON employees.id = assignments.employee_id
            WHERE assignments.event_id = ? AND employees.id != ? AND assignments.status != 'bloqueado'
            ORDER BY employees.name`,
-          [nextAssignment.id, employee.id]
+          [nextAssignmentRaw.id, employee.id]
         )
       : [];
     const documents = listDocuments({ employeeId: employee.id });
+    const addChecklist = (service) => ({
+      ...service,
+      checklist: employeeServiceChecklist(service, documents)
+    });
+    const upcomingServices = upcomingServicesRaw.map(addChecklist);
+    const pastServices = pastServicesRaw.map(addChecklist);
+    const nextAssignment = upcomingServices[0] || null;
     const timeStats = get(
       `SELECT COUNT(DISTINCT event_id) AS events_done, COUNT(*) AS entries
        FROM time_entries
@@ -4162,7 +6548,17 @@ async function handleApi(req, res, url) {
        WHERE employee_id = ?`,
       [employee.id]
     );
-    const incidents = get("SELECT COUNT(*) AS count FROM incidents WHERE employee_id = ?", [employee.id]).count;
+    const incidentRows = all(
+      `SELECT incidents.id, incidents.event_id, incidents.type, incidents.priority, incidents.status,
+              incidents.title, incidents.description, incidents.created_at, incidents.resolved_at,
+              events.name AS event_name, events.date AS event_date
+       FROM incidents
+       LEFT JOIN events ON events.id = incidents.event_id
+       WHERE incidents.employee_id = ?
+       ORDER BY incidents.created_at DESC
+       LIMIT 12`,
+      [employee.id]
+    );
     const plannedHours = pastServices.reduce(
       (sum, service) => sum + hoursBetween(service.start_time, service.end_time),
       0
@@ -4174,6 +6570,7 @@ async function handleApi(req, res, url) {
        LIMIT 8`,
       [employee.id]
     );
+    const settings = settingMap();
     return sendJson(res, 200, {
       employee: employeePortalProfile(employee),
       nextService: nextAssignment,
@@ -4182,15 +6579,21 @@ async function handleApi(req, res, url) {
       coworkers,
       documents,
       availability: availabilityRows,
+      incidents: incidentRows,
       history: {
         events_done: timeStats.events_done,
         entries: timeStats.entries,
         hours: Math.round(plannedHours * 10) / 10,
         km: Math.round(Number(allowances.km || 0) * 10) / 10,
         night_hours: Number(allowances.night_hours || 0),
-        incidents
+        incidents: incidentRows.length
       },
-      radius: CLOCK_RADIUS_M
+      radius: policy.radiusM,
+      clockPolicy: policy,
+      office: {
+        phone: settings.office_phone || "+34910000000",
+        whatsapp: settings.office_whatsapp || settings.office_phone || "34910000000"
+      }
     });
   }
 
@@ -4199,15 +6602,18 @@ async function handleApi(req, res, url) {
     const employee = get("SELECT * FROM employees WHERE user_id = ?", [user.id]);
     if (!employee) return sendJson(res, 404, { error: "Empleado no encontrado" });
     const body = await readBody(req);
-    const password = body.password ? hashPassword(body.password) : null;
+    const email = body.email === undefined ? cleanContactEmail(employee.email) : cleanContactEmail(body.email);
+    const phone = body.phone === undefined ? cleanContactPhone(employee.phone) : cleanContactPhone(body.phone);
+    validateEmployeeProfileContact({ employeeId: employee.id, userId: user.id, email, phone });
+    const password = body.password ? hashPassword(validateNewPassword(body.password)) : null;
     transaction(() => {
       run(
         `UPDATE employees
          SET phone = ?, email = ?, photo_url = ?
          WHERE id = ?`,
         [
-          body.phone ?? employee.phone,
-          body.email ?? employee.email,
+          phone,
+          email,
           body.photoUrl ?? employee.photo_url,
           employee.id
         ]
@@ -4219,16 +6625,16 @@ async function handleApi(req, res, url) {
              salt = COALESCE(?, salt)
          WHERE id = ?`,
         [
-          body.phone ?? user.phone,
-          body.email ?? user.email,
+          phone,
+          email,
           password?.hash || null,
           password?.salt || null,
           user.id
         ]
       );
       audit(user, "employee_profile_updated", "employee", employee.id, {
-        emailChanged: body.email !== undefined,
-        phoneChanged: body.phone !== undefined,
+        emailChanged: email !== cleanContactEmail(employee.email),
+        phoneChanged: phone !== cleanContactPhone(employee.phone),
         passwordChanged: Boolean(password)
       });
     });
@@ -4300,14 +6706,191 @@ async function handleApi(req, res, url) {
     return sendJson(res, 201, { availability: get("SELECT * FROM availability WHERE id = ?", [id]) });
   }
 
+  if (pathname === "/api/employee/documents" && method === "POST") {
+    requireUser(user);
+    const employee = get("SELECT * FROM employees WHERE user_id = ?", [user.id]);
+    if (!employee) return sendJson(res, 404, { error: "Empleado no encontrado" });
+    const body = await readBody(req);
+    if (!body.fileDataBase64) return sendJson(res, 400, { error: "Archivo obligatorio" });
+    const id = randomId("doc");
+    const file = saveDocumentFile(id, body);
+    const type = String(body.type || "Documento").trim() || "Documento";
+    const name = String(body.name || file.fileName || type).trim() || type;
+    run(
+      `INSERT INTO documents
+        (id, employee_id, type, name, status, expires_at, url, file_name, file_mime, file_size, storage_path, uploaded_at, uploaded_by_user_id)
+       VALUES (?, ?, ?, ?, 'pendiente', ?, NULL, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`,
+      [
+        id,
+        employee.id,
+        type,
+        name,
+        body.expiresAt || null,
+        file.fileName,
+        file.fileMime,
+        file.fileSize,
+        file.storagePath,
+        user.id
+      ]
+    );
+    audit(user, "employee_document_uploaded", "document", id, {
+      employeeId: employee.id,
+      type,
+      fileName: file.fileName,
+      fileSize: file.fileSize
+    });
+    return sendJson(res, 201, {
+      document: listDocuments({ employeeId: employee.id }).find((document) => document.id === id)
+    });
+  }
+
+  if (pathname === "/api/employee/incidents" && method === "POST") {
+    requireUser(user);
+    const employee = get("SELECT * FROM employees WHERE user_id = ?", [user.id]);
+    if (!employee) return sendJson(res, 404, { error: "Empleado no encontrado" });
+    const body = await readBody(req);
+    const eventId = String(body.eventId || "").trim();
+    const assignment = get(
+      `SELECT assignments.*, events.name AS event_name, events.date AS event_date
+       FROM assignments
+       JOIN events ON events.id = assignments.event_id
+       WHERE assignments.event_id = ? AND assignments.employee_id = ? AND assignments.status != 'bloqueado'`,
+      [eventId, employee.id]
+    );
+    if (!assignment) return sendJson(res, 404, { error: "Servicio no encontrado" });
+    const type = cleanIncidentType(body.type);
+    const description = String(body.description || "").trim();
+    if (!description) return sendJson(res, 400, { error: "Descripcion obligatoria" });
+    const id = randomId("inc");
+    const title = String(body.title || "").trim() || `Aviso operario: ${type}`;
+    const priority = employeeIncidentPriority(type);
+    transaction(() => {
+      run(
+        `INSERT INTO incidents (id, event_id, employee_id, type, priority, title, description)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [id, eventId, employee.id, type, priority, title, description]
+      );
+      audit(user, "employee_incident_created", "incident", id, {
+        eventId,
+        employeeId: employee.id,
+        type,
+        priority
+      });
+      createEventSnapshot(eventId, "employee_incident_created", user, {
+        incidentId: id,
+        employeeId: employee.id,
+        type,
+        priority
+      });
+    });
+    return sendJson(res, 201, {
+      incident: get("SELECT * FROM incidents WHERE id = ?", [id])
+    });
+  }
+
+  if (pathname === "/api/allowances" && method === "GET") {
+    requireAdmin(user);
+    return sendJson(res, 200, {
+      allowances: listAllowances({
+        eventId: url.searchParams.get("eventId") || "",
+        employeeId: url.searchParams.get("employeeId") || ""
+      })
+    });
+  }
+
+  if (pathname === "/api/allowances" && method === "POST") {
+    requireAdmin(user);
+    const body = await readBody(req);
+    const eventId = body.eventId || body.event_id;
+    const employeeId = body.employeeId || body.employee_id;
+    if (!eventId || !employeeId) return sendJson(res, 400, { error: "Evento y operario son obligatorios" });
+    const event = ensureAllowanceEventEditable(eventId);
+    const assignment = assignedAllowanceEmployee(event.id, employeeId);
+    if (!assignment) return sendJson(res, 409, { error: "El operario no esta asignado a este evento" });
+    const existing = get("SELECT * FROM allowances WHERE event_id = ? AND employee_id = ?", [event.id, employeeId]);
+    const values = allowanceValuesFromBody(body, existing || {});
+    let allowanceId = existing?.id || randomId("all");
+    transaction(() => {
+      if (existing) {
+        run(
+          `UPDATE allowances
+           SET km = ?, diet = ?, night_hours = ?, extras = ?
+           WHERE id = ?`,
+          [values.km, values.diet, values.nightHours, values.extras, existing.id]
+        );
+      } else {
+        run(
+          `INSERT INTO allowances (id, event_id, employee_id, km, diet, night_hours, extras)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [allowanceId, event.id, employeeId, values.km, values.diet, values.nightHours, values.extras]
+        );
+      }
+      audit(user, existing ? "allowance_updated" : "allowance_created", "allowance", allowanceId, {
+        eventId: event.id,
+        employeeId,
+        ...values
+      });
+      createEventSnapshot(event.id, existing ? "allowance_updated" : "allowance_created", user, {
+        employeeId,
+        employeeName: assignment.employee_name,
+        ...values
+      });
+    });
+    return sendJson(res, existing ? 200 : 201, { allowance: allowanceById(allowanceId) });
+  }
+
+  const allowanceMatch = pathname.match(/^\/api\/allowances\/([^/]+)$/);
+  if (allowanceMatch && method === "PATCH") {
+    requireAdmin(user);
+    const body = await readBody(req);
+    const existing = get("SELECT * FROM allowances WHERE id = ?", [allowanceMatch[1]]);
+    if (!existing) return sendJson(res, 404, { error: "Plus no encontrado" });
+    const event = ensureAllowanceEventEditable(existing.event_id);
+    const values = allowanceValuesFromBody(body, existing);
+    run(
+      `UPDATE allowances
+       SET km = ?, diet = ?, night_hours = ?, extras = ?
+       WHERE id = ?`,
+      [values.km, values.diet, values.nightHours, values.extras, existing.id]
+    );
+    audit(user, "allowance_updated", "allowance", existing.id, {
+      eventId: event.id,
+      employeeId: existing.employee_id,
+      ...values
+    });
+    createEventSnapshot(event.id, "allowance_updated", user, {
+      employeeId: existing.employee_id,
+      ...values
+    });
+    return sendJson(res, 200, { allowance: allowanceById(existing.id) });
+  }
+
+  if (allowanceMatch && method === "DELETE") {
+    requireAdmin(user);
+    const existing = get("SELECT * FROM allowances WHERE id = ?", [allowanceMatch[1]]);
+    if (!existing) return sendJson(res, 404, { error: "Plus no encontrado" });
+    const event = ensureAllowanceEventEditable(existing.event_id);
+    run("DELETE FROM allowances WHERE id = ?", [existing.id]);
+    audit(user, "allowance_deleted", "allowance", existing.id, {
+      eventId: event.id,
+      employeeId: existing.employee_id
+    });
+    createEventSnapshot(event.id, "allowance_deleted", user, {
+      employeeId: existing.employee_id
+    });
+    return sendJson(res, 200, { ok: true });
+  }
+
   if (pathname === "/api/finance/summary" && method === "GET") {
     requireAdmin(user);
-    return sendJson(res, 200, { finance: financeSummary() });
+    const filters = reportFiltersFromUrl(url);
+    return sendJson(res, 200, { finance: financeSummary(filters) });
   }
 
   if (pathname === "/api/reports/events" && method === "GET") {
     requireAdmin(user);
-    const rows = listEvents().map((event) => ({
+    const filters = reportFiltersFromUrl(url);
+    const rows = listEvents(filters).map((event) => ({
       id: event.id,
       evento: event.name,
       cliente: event.client_name,
@@ -4346,12 +6929,13 @@ async function handleApi(req, res, url) {
         "content-disposition": "attachment; filename=eventos.pdf"
       });
     }
-    return sendJson(res, 200, { rows });
+    return sendJson(res, 200, { rows, filters });
   }
 
   if (pathname === "/api/reports/finance" && method === "GET") {
     requireAdmin(user);
-    const rows = financeReportRows();
+    const filters = reportFiltersFromUrl(url);
+    const rows = financeReportRows(filters);
     const format = url.searchParams.get("format");
     if (format === "csv") {
       return send(res, 200, createCsv(rows), {
@@ -4371,7 +6955,59 @@ async function handleApi(req, res, url) {
         "content-disposition": "attachment; filename=finanzas.pdf"
       });
     }
-    return sendJson(res, 200, { rows });
+    return sendJson(res, 200, { rows, filters });
+  }
+
+  if (pathname === "/api/reports/employees" && method === "GET") {
+    requireAdmin(user);
+    const filters = reportFiltersFromUrl(url);
+    const rows = employeeReportRows(filters);
+    const format = url.searchParams.get("format");
+    if (format === "csv") {
+      return send(res, 200, createCsv(rows), {
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": "attachment; filename=operarios.csv"
+      });
+    }
+    if (format === "xls" || format === "excel") {
+      return send(res, 200, createExcelXml(rows, "Operarios"), {
+        "content-type": "application/vnd.ms-excel; charset=utf-8",
+        "content-disposition": "attachment; filename=operarios.xls"
+      });
+    }
+    if (format === "pdf") {
+      return send(res, 200, createPdfReport("Operarios y documentacion", rows), {
+        "content-type": "application/pdf",
+        "content-disposition": "attachment; filename=operarios.pdf"
+      });
+    }
+    return sendJson(res, 200, { rows, filters });
+  }
+
+  if (pathname === "/api/reports/incidents" && method === "GET") {
+    requireAdmin(user);
+    const filters = reportFiltersFromUrl(url);
+    const rows = incidentReportRows(filters);
+    const format = url.searchParams.get("format");
+    if (format === "csv") {
+      return send(res, 200, createCsv(rows), {
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": "attachment; filename=incidencias.csv"
+      });
+    }
+    if (format === "xls" || format === "excel") {
+      return send(res, 200, createExcelXml(rows, "Incidencias"), {
+        "content-type": "application/vnd.ms-excel; charset=utf-8",
+        "content-disposition": "attachment; filename=incidencias.xls"
+      });
+    }
+    if (format === "pdf") {
+      return send(res, 200, createPdfReport("Incidencias Pro", rows), {
+        "content-type": "application/pdf",
+        "content-disposition": "attachment; filename=incidencias.pdf"
+      });
+    }
+    return sendJson(res, 200, { rows, filters });
   }
 
   const clientDossierMatch = pathname.match(/^\/api\/events\/([^/]+)\/client-dossier$/);
@@ -4393,10 +7029,11 @@ async function handleApi(req, res, url) {
         cliente: dossier.client.name || event.client_name,
         fecha: event.date,
         operario: row.assignment.name,
-        rol: row.assignment.role,
-        estado_documental: row.status,
-        documentos: row.documents.map((document) => `${document.type}: ${documentStatusLabel(document.status)}${document.expires_at ? ` (${document.expires_at})` : ""}`).join(" | ")
-      }));
+	        rol: row.assignment.role,
+	        estado_documental: row.status,
+	        documentos: row.documents.map((document) => `${document.type}: ${documentStatusLabel(document.status)}${document.expires_at ? ` (${document.expires_at})` : ""}`).join(" | "),
+	        archivos: row.documents.filter((document) => document.has_file).map((document) => document.file_name || document.name).join(" | ")
+	      }));
       return send(res, 200, createCsv(rows), {
         "content-type": "text/csv; charset=utf-8",
         "content-disposition": `attachment; filename=dossier-${safeFileName(event.name)}.csv`
@@ -4427,8 +7064,7 @@ async function handleApi(req, res, url) {
 
   if (pathname === "/api/backups" && method === "GET") {
     requireAdmin(user);
-    const backups = all("SELECT * FROM backups ORDER BY created_at DESC").map(backupStatus);
-    return sendJson(res, 200, { backups });
+    return sendJson(res, 200, backupOverview());
   }
 
   const backupVerifyMatch = pathname.match(/^\/api\/backups\/([^/]+)\/verify$/);
@@ -4476,6 +7112,18 @@ async function handleApi(req, res, url) {
     return sendJson(res, 201, { backup: backupStatus(row) });
   }
 
+  if (pathname === "/api/backups/auto-run" && method === "POST") {
+    requireAdmin(user);
+    const result = runAutomaticBackup("manual");
+    if (result.skipped) return sendJson(res, 409, { error: `Backup automatico ${result.reason}` });
+    const row = get("SELECT * FROM backups WHERE id = ?", [result.backup.id]);
+    return sendJson(res, 201, {
+      backup: backupStatus(row),
+      pruned: result.pruned,
+      automation: backupOverview().automation
+    });
+  }
+
   if (pathname === "/api/backups/restore" && method === "POST") {
     requireSuperAdmin(user);
     const body = await readBody(req);
@@ -4510,7 +7158,7 @@ function serveStatic(req, res, url) {
     ".svg": "image/svg+xml",
     ".png": "image/png"
   }[ext] || "application/octet-stream";
-  res.writeHead(200, { "content-type": type });
+  res.writeHead(200, secureHeaders({ "content-type": type }));
   fs.createReadStream(finalPath).pipe(res);
 }
 
@@ -4524,14 +7172,22 @@ const server = http.createServer(async (req, res) => {
     }
   } catch (error) {
     const status = error.status || 500;
-    sendJson(res, status, {
+    const headers = error.retryAfterSeconds
+      ? { ...JSON_HEADERS, "retry-after": String(error.retryAfterSeconds) }
+      : JSON_HEADERS;
+    send(res, status, {
       error: status === 500 ? "Error interno" : error.message,
       detail: process.env.NODE_ENV === "production" ? undefined : error.message
-    });
+    }, headers);
     if (status === 500) console.error(error);
   }
 });
 
 server.listen(PORT, () => {
   console.log(`MARFAN CREW ERP escuchando en http://localhost:${PORT}`);
+  backupAutomationState.nextRunAt = nextAutoBackupAt();
+  const firstCheck = setTimeout(runAutomaticBackupIfDue, 10_000);
+  firstCheck.unref?.();
+  const interval = setInterval(runAutomaticBackupIfDue, 15 * 60 * 1000);
+  interval.unref?.();
 });

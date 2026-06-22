@@ -7,6 +7,14 @@ const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), "
 const BACKUP_DIR = path.resolve(process.env.BACKUP_DIR || path.join(process.cwd(), "backups"));
 const DB_PATH = path.resolve(process.env.SQLITE_PATH || path.join(DATA_DIR, "marfan.sqlite"));
 const AUTO_BACKUP_ON_START = process.env.AUTO_BACKUP_ON_START !== "false";
+const SEED_DEMO_DATA = process.env.MARFAN_SEED_DEMO_DATA === undefined
+  ? process.env.NODE_ENV !== "production"
+  : !["false", "0", "no"].includes(String(process.env.MARFAN_SEED_DEMO_DATA).toLowerCase());
+const PRODUCTION_SUPERADMIN_ID = process.env.MARFAN_SUPERADMIN_ID || "usr_german";
+const PRODUCTION_SUPERADMIN_NAME = process.env.MARFAN_SUPERADMIN_NAME || "German";
+const PRODUCTION_SUPERADMIN_EMAIL = process.env.MARFAN_SUPERADMIN_EMAIL || "info@marquee.es";
+const PRODUCTION_SUPERADMIN_PHONE = process.env.MARFAN_SUPERADMIN_PHONE || null;
+const PRODUCTION_SUPERADMIN_PASSWORD = process.env.MARFAN_SUPERADMIN_PASSWORD || "Marquee2026!";
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
@@ -428,6 +436,62 @@ const migrations = [
         ON events(google_calendar_event_id)
         WHERE google_calendar_event_id IS NOT NULL;
     `
+  },
+  {
+    version: 7,
+    name: "event-history-snapshots",
+    sql: `
+      CREATE TABLE IF NOT EXISTS event_snapshots (
+        id TEXT PRIMARY KEY,
+        event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        action TEXT NOT NULL,
+        actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        payload TEXT NOT NULL,
+        metadata TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_event_snapshots_event_created
+        ON event_snapshots(event_id, created_at DESC);
+    `
+  },
+  {
+    version: 8,
+    name: "time-entry-gps-accuracy",
+    sql: `
+      ALTER TABLE time_entries ADD COLUMN gps_accuracy_m REAL;
+    `
+  },
+  {
+    version: 9,
+    name: "time-entry-device-evidence",
+    sql: `
+      ALTER TABLE time_entries ADD COLUMN ip_address TEXT;
+      ALTER TABLE time_entries ADD COLUMN user_agent TEXT;
+    `
+  },
+  {
+    version: 10,
+    name: "admin-module-permissions",
+    sql: `
+      ALTER TABLE users ADD COLUMN permissions_json TEXT;
+    `
+  },
+  {
+    version: 11,
+    name: "incident-resolution-note",
+    sql: `
+      ALTER TABLE incidents ADD COLUMN resolution_note TEXT;
+    `
+  },
+  {
+    version: 12,
+    name: "time-entry-correction-trace",
+    sql: `
+      ALTER TABLE time_entries ADD COLUMN corrected_at TEXT;
+      ALTER TABLE time_entries ADD COLUMN corrected_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL;
+      ALTER TABLE time_entries ADD COLUMN correction_reason TEXT;
+    `
   }
 ];
 
@@ -462,8 +526,25 @@ function addUser({ id, role, name, email, phone, password }) {
   );
 }
 
+function seedProductionInstall() {
+  transaction(() => {
+    addUser({
+      id: PRODUCTION_SUPERADMIN_ID,
+      role: "super_admin",
+      name: PRODUCTION_SUPERADMIN_NAME,
+      email: PRODUCTION_SUPERADMIN_EMAIL,
+      phone: PRODUCTION_SUPERADMIN_PHONE,
+      password: PRODUCTION_SUPERADMIN_PASSWORD
+    });
+  });
+}
+
 function seedIfNewInstall() {
   if (!wasNewDatabase) return;
+  if (!SEED_DEMO_DATA) {
+    seedProductionInstall();
+    return;
+  }
 
   const today = new Date();
   const iso = (offsetDays = 0) => {
@@ -685,6 +766,43 @@ function escapeSqlLiteral(value) {
   return String(value).replaceAll("'", "''");
 }
 
+function verifySqliteBackupFile(filePath, expectedSize = 0) {
+  const result = {
+    ok: false,
+    exists: false,
+    sizeMatches: false,
+    quickCheck: "",
+    error: ""
+  };
+  try {
+    if (!fs.existsSync(filePath)) {
+      result.error = "Archivo no disponible";
+      return result;
+    }
+    const stats = fs.statSync(filePath);
+    if (!stats.isFile()) {
+      result.error = "La ruta no es un archivo";
+      return result;
+    }
+    result.exists = true;
+    result.sizeMatches = !expectedSize || Number(expectedSize) === stats.size;
+    const checkDb = new DatabaseSync(filePath, { readOnly: true });
+    try {
+      const row = checkDb.prepare("PRAGMA quick_check").get();
+      result.quickCheck = String(Object.values(row || {})[0] || "");
+    } finally {
+      checkDb.close();
+    }
+    result.ok = result.sizeMatches && result.quickCheck.toLowerCase() === "ok";
+    if (!result.sizeMatches) result.error = "Tamano del archivo no coincide";
+    else if (!result.ok) result.error = `SQLite quick_check: ${result.quickCheck || "sin resultado"}`;
+    return result;
+  } catch (error) {
+    result.error = error.message;
+    return result;
+  }
+}
+
 function createBackup(type = "manual", label = "Backup manual") {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const fileName = `${type}-${timestamp}.sqlite`;
@@ -730,6 +848,12 @@ function requestRestore(backupId) {
     error.status = 409;
     throw error;
   }
+  const integrity = verifySqliteBackupFile(resolved, backup.size_bytes);
+  if (!integrity.ok) {
+    const error = new Error(`Backup no restaurable: ${integrity.error || "integridad no verificada"}`);
+    error.status = 409;
+    throw error;
+  }
   createBackup("safety", "Backup de seguridad previo a restauracion");
   fs.writeFileSync(
     path.join(DATA_DIR, "restore-request.json"),
@@ -753,5 +877,6 @@ module.exports = {
   get,
   requestRestore,
   run,
-  transaction
+  transaction,
+  verifySqliteBackupFile
 };

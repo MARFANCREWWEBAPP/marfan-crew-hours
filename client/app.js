@@ -11,6 +11,7 @@ const state = {
   employeeServiceMode: "week",
   employeeServiceDate: todayIso(),
   selectedEventId: null,
+  selectedEventSnapshotId: null,
   assignmentEventId: null,
   assignmentCandidateId: null,
   editEventId: null,
@@ -22,29 +23,53 @@ const state = {
   calendarDate: todayIso(),
   draggedEventId: null,
   recommendations: null,
+  reportFilters: { from: "", to: "", clientId: "", employeeId: "", status: "", search: "" },
   searchQuery: "",
+  eventSnapshots: {},
+  publicConfigLoaded: false,
+  publicConfig: { demoMode: false, demoAccounts: null },
   data: {},
   employeeHome: null
 };
 
 const navItems = [
-  ["dashboard", "Dashboard", "grid"],
-  ["users", "Administradores", "users"],
-  ["audit", "Auditoria", "shield", "super_admin"],
-  ["live", "Centro Live", "pulse"],
-  ["calendar", "Calendario", "calendar"],
-  ["events", "Eventos", "briefcase"],
-  ["clients", "Clientes", "users"],
-  ["employees", "Operarios", "hardhat"],
-  ["availability", "Disponibilidad", "calendar"],
-  ["assignments", "Asignaciones", "route"],
-  ["clocking", "Fichajes", "clock"],
-  ["incidents", "Incidencias", "alert"],
-  ["documents", "Documentacion", "file"],
-  ["finances", "Finanzas", "euro"],
-  ["reports", "Informes", "chart"],
-  ["settings", "Configuracion", "settings"],
-  ["backups", "Backups", "backup"]
+  ["dashboard", "Dashboard", "grid", null, "dashboard"],
+  ["users", "Administradores", "users", null, "users"],
+  ["audit", "Auditoria", "shield", "super_admin", "audit"],
+  ["live", "Centro Live", "pulse", null, "live"],
+  ["calendar", "Calendario", "calendar", null, "calendar"],
+  ["events", "Eventos", "briefcase", null, "events"],
+  ["clients", "Clientes", "users", null, "clients"],
+  ["employees", "Operarios", "hardhat", null, "employees"],
+  ["availability", "Disponibilidad", "calendar", null, "availability"],
+  ["assignments", "Asignaciones", "route", null, "assignments"],
+  ["clocking", "Fichajes", "clock", null, "clocking"],
+  ["incidents", "Incidencias", "alert", null, "incidents"],
+  ["documents", "Documentacion", "file", null, "documents"],
+  ["finances", "Finanzas", "euro", null, "finances"],
+  ["reports", "Informes", "chart", null, "reports"],
+  ["settings", "Configuracion", "settings", null, "settings"],
+  ["backups", "Backups", "backup", null, "backups"]
+];
+
+const adminPermissionDefs = [
+  ["dashboard", "Dashboard"],
+  ["users", "Administradores"],
+  ["live", "Centro Live"],
+  ["calendar", "Calendario"],
+  ["events", "Eventos"],
+  ["clients", "Clientes"],
+  ["employees", "Operarios"],
+  ["availability", "Disponibilidad"],
+  ["assignments", "Asignaciones"],
+  ["clocking", "Fichajes"],
+  ["incidents", "Incidencias"],
+  ["documents", "Documentacion"],
+  ["finances", "Finanzas"],
+  ["reports", "Informes"],
+  ["settings", "Configuracion"],
+  ["backups", "Backups"],
+  ["imports", "Importaciones"]
 ];
 
 const statusMeta = {
@@ -82,6 +107,8 @@ const iconPaths = {
   logout: "M10 17l5-5-5-5M15 12H3M21 3v18h-7",
   plus: "M12 5v14M5 12h14",
   refresh: "M20 12a8 8 0 1 1-2.34-5.66M20 4v6h-6",
+  save: "M5 3h12l2 2v16H5zM8 3v6h8V3M8 21v-7h8v7",
+  trash: "M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14M9 7V4h6v3",
   check: "M20 6 9 17l-5-5",
   map: "M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3zM9 3v15M15 6v15",
   phone: "M22 16.92v3a2 2 0 0 1-2.18 2A19.8 19.8 0 0 1 3.11 5.18 2 2 0 0 1 5.1 3h3a2 2 0 0 1 2 1.72c.12.86.31 1.7.57 2.5a2 2 0 0 1-.45 2.11L9 10.5a16 16 0 0 0 4.5 4.5l1.17-1.22a2 2 0 0 1 2.11-.45c.8.26 1.64.45 2.5.57A2 2 0 0 1 22 16.92z",
@@ -108,6 +135,22 @@ function money(value) {
   return new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(Number(value || 0));
 }
 
+function meters(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return `${Math.round(number)} m`;
+}
+
+function shortDevice(value) {
+  const text = String(value || "");
+  if (!text) return "-";
+  if (/iPhone|iPad|iOS/i.test(text)) return "iOS";
+  if (/Android/i.test(text)) return "Android";
+  if (/Windows/i.test(text)) return "Windows";
+  if (/Macintosh|Mac OS/i.test(text)) return "Mac";
+  return text.length > 52 ? `${text.slice(0, 49)}...` : text;
+}
+
 function formatBytes(value) {
   let size = Number(value || 0);
   const units = ["B", "KB", "MB", "GB"];
@@ -121,6 +164,18 @@ function formatBytes(value) {
 
 function shortDate(value) {
   return new Intl.DateTimeFormat("es-ES", { weekday: "short", day: "numeric", month: "short" }).format(new Date(`${value}T12:00:00`));
+}
+
+function shortDateTime(value) {
+  if (!value) return "-";
+  const date = new Date(String(value).replace(" ", "T"));
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("es-ES", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
 }
 
 function toDateTimeLocal(value) {
@@ -152,6 +207,8 @@ function backupIntegrityTag(backup) {
   if (!backup.path_valid) return `<span class="tag red">Ruta invalida</span>`;
   if (!backup.exists) return `<span class="tag red">No disponible</span>`;
   if (backup.integrity === "size_mismatch") return `<span class="tag amber">Revisar tamano</span>`;
+  if (backup.integrity === "sqlite_corrupt") return `<span class="tag red">SQLite corrupto</span>`;
+  if (backup.integrity === "sqlite_error") return `<span class="tag red">No abre</span>`;
   return `<span class="tag blue">Pendiente</span>`;
 }
 
@@ -165,8 +222,29 @@ function roleTag(role) {
   return `<span class="tag ${tone}">${label}</span>`;
 }
 
+function userCan(permission) {
+  if (!permission || permission === "audit") return state.user?.role === "super_admin" || permission !== "audit";
+  if (state.user?.role === "super_admin") return true;
+  if (state.user?.role !== "admin") return false;
+  return (state.user.permissions || {})[permission] !== false;
+}
+
+function userCanAny(permissions) {
+  return permissions.some((permission) => userCan(permission));
+}
+
 function visibleNavItems() {
-  return navItems.filter((item) => !item[3] || item[3] === state.user?.role);
+  return navItems.filter((item) => {
+    const roleOk = !item[3] || item[3] === state.user?.role;
+    return roleOk && userCan(item[4] || item[0]);
+  });
+}
+
+function ensureVisibleAdminView() {
+  const visible = visibleNavItems();
+  if (!visible.some(([id]) => id === state.view)) {
+    state.view = visible[0]?.[0] || "dashboard";
+  }
 }
 
 async function api(path, options = {}) {
@@ -204,7 +282,14 @@ function toast(message, kind = "info") {
   setTimeout(() => node.remove(), 3600);
 }
 
+function demoAccountForMode(mode) {
+  return state.publicConfig?.demoAccounts?.[mode] || {};
+}
+
 function renderLogin() {
+  const demoMode = Boolean(state.publicConfig?.demoMode);
+  const demoAccount = demoMode ? demoAccountForMode(state.loginMode) : {};
+  const identifierPlaceholder = state.loginMode === "admin" ? "admin@empresa.com o telefono" : "600 000 000";
   root.innerHTML = `
     <main class="login-page">
       <section class="login-brand">
@@ -228,22 +313,22 @@ function renderLogin() {
             <button type="button" data-login-mode="employee" class="${state.loginMode === "employee" ? "active" : ""}">Empleado</button>
           </div>
           <div class="field">
-            <label>Email o telefono</label>
-            <input name="identifier" autocomplete="username" value="${state.loginMode === "admin" ? "admin@marfancrew.test" : "empleado@marfancrew.test"}" required />
+            <label>${state.loginMode === "admin" ? "Email o telefono" : "Telefono de contacto o email"}</label>
+            <input name="identifier" autocomplete="username" placeholder="${esc(identifierPlaceholder)}" value="${esc(demoAccount.identifier || "")}" required />
           </div>
           <div class="field">
             <label>Contrasena</label>
-            <input name="password" type="password" autocomplete="current-password" value="${state.loginMode === "admin" ? "admin123" : "empleado123"}" required />
+            <input name="password" type="password" autocomplete="current-password" placeholder="Tu contrasena" value="${esc(demoAccount.password || "")}" required />
           </div>
           <div class="remember-row">
             <label><input name="remember" type="checkbox" checked /> Recordar sesion</label>
             <button class="btn ghost" type="button" data-recover>Recuperar contrasena</button>
           </div>
           <button class="btn primary full" type="submit">${icon("check")} Entrar</button>
-          <div class="demo-grid">
+          ${demoMode ? `<div class="demo-grid">
             <button type="button" data-demo="admin">Demo admin</button>
             <button type="button" data-demo="employee">Demo empleado</button>
-          </div>
+          </div>` : ""}
         </form>
         ${recoveryPanel()}
       </section>
@@ -261,8 +346,8 @@ function recoveryPanel() {
       <h3>Nueva contrasena</h3>
       ${state.recoveryCode ? `<div class="recovery-code"><span>Codigo temporal</span><strong>${esc(state.recoveryCode)}</strong><small>Caduca en 20 minutos.</small></div>` : ""}
       <div class="field"><label>Codigo</label><input name="recoveryCode" value="${esc(state.recoveryCode)}" required /></div>
-      <div class="field"><label>Nueva contrasena</label><input name="password" type="password" minlength="6" required /></div>
-      <div class="field"><label>Repetir contrasena</label><input name="confirmPassword" type="password" minlength="6" required /></div>
+      <div class="field"><label>Nueva contrasena</label><input name="password" type="password" minlength="8" required /></div>
+      <div class="field"><label>Repetir contrasena</label><input name="confirmPassword" type="password" minlength="8" required /></div>
       <button class="btn primary full" type="submit">${icon("check")} Cambiar contrasena</button>
     </form>
   `;
@@ -278,6 +363,7 @@ function brand() {
 }
 
 async function init() {
+  await loadPublicConfig();
   if (!state.token) return renderLogin();
   try {
     const { user } = await api("/api/auth/me");
@@ -286,6 +372,19 @@ async function init() {
   } catch {
     renderLogin();
   }
+}
+
+async function loadPublicConfig(force = false) {
+  if (state.publicConfigLoaded && !force) return;
+  try {
+    const response = await fetch("/api/public/config", { cache: "no-store" });
+    if (response.ok) {
+      state.publicConfig = await response.json();
+    }
+  } catch {
+    state.publicConfig = { demoMode: false, demoAccounts: null };
+  }
+  state.publicConfigLoaded = true;
 }
 
 async function renderApp(force = false) {
@@ -299,30 +398,57 @@ async function renderApp(force = false) {
 
 async function loadAdminData(force = false) {
   if (!force && state.data.dashboard) return;
-  const [dashboard, live, clients, employees, events, calendar, backups, incidents, availability, documents, timeEntries, finance, settings, users, auditLogs] = await Promise.all([
-    api("/api/dashboard"),
-    api("/api/live"),
-    api("/api/clients"),
-    api("/api/employees"),
-    api("/api/events"),
-    api("/api/calendar"),
-    api("/api/backups"),
-    api("/api/incidents"),
-    api("/api/availability"),
-    api("/api/documents"),
-    api("/api/time-entries"),
-    api("/api/finance/summary"),
-    api("/api/settings"),
-    api("/api/users"),
+  const emptyDashboard = { cards: [], live: [], alerts: [], updatedAt: new Date().toISOString() };
+  const emptyLive = { cards: [], events: [], alerts: [], updatedAt: new Date().toISOString(), date: todayIso() };
+  const needsEvents = userCanAny(["dashboard", "live", "calendar", "events", "assignments", "clocking", "incidents", "finances", "reports"]);
+  const needsClients = userCanAny(["dashboard", "live", "calendar", "events", "assignments", "clients", "finances", "reports"]);
+  const needsEmployees = userCanAny(["dashboard", "live", "events", "assignments", "clocking", "incidents", "documents", "availability", "employees", "finances", "reports"]);
+  const needsRoles = userCanAny(["events", "assignments", "settings"]);
+  const rolesSource = userCan("settings")
+    ? api("/api/settings")
+    : needsRoles
+      ? api("/api/work-roles").then((result) => ({ settings: {}, roles: result.roles || [] }))
+      : Promise.resolve({ settings: {}, roles: [] });
+  const [dashboard, live, clients, employees, events, calendar, backups, incidents, availability, documents, timeEntries, finance, allowances, settings, users, imports, auditLogs] = await Promise.all([
+    userCan("dashboard") ? api("/api/dashboard") : Promise.resolve(emptyDashboard),
+    userCan("live") ? api("/api/live") : Promise.resolve(emptyLive),
+    needsClients ? api("/api/clients") : Promise.resolve({ clients: [] }),
+    needsEmployees ? api("/api/employees") : Promise.resolve({ employees: [] }),
+    needsEvents ? api("/api/events") : Promise.resolve({ events: [] }),
+    userCan("calendar") ? api("/api/calendar") : Promise.resolve({ events: [], googleStatus: {} }),
+    userCan("backups") ? api("/api/backups") : Promise.resolve({ backups: [], automation: {} }),
+    userCan("incidents") ? api("/api/incidents") : Promise.resolve({ incidents: [] }),
+    userCan("availability") ? api("/api/availability") : Promise.resolve({ availability: [] }),
+    userCan("documents") ? api("/api/documents") : Promise.resolve({ documents: [], compliance: { employees: [], totals: {} } }),
+    userCan("clocking") ? api("/api/time-entries") : Promise.resolve({ entries: [] }),
+    userCan("finances") ? api("/api/finance/summary") : Promise.resolve({ finance: { totals: {}, byClient: [], byMonth: [], byEmployee: [], topEvents: [] } }),
+    userCan("finances") ? api("/api/allowances") : Promise.resolve({ allowances: [] }),
+    rolesSource,
+    userCan("users") ? api("/api/users") : Promise.resolve({ users: [] }),
+    userCan("imports") ? api("/api/imports") : Promise.resolve({ imports: [] }),
     state.user.role === "super_admin" ? api("/api/audit-logs") : Promise.resolve({ logs: [] })
   ]);
-  state.data = { dashboard, live, clients: clients.clients, employees: employees.employees, events: events.events, calendarEvents: calendar.events, googleStatus: calendar.googleStatus, backups: backups.backups, incidents: incidents.incidents, availability: availability.availability, documents: documents.documents, timeEntries: timeEntries.entries, finance: finance.finance, settings: settings.settings, roles: settings.roles, users: users.users, auditLogs: auditLogs.logs };
+  state.data = { dashboard, live, clients: clients.clients, employees: employees.employees, events: events.events, calendarEvents: calendar.events, googleStatus: calendar.googleStatus, backups: backups.backups, backupAutomation: backups.automation, incidents: incidents.incidents, availability: availability.availability, documents: documents.documents, documentCompliance: documents.compliance, timeEntries: timeEntries.entries, finance: finance.finance, allowances: allowances.allowances, settings: settings.settings, roles: settings.roles, users: users.users, imports: imports.imports, auditLogs: auditLogs.logs };
   state.selectedEventId ||= dashboard.live[0]?.id || events.events[0]?.id;
   state.assignmentEventId ||= dashboard.live[0]?.id || events.events[0]?.id;
 }
 
+async function loadSelectedEventSnapshots(force = false) {
+  const event = (state.data.events || []).find((item) => item.id === state.selectedEventId);
+  if (!event) return;
+  if (!force && state.eventSnapshots[event.id]) return;
+  try {
+    const result = await api(`/api/events/${encodeURIComponent(event.id)}/snapshots?limit=8`);
+    state.eventSnapshots[event.id] = result.snapshots || [];
+  } catch {
+    state.eventSnapshots[event.id] = [];
+  }
+}
+
 async function renderAdmin(force = false) {
+  ensureVisibleAdminView();
   await loadAdminData(force);
+  await loadSelectedEventSnapshots(force);
   root.innerHTML = `
     <div class="app-shell">
       <aside class="sidebar">
@@ -524,7 +650,10 @@ function liveOperationsView() {
         <h1>Centro operativo live</h1>
         <p>Torre de control de servicios, fichajes, retrasos, incidencias y personal por cubrir.</p>
       </div>
-      <div class="muted"><span class="status-dot"></span> Actualizado · ${new Date(live.updatedAt).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</div>
+      <div class="toolbar-actions">
+        <button class="btn" data-detect-attendance-date="${esc(live.date || todayIso())}">${icon("alert")} Detectar incidencias</button>
+        <div class="muted"><span class="status-dot"></span> Actualizado · ${new Date(live.updatedAt).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</div>
+      </div>
     </div>
     <section class="cards-grid">
       ${(live.cards || []).map(cardTemplate).join("")}
@@ -620,6 +749,30 @@ function liveMemberWarnings(member) {
   return warnings.slice(0, 2).map((text) => `<span class="tag red">${esc(text)}</span>`).join(" ");
 }
 
+function permissionEnabled(permissions, key) {
+  return (permissions || {})[key] !== false;
+}
+
+function permissionChecklist(permissions = {}, compact = false) {
+  return `
+    <div class="permission-grid ${compact ? "compact" : ""}">
+      ${adminPermissionDefs.map(([key, label]) => `
+        <label class="permission-toggle">
+          <input type="checkbox" name="perm_${esc(key)}" ${permissionEnabled(permissions, key) ? "checked" : ""} />
+          <span>${esc(label)}</span>
+        </label>
+      `).join("")}
+    </div>
+  `;
+}
+
+function permissionSummary(user) {
+  if (user.role === "super_admin") return `<span class="tag red">Acceso total</span>`;
+  if (user.role === "employee") return `<span class="muted">Portal empleado</span>`;
+  const active = adminPermissionDefs.filter(([key]) => permissionEnabled(user.permissions, key));
+  return `<span class="tag blue">${active.length}/${adminPermissionDefs.length} modulos</span>`;
+}
+
 function usersView() {
   const users = state.data.users || [];
   const isSuper = state.user?.role === "super_admin";
@@ -648,7 +801,7 @@ function usersView() {
         <div class="panel-head"><h2>${isSuper ? "Usuarios del sistema" : "Administradores internos"}</h2></div>
         <div class="table-wrap">
           <table class="data-table users-table">
-            <thead><tr><th>Usuario</th><th>Rol</th><th>Contacto</th><th>Ficha operario</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <thead><tr><th>Usuario</th><th>Rol</th><th>Contacto</th><th>Ficha operario</th><th>Permisos</th><th>Estado</th><th>Acciones</th></tr></thead>
             <tbody>
               ${users.map((user) => {
                 const isSelf = user.id === state.user.id;
@@ -658,11 +811,24 @@ function usersView() {
                     <td>${roleTag(user.role)}</td>
                     <td>${esc(user.email || "")}<br /><small class="muted">${esc(user.phone || "")}</small></td>
                     <td>${user.employeeId ? `<strong>${esc(user.employeeRole)}</strong><br /><small class="muted">${esc(user.employeeStatus)}</small>` : `<span class="muted">No vinculada</span>`}</td>
+                    <td>
+                      ${isSuper && user.role === "admin" ? `
+                        <form class="permission-editor" data-form="user-permissions" data-user-id="${esc(user.id)}">
+                          ${permissionSummary(user)}
+                          <details>
+                            <summary>Editar</summary>
+                            ${permissionChecklist(user.permissions, true)}
+                            <button class="btn compact primary" type="submit">${icon("check")} Guardar</button>
+                          </details>
+                        </form>
+                      ` : permissionSummary(user)}
+                    </td>
                     <td>${user.active ? statusTag("confirmado") : `<span class="tag red">Bloqueado</span>`}</td>
                     <td>
                       <div class="table-actions">
                         ${isSuper && user.role === "employee" ? `<button class="btn compact" data-user-role="${user.id}" data-next-role="admin">Admin</button>` : ""}
                         ${isSuper && user.role === "admin" ? `<button class="btn compact" data-user-role="${user.id}" data-next-role="employee">Empleado</button>` : ""}
+                        ${isSuper ? `<button class="btn compact" data-reset-user="${user.id}">Clave</button>` : ""}
                         ${isSuper && !isSelf ? `<button class="btn compact ${user.active ? "red" : ""}" data-user-active="${user.id}" data-next-active="${user.active ? "false" : "true"}">${user.active ? "Bloq." : "Act."}</button>` : `<span class="muted">${isSelf ? "Tu usuario" : "Solo lectura"}</span>`}
                       </div>
                     </td>
@@ -679,7 +845,11 @@ function usersView() {
         <div class="field"><label>Nombre</label><input name="name" required /></div>
         <div class="field"><label>Email</label><input name="email" type="email" /></div>
         <div class="field"><label>Telefono</label><input name="phone" /></div>
-        <div class="field"><label>Contrasena temporal</label><input name="password" type="password" required value="marfan123" /></div>
+        <div class="field"><label>Contrasena temporal</label><input name="password" type="password" minlength="8" required value="marfan123" /></div>
+        ${isSuper ? `<div class="inspector-section">
+          <h3>Permisos del administrador</h3>
+          ${permissionChecklist()}
+        </div>` : ""}
         ${isSuper ? `<div class="inspector-section">
           <h3>Ficha operario si es empleado</h3>
           <div class="field"><label>Rol operativo</label><select name="employeeRole"><option>Montaje</option><option>Carga y descarga</option><option>Tecnico</option><option>Runner</option><option>Jefe de equipo</option><option>Carretillero</option><option>Limpieza</option><option>Auxiliar produccion</option></select></div>
@@ -714,8 +884,17 @@ function auditActionLabel(action) {
     assignment_deleted: "Asignacion eliminada",
     incident_created: "Incidencia creada",
     incident_updated: "Incidencia actualizada",
+    incident_auto_detected: "Incidencia detectada",
+    incident_auto_upgraded: "Incidencia elevada",
+    employee_incident_created: "Incidencia operario",
     document_uploaded: "Documento subido",
+    document_updated: "Documento revisado",
+    document_file_opened: "Documento abierto",
+    employee_document_uploaded: "Documento operario",
+    data_import_completed: "Importacion completada",
     delivery_note_signed: "Albaran firmado",
+    time_entry_created: "Fichaje registrado",
+    time_entry_blocked: "Fichaje bloqueado",
     time_entry_corrected: "Fichaje corregido",
     employee_service_confirmed: "Servicio confirmado",
     client_dossier_exported: "Dossier cliente exportado",
@@ -729,6 +908,10 @@ function auditActionLabel(action) {
     backup_verified: "Backup verificado",
     backup_downloaded: "Backup descargado",
     backup_restore_requested: "Restauracion solicitada",
+    google_event_imported: "Evento Google importado",
+    google_events_bulk_imported: "Eventos Google importados",
+    google_calendar_synced: "Google Calendar sincronizado",
+    google_calendar_sync_failed: "Error sincronizando Google",
     password_recovery_requested: "Recuperacion solicitada",
     password_reset_completed: "Contrasena cambiada"
   };
@@ -841,6 +1024,7 @@ function calendarView() {
   const events = state.data.calendarEvents || state.data.events || [];
   const google = state.data.googleStatus || {};
   const settings = state.data.settings || {};
+  const pendingGoogleEvents = events.filter((event) => event.external);
   const selected = events.find((event) => event.id === state.selectedEventId) || events[0];
   return `
     <div class="page-head">
@@ -858,8 +1042,9 @@ function calendarView() {
     </div>
     <div class="calendar-sync-strip">
       <span class="tag green">MARFAN ${esc((state.data.events || []).length)} eventos</span>
-      <span class="tag ${["connected", "connected_api", "embed_only"].includes(google.status) ? "blue" : google.status === "disabled" ? "amber" : "red"}">Google ${esc(google.status || "pendiente")}</span>
-      ${google.error ? `<small class="muted">${esc(google.error)}</small>` : `<small class="muted">${esc(google.message || (google.status === "connected_api" ? "Eventos Google leidos por API." : google.status === "embed_only" ? "Vista Google activa. Falta API key o URL iCal para tarjetas nativas." : "Calendario Google enlazado por ICS/embed publico."))}</small>`}
+      <span class="tag ${googleCalendarStatusTone(google.status)}">Google ${esc(google.status || "pendiente")}</span>
+      ${pendingGoogleEvents.length ? `<button class="btn compact" type="button" data-import-visible-google-events>${icon("plus")} Importar ${pendingGoogleEvents.length} Google</button>` : ""}
+      ${google.error ? `<small class="muted">${esc(google.error)}</small>` : `<small class="muted">${esc(googleCalendarStatusMessage(google))}</small>`}
     </div>
     ${settings.google_calendar_embed_url ? `
       <section class="panel google-calendar-panel">
@@ -1103,11 +1288,45 @@ function googleSyncLabel(status) {
   const labels = {
     synced: "Sincronizado",
     pending_auth: "Pendiente credencial",
+    pending: "Pendiente",
     error: "Error",
     disabled: "Desactivado",
     imported: "Importado desde Google"
   };
   return labels[status] || "Pendiente";
+}
+
+function googleCalendarStatusTone(status) {
+  if (["connected", "connected_api", "connected_oauth", "embed_only"].includes(status)) return "blue";
+  if (status === "disabled") return "amber";
+  return "red";
+}
+
+function googleCalendarStatusMessage(google = {}) {
+  if (google.message) return google.message;
+  if (google.status === "connected_oauth") return "Eventos Google leidos con OAuth. Al importarlos y editarlos se actualiza el evento original en Google.";
+  if (google.status === "connected_api") return "Eventos Google leidos por API.";
+  if (google.status === "embed_only") return "Vista Google activa. Falta API key, OAuth conectado o URL iCal para tarjetas nativas.";
+  return "Calendario Google enlazado por ICS/embed publico.";
+}
+
+function googleEventImportPayload(googleEvent) {
+  return {
+    id: googleEvent.id,
+    googleUid: googleEvent.google_uid || googleEvent.id,
+    googleEventId: googleEvent.google_event_id || "",
+    source: googleEvent.source || "google",
+    name: googleEvent.name,
+    date: googleEvent.date,
+    startTime: googleEvent.start_time,
+    endTime: googleEvent.end_time,
+    location: googleEvent.location,
+    address: googleEvent.address,
+    notes: googleEvent.notes,
+    lat: googleEvent.lat,
+    lng: googleEvent.lng,
+    googleMapsUrl: googleEvent.google_maps_url || ""
+  };
 }
 
 function eventInspector(event) {
@@ -1132,6 +1351,7 @@ function eventInspector(event) {
     `;
   }
   if (state.editEventId === event.id) return eventEditForm(event);
+  const locked = assignmentEventLocked(event);
   return `
     <div>${statusTag(event.status)}</div>
     <h2>${esc(event.name)}</h2>
@@ -1151,6 +1371,7 @@ function eventInspector(event) {
       ${event.requirements?.length ? `<div class="requirements-summary">${event.requirements.map((item) => `<span class="tag blue">${esc(item.role)} x${esc(item.count)}</span>`).join("")}</div>` : ""}
       ${eventStaffWarnings(event)}
     </div>
+    ${eventHistoryPanel(event)}
     <div class="inspector-section">
       <div class="role-row"><span>Presupuesto</span><strong>${money(event.budget)}</strong></div>
       <div class="role-row"><span>Precio servicio</span><strong>${money(event.service_price || event.budget)}</strong></div>
@@ -1162,15 +1383,127 @@ function eventInspector(event) {
       <div class="role-row"><span>Margen</span><strong>${event.finance.margin}%</strong></div>
     </div>
     <div class="inspector-section">
-      <button class="btn primary" data-open-assignments="${event.id}">${icon("users")} Asignar personal</button>
-      <button class="btn" data-edit-event="${event.id}">${icon("pen")} Editar evento</button>
-      ${event.status !== "finalizado" ? `<button class="btn" data-close-event="${event.id}">${icon("check")} Cerrar evento</button>` : ""}
-      <button class="btn" data-duplicate="${event.id}">${icon("briefcase")} Duplicar evento</button>
+      ${locked ? `<span class="tag blue">Solo revision</span>` : `<button class="btn primary" data-open-assignments="${event.id}">${icon("users")} Asignar personal</button>`}
+      ${locked ? "" : `<button class="btn" data-edit-event="${event.id}">${icon("pen")} Editar evento</button>`}
+      ${locked ? "" : `<button class="btn" data-close-event="${event.id}">${icon("check")} Cerrar evento</button>`}
+      ${locked ? "" : `<button class="btn" data-duplicate="${event.id}">${icon("briefcase")} Duplicar evento</button>`}
       <button class="btn" data-client-dossier="${event.id}">${icon("file")} Dossier cliente</button>
       <button class="btn" data-client-dossier-pdf="${event.id}">${icon("download")} PDF dossier</button>
       <button class="btn" data-albaran="${event.id}">${icon("file")} Albaran</button>
       <button class="btn" data-albaran-pdf="${event.id}">${icon("download")} PDF albaran</button>
+      ${locked ? "" : `<button class="btn" data-google-sync-event="${event.id}">${icon("refresh")} Sincronizar Google</button>`}
+      ${event.google_calendar_html_link ? `<a class="btn" href="${esc(event.google_calendar_html_link)}" target="_blank" rel="noopener">${icon("calendar")} Abrir Google</a>` : ""}
       <button class="btn">${icon("chart")} Rentabilidad</button>
+    </div>
+  `;
+}
+
+function eventSnapshotSummary(snapshot) {
+  const event = snapshot.payload?.event || {};
+  const assignments = (event.assignments || []).filter((item) => item.status !== "bloqueado").length;
+  const required = Number(event.required_total || 0);
+  const entries = (event.timeEntries || []).length;
+  const incidents = (event.incidents || []).length;
+  const delivery = event.deliveryNote?.locked ? "Albaran firmado" : "Albaran pendiente";
+  return `${shortDate(event.date || todayIso())} · ${esc(event.start_time || "--:--")} - ${esc(event.end_time || "--:--")} · Equipo ${assignments}/${required} · ${entries} fichajes · ${incidents} inc. · ${delivery}`;
+}
+
+function findSnapshot(snapshotId) {
+  return Object.values(state.eventSnapshots || {})
+    .flatMap((items) => items || [])
+    .find((snapshot) => snapshot.id === snapshotId);
+}
+
+function snapshotList(items, renderItem, emptyText) {
+  const rows = (items || []).slice(0, 6);
+  if (!rows.length) return `<div class="empty compact-empty">${esc(emptyText)}</div>`;
+  return rows.map(renderItem).join("");
+}
+
+function eventSnapshotDetail(snapshot) {
+  const event = snapshot.payload?.event || {};
+  const assignments = event.assignments || [];
+  const entries = event.timeEntries || [];
+  const incidents = event.incidents || [];
+  const delivery = event.deliveryNote;
+  return `
+    <div class="snapshot-detail">
+      <div class="snapshot-detail-head">
+        <div>
+          <strong>${esc(event.name || "Evento")}</strong>
+          <small>${esc(event.client_name || "-")} · ${esc(event.location || "-")}</small>
+        </div>
+        <button class="btn compact" type="button" data-snapshot-json="${esc(snapshot.id)}">${icon("download")} JSON</button>
+      </div>
+      <div class="snapshot-kpis">
+        <div><span>Horario</span><strong>${shortDate(event.date || todayIso())}<br />${esc(event.start_time || "--:--")} - ${esc(event.end_time || "--:--")}</strong></div>
+        <div><span>Equipo</span><strong>${assignments.filter((item) => item.status !== "bloqueado").length}/${esc(event.required_total || 0)}</strong></div>
+        <div><span>Precio</span><strong>${money(event.service_price || event.budget || 0)}</strong></div>
+        <div><span>Estado</span><strong>${esc(event.status || "-")}</strong></div>
+      </div>
+      <div class="snapshot-columns">
+        <section>
+          <h4>Equipo</h4>
+          ${snapshotList(assignments, (assignment) => `
+            <div class="snapshot-row">
+              <span>${esc(assignment.name || assignment.employee_name || "Operario")}</span>
+              <strong>${esc(assignment.role || "-")}</strong>
+              <small>${esc(assignment.status || "-")}</small>
+            </div>
+          `, "Sin equipo asignado")}
+        </section>
+        <section>
+          <h4>Fichajes</h4>
+          ${snapshotList(entries, (entry) => `
+            <div class="snapshot-row">
+              <span>${esc(entry.employee_name || "Operario")}</span>
+              <strong>${esc(entry.type || "-")}</strong>
+              <small>${esc(shortDateTime(entry.timestamp))} · ${entry.accepted ? "Aceptado" : "Bloqueado"} · ${esc(entry.distance_m || 0)} m</small>
+            </div>
+          `, "Sin fichajes")}
+        </section>
+        <section>
+          <h4>Incidencias</h4>
+          ${snapshotList(incidents, (incident) => `
+            <div class="snapshot-row">
+              <span>${esc(incident.title || incident.type || "Incidencia")}</span>
+              <strong>${esc(incident.priority || "-")}</strong>
+              <small>${esc(incident.status || "-")}</small>
+            </div>
+          `, "Sin incidencias")}
+        </section>
+      </div>
+      <div class="snapshot-delivery">
+        <span>Albaran</span>
+        <strong>${delivery ? `${esc(delivery.status || "borrador")} · ${delivery.locked ? "bloqueado" : "editable"}` : "No generado"}</strong>
+        ${delivery?.signature_name ? `<small>${esc(delivery.signature_name)} · ${esc(delivery.signature_dni || "")} · ${esc(shortDateTime(delivery.signed_at))}</small>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+function eventHistoryPanel(event) {
+  const snapshots = state.eventSnapshots?.[event.id] || [];
+  const openSnapshot = snapshots.find((snapshot) => snapshot.id === state.selectedEventSnapshotId);
+  return `
+    <div class="inspector-section event-history-section">
+      <div class="row-between">
+        <h3>Historial protegido</h3>
+        <span class="tag blue">${snapshots.length}</span>
+      </div>
+      <div class="event-timeline">
+        ${snapshots.length ? snapshots.map((snapshot) => `
+          <button class="event-history-item ${state.selectedEventSnapshotId === snapshot.id ? "active" : ""}" type="button" data-event-snapshot="${esc(snapshot.id)}">
+            <span class="history-dot"></span>
+            <div>
+              <strong>${esc(auditActionLabel(snapshot.action))}</strong>
+              <small>${esc(shortDateTime(snapshot.created_at))} · ${esc(snapshot.actor_name || "Sistema")}</small>
+              <p>${eventSnapshotSummary(snapshot)}</p>
+            </div>
+          </button>
+        `).join("") : `<div class="empty">Aun no hay snapshots de este evento.</div>`}
+      </div>
+      ${openSnapshot ? eventSnapshotDetail(openSnapshot) : ""}
     </div>
   `;
 }
@@ -1387,6 +1720,7 @@ function clientsView() {
       <div><h1>Clientes</h1><p>Ficha fiscal, contactos, historico y rentabilidad.</p></div>
       <button class="btn primary" data-new-client>${icon("plus")} Nuevo cliente</button>
     </div>
+    ${clientImportPanel()}
     <section class="split-grid">
       <div class="panel">
         <div class="panel-head"><h2>Clientes activos</h2></div>
@@ -1407,6 +1741,26 @@ function clientsView() {
   `;
 }
 
+function clientImportPanel() {
+  const last = (state.data.imports || []).find((item) => item.metadata?.kind === "clients");
+  return `
+    <form class="panel import-panel" data-form="client-import">
+      <div class="row-between">
+        <div>
+          <h2>Importar clientes</h2>
+          <p class="muted">Sube CSV/TSV exportado desde Excel. Actualiza por CIF o nombre y no duplica fichas.</p>
+        </div>
+        <div class="filters-row">
+          <input name="file" type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" required />
+          <button class="btn" type="button" data-client-template>${icon("download")} Plantilla</button>
+          <button class="btn primary" type="submit">${icon("upload")} Importar</button>
+        </div>
+      </div>
+      ${last ? `<small class="muted">Ultima carga: ${esc(last.source)} · ${esc(last.inserted)} nuevos · ${esc(last.updated)} actualizados · ${esc(last.skipped)} omitidos</small>` : ""}
+    </form>
+  `;
+}
+
 function employeeForm() {
   return `
     <form class="panel inspector" data-form="employee">
@@ -1419,6 +1773,11 @@ function employeeForm() {
       </div>
       <div class="field"><label>Telefono</label><input name="phone" /></div>
       <div class="field"><label>Email</label><input name="email" type="email" /></div>
+      <div class="leader-toggle">
+        <label class="toggle-row"><input name="portalAccess" type="checkbox" checked /> Crear acceso portal empleado</label>
+        <small>El operario podra entrar con su email o telefono y la contrasena temporal.</small>
+      </div>
+      <div class="field"><label>Contrasena portal</label><input name="portalPassword" type="password" minlength="8" value="Marfan2026!" /></div>
       <div class="form-grid compact">
         <div class="field"><label>Tarifa hora</label><input name="hourlyRate" type="number" value="16" /></div>
         <div class="field"><label>Km</label><input name="kmRate" type="number" step="0.01" value="0.24" /></div>
@@ -1457,6 +1816,7 @@ function employeeDetail(employee) {
       <div class="inspector-section">
         <div class="role-row"><span>Telefono</span><strong>${esc(employee.phone || "-")}</strong></div>
         <div class="role-row"><span>Email</span><strong>${esc(employee.email || "-")}</strong></div>
+        <div class="role-row"><span>Portal empleado</span><strong>${employee.user_id ? "Activo" : "Sin acceso"}</strong></div>
         <div class="role-row"><span>DNI</span><strong>${esc(employee.dni || "-")}</strong></div>
         <div class="role-row"><span>NSS</span><strong>${esc(employee.social_security_number || "-")}</strong></div>
         <div class="role-row"><span>Banco</span><strong>${esc(employee.bank_account || "-")}</strong></div>
@@ -1511,6 +1871,13 @@ function employeeEditForm(employee) {
         <div class="field"><label>Estado</label><select name="status"><option value="activo" ${employee.status === "activo" ? "selected" : ""}>Activo</option><option value="bloqueado" ${employee.status !== "activo" ? "selected" : ""}>Bloqueado</option></select></div>
         <div class="field"><label>Ciudad</label><input name="city" value="${esc(employee.city || "")}" /></div>
       </div>
+      ${employee.user_id ? `<div class="leader-toggle"><span class="tag green">Portal empleado activo</span><small>El acceso se sincroniza con nombre, email, telefono y estado.</small></div>` : `
+        <div class="leader-toggle">
+          <label class="toggle-row"><input name="portalAccess" type="checkbox" /> Activar acceso portal empleado</label>
+          <small>Necesita email o telefono para iniciar sesion.</small>
+        </div>
+        <div class="field"><label>Contrasena portal</label><input name="portalPassword" type="password" minlength="8" value="Marfan2026!" /></div>
+      `}
       <div class="form-grid compact">
         <div class="field"><label>Tarifa hora</label><input name="hourlyRate" type="number" step="0.01" value="${esc(employee.hourly_rate || 0)}" /></div>
         <div class="field"><label>Km</label><input name="kmRate" type="number" step="0.01" value="${esc(employee.km_rate || 0)}" /></div>
@@ -1550,20 +1917,42 @@ function employeesView() {
       <div><h1>Operarios</h1><p>Roles, tarifas, documentacion, disponibilidad e historico.</p></div>
       <button class="btn primary" data-new-employee>${icon("plus")} Nuevo operario</button>
     </div>
+    ${employeeImportPanel()}
     <section class="split-grid">
       <div class="panel">
         <div class="panel-head"><h2>Personal activo</h2></div>
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>Operario</th><th>Rol</th><th>Telefono</th><th>Tarifa</th><th>Tallaje</th><th>Skills</th><th>Estado</th><th></th></tr></thead>
+            <thead><tr><th>Operario</th><th>Rol</th><th>Telefono</th><th>Tarifa</th><th>Tallaje</th><th>Skills</th><th>Portal</th><th>Estado</th><th></th></tr></thead>
             <tbody>
-              ${state.data.employees.map((employee) => `<tr><td><strong>${esc(employee.name)}</strong><br /><small class="muted">${esc(employee.email || employee.dni || "")}</small></td><td>${esc(employee.role)}</td><td>${esc(employee.phone)}</td><td>${money(employee.hourly_rate)}/h</td><td><small>Camiseta ${esc(employee.shirt_size || "-")} · Pantalon ${esc(employee.pants_size || "-")} · Zapato ${esc(employee.shoe_size || "-")}</small></td><td>${employee.skills.slice(0, 3).map((skill) => `<span class="tag blue">${esc(skill)}</span>`).join(" ")}</td><td>${statusTag(employee.status === "activo" ? "confirmado" : "pendiente")}</td><td><button class="btn" data-select-employee="${employee.id}">${icon("search")} Ver</button></td></tr>`).join("")}
+              ${state.data.employees.map((employee) => `<tr><td><strong>${esc(employee.name)}</strong><br /><small class="muted">${esc(employee.email || employee.dni || "")}</small></td><td>${esc(employee.role)}</td><td>${esc(employee.phone)}</td><td>${money(employee.hourly_rate)}/h</td><td><small>Camiseta ${esc(employee.shirt_size || "-")} · Pantalon ${esc(employee.pants_size || "-")} · Zapato ${esc(employee.shoe_size || "-")}</small></td><td>${employee.skills.slice(0, 3).map((skill) => `<span class="tag blue">${esc(skill)}</span>`).join(" ")}</td><td>${employee.user_id ? `<span class="tag green">Activo</span>` : `<span class="tag amber">Pendiente</span>`}</td><td>${statusTag(employee.status === "activo" ? "confirmado" : "pendiente")}</td><td><button class="btn" data-select-employee="${employee.id}">${icon("search")} Ver</button></td></tr>`).join("")}
             </tbody>
           </table>
         </div>
       </div>
       ${selected ? employeeDetail(selected) : employeeForm()}
     </section>
+  `;
+}
+
+function employeeImportPanel() {
+  const last = (state.data.imports || []).find((item) => item.metadata?.kind === "employees");
+  return `
+    <form class="panel import-panel" data-form="employee-import">
+      <div class="row-between">
+        <div>
+          <h2>Importar operarios</h2>
+          <p class="muted">Sube CSV/TSV exportado desde Excel. Actualiza por DNI, email o telefono y conserva el historico.</p>
+        </div>
+        <div class="filters-row">
+          <input name="file" type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" required />
+          <input name="defaultPassword" type="password" minlength="8" value="Marfan2026!" aria-label="Contrasena temporal" />
+          <button class="btn" type="button" data-employee-template>${icon("download")} Plantilla</button>
+          <button class="btn primary" type="submit">${icon("upload")} Importar</button>
+        </div>
+      </div>
+      ${last ? `<small class="muted">Ultima carga: ${esc(last.source)} · ${esc(last.inserted)} nuevos · ${esc(last.updated)} actualizados · ${esc(last.skipped)} omitidos</small>` : ""}
+    </form>
   `;
 }
 
@@ -1620,6 +2009,7 @@ function assignmentLockedPanel(event, detected) {
     <div class="locked-review-panel">
       <div class="row-between"><h2>Solo revision</h2><span class="tag blue">Evento efectuado</span></div>
       <p class="muted">El equipo y los roles quedan bloqueados para conservar trazabilidad. Desde aqui solo puedes revisar y abrir incidencias.</p>
+      <button class="btn full" type="button" data-detect-attendance-date="${esc(event.date)}">${icon("alert")} Detectar ausencias de este dia</button>
       <div class="inspector-section">
         <h3>Incidencias detectadas</h3>
         ${detected.length ? detected.map(({ assignment, openIncident }) => `
@@ -1675,9 +2065,10 @@ function assignmentsView() {
           ${recommendations ? recommendations.slice(0, 8).map((item) => `
             <div class="mini-card">
               <div class="row-between"><strong>${esc(item.employee.name)}</strong><span class="tag ${item.score > 70 ? "green" : item.score > 40 ? "amber" : "red"}">${item.score}</span></div>
-              <div class="muted">${esc(item.employee.role)} · ${Math.round(item.distance / 1000)} km</div>
+              <div class="muted">${esc(item.employee.role)} · ${Math.round(item.distance / 1000)} km · ${esc(item.recentHours || 0)} h/30d</div>
+              <small>${esc(item.suggestedRole || item.employee.role)} · ${esc(item.roleFit || "cobertura")}</small>
               ${item.issues.length ? `<small class="muted">${item.issues.map((issue) => esc(issue.message)).join(" · ")}</small>` : `<small class="muted">Disponible y sin bloqueos</small>`}
-              <button class="btn full" data-assign-recommended="${item.employee.id}" data-event-id="${event.id}" ${item.issues.some((issue) => issue.severity === "block") || item.assigned ? "disabled" : ""}>Asignar</button>
+              <button class="btn full" data-assign-recommended="${item.employee.id}" data-event-id="${event.id}" data-role="${esc(item.suggestedRole || item.employee.role)}" ${item.issues.some((issue) => issue.severity === "block") || item.assigned ? "disabled" : ""}>Asignar</button>
             </div>
           `).join("") : `<div class="empty">Pulsa Recomendar para calcular candidatos.</div>`}
           </div>
@@ -1753,7 +2144,8 @@ function assignmentCandidateOption(candidate, selectedId) {
   const warning = candidate.issues?.some((issue) => issue.severity === "warning");
   const suffix = candidate.assigned ? " · ya asignado" : blocked ? " · bloqueado" : warning ? " · aviso" : " · OK";
   const score = candidate.score === null ? "" : ` · ${candidate.score} pts`;
-  return `<option value="${candidate.employee.id}" ${candidate.employee.id === selectedId ? "selected" : ""} ${blocked ? "disabled" : ""}>${esc(candidate.employee.name)} · ${esc(candidate.employee.role)}${score}${suffix}</option>`;
+  const role = candidate.suggestedRole ? ` · ${candidate.suggestedRole}` : "";
+  return `<option value="${candidate.employee.id}" ${candidate.employee.id === selectedId ? "selected" : ""} ${blocked ? "disabled" : ""}>${esc(candidate.employee.name)} · ${esc(candidate.employee.role)}${esc(role)}${score}${suffix}</option>`;
 }
 
 function assignmentCandidatePreview(candidate, recommendations) {
@@ -1774,7 +2166,7 @@ function assignmentCandidatePreview(candidate, recommendations) {
         <strong>${esc(candidate.employee.name)}</strong>
         <span class="tag ${blocked ? "red" : issues.length ? "amber" : "green"}">${blocked ? "No asignable" : issues.length ? "Con avisos" : "Asignable"}</span>
       </div>
-      <small>${esc(candidate.employee.role)}${candidate.score === null ? "" : ` · ${esc(candidate.score)} pts`}${candidate.distance === null ? "" : ` · ${Math.round(candidate.distance / 1000)} km`}</small>
+      <small>${esc(candidate.employee.role)}${candidate.suggestedRole ? ` · sugerido: ${esc(candidate.suggestedRole)}` : ""}${candidate.score === null ? "" : ` · ${esc(candidate.score)} pts`}${candidate.distance === null ? "" : ` · ${Math.round(candidate.distance / 1000)} km`}</small>
       ${issues.length ? `<div class="assignment-warnings">${issues.map((issue) => `<span class="tag ${issue.severity === "block" ? "red" : "amber"}">${esc(issue.message)}</span>`).join("")}</div>` : `<small class="muted">Sin bloqueos detectados.</small>`}
     </div>
   `;
@@ -1821,7 +2213,11 @@ function clockingView() {
               <td>${esc(entry.employee_name)}</td>
               <td>${esc(entry.event_name)}<br /><small class="muted">${esc(entry.event_date || "")}</small></td>
               <td>${esc(entry.type)}</td>
-              <td>${esc(entry.distance_m || 0)} m · ${entry.within_radius ? "Dentro" : "Fuera"}</td>
+	              <td>
+	                ${meters(entry.distance_m)} · ${entry.within_radius ? "Dentro" : "Fuera"}
+	                <br /><small class="muted">Prec. ${meters(entry.gps_accuracy_m)} · IP ${esc(entry.ip_address || "-")}</small>
+	                <br /><small class="muted">${esc(shortDevice(entry.user_agent))}</small>
+	              </td>
               <td>${entry.accepted ? statusTag("confirmado") : `<span class="tag red">Bloqueado</span>`}</td>
               <td>
                 <form class="inline-edit" data-form="time-entry" data-entry-id="${entry.id}">
@@ -1831,6 +2227,8 @@ function clockingView() {
                   </select>
                   <label class="toggle-row"><input name="accepted" type="checkbox" ${entry.accepted ? "checked" : ""} /> Aceptado</label>
                   <input name="notes" placeholder="Nota" value="${esc(entry.notes || "")}" />
+                  <input name="correctionReason" placeholder="Motivo correccion" value="${esc(entry.correction_reason || "")}" />
+                  ${entry.corrected_at ? `<small class="muted">Corregido por ${esc(entry.corrected_by_name || "-")} · ${esc(shortDateTime(entry.corrected_at))}</small>` : ""}
                   <button class="btn" type="submit">${icon("check")} Guardar</button>
                 </form>
               </td>
@@ -1846,6 +2244,7 @@ function incidentsView() {
   return `
     <div class="page-head">
       <div><h1>Incidencias Pro</h1><p>Ausencias, retrasos, accidentes, clientes, horas extra y documentacion.</p></div>
+      <button class="btn" data-detect-attendance-date="${todayIso()}">${icon("alert")} Detectar hoy</button>
     </div>
     <section class="split-grid">
       <div class="panel">
@@ -1853,7 +2252,7 @@ function incidentsView() {
         <div class="table-wrap">
           <table class="data-table">
             <thead><tr><th>Prioridad</th><th>Titulo</th><th>Evento</th><th>Operario</th><th>Estado</th><th>Accion</th></tr></thead>
-            <tbody>${state.data.incidents.map((incident) => `<tr><td><span class="tag ${incident.priority === "critica" ? "red" : incident.priority === "alta" ? "amber" : "blue"}">${esc(incident.priority)}</span></td><td><strong>${esc(incident.title)}</strong><br /><small class="muted">${esc(incident.description)}</small></td><td>${esc(incident.event_name || "")}</td><td>${esc(incident.employee_name || "")}</td><td>${esc(incident.status)}${incident.resolved_at ? `<br /><small class="muted">${esc(incident.resolved_at)}</small>` : ""}</td><td>${incident.status === "resuelta" ? `<button class="btn" data-reopen-incident="${incident.id}">${icon("refresh")} Reabrir</button>` : `<button class="btn" data-resolve-incident="${incident.id}">${icon("check")} Resolver</button>`}</td></tr>`).join("")}</tbody>
+            <tbody>${state.data.incidents.map(incidentRow).join("")}</tbody>
           </table>
         </div>
       </div>
@@ -1868,6 +2267,24 @@ function incidentsView() {
         <button class="btn primary full" type="submit">${icon("alert")} Abrir incidencia</button>
       </form>
     </section>
+  `;
+}
+
+function incidentRow(incident) {
+  const tone = incident.priority === "critica" ? "red" : incident.priority === "alta" ? "amber" : "blue";
+  return `
+    <tr>
+      <td><span class="tag ${tone}">${esc(incident.priority)}</span></td>
+      <td><strong>${esc(incident.title)}</strong><br /><small class="muted">${esc(incident.description)}</small></td>
+      <td>${esc(incident.event_name || "")}</td>
+      <td>${esc(incident.employee_name || "")}</td>
+      <td>
+        ${esc(incident.status)}
+        ${incident.resolved_at ? `<br /><small class="muted">${esc(incident.resolved_at)}</small>` : ""}
+        ${incident.resolution_note ? `<br /><small>${esc(incident.resolution_note)}</small>` : ""}
+      </td>
+      <td>${incident.status === "resuelta" ? `<button class="btn" data-reopen-incident="${incident.id}">${icon("refresh")} Reabrir</button>` : `<button class="btn" data-resolve-incident="${incident.id}">${icon("check")} Resolver</button>`}</td>
+    </tr>
   `;
 }
 
@@ -1945,6 +2362,7 @@ function availabilityActionButtons(item) {
 
 function documentsView() {
   const docs = state.data.documents || [];
+  const compliance = state.data.documentCompliance || { totals: {}, employees: [] };
   const expired = docs.filter((doc) => doc.status === "caducado").length;
   const pending = docs.filter((doc) => doc.status === "pendiente").length;
   const soon = docs.filter((doc) => doc.status === "proximo").length;
@@ -1952,6 +2370,7 @@ function documentsView() {
   return `
     <div class="page-head">
       <div><h1>Documentacion RRHH</h1><p>PRL, EPIs, DNI, contratos, certificados, caducidades y alertas.</p></div>
+      <button class="btn" data-sync-documents>${icon("refresh")} Actualizar estados</button>
     </div>
     <section class="cards-grid">
       ${cardTemplate({ label: "Caducados", value: expired, hint: "Bloquean asignacion", tone: "red" })}
@@ -1959,13 +2378,30 @@ function documentsView() {
       ${cardTemplate({ label: "Proximos", value: soon, hint: "Vencen en 30 dias", tone: "amber" })}
       ${cardTemplate({ label: "Vigentes", value: valid, hint: "Documentos correctos", tone: "green" })}
     </section>
+    <section class="panel">
+      <div class="panel-head"><h2>Cumplimiento por operario</h2></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Estado</th><th>Operario</th><th>Documentos</th><th>Bloqueos</th><th>Avisos</th></tr></thead>
+          <tbody>${(compliance.employees || []).map((row) => `
+            <tr>
+              <td>${documentComplianceTag(row.status)}</td>
+              <td><strong>${esc(row.employee_name)}</strong><br /><small class="muted">${esc(row.employee_role || "")}</small></td>
+              <td>${esc(row.vigente)} vigentes / ${esc(row.total)} total</td>
+              <td>${row.blockers.length ? row.blockers.map((doc) => `<span class="tag red">${esc(doc.type)}</span>`).join(" ") : `<span class="muted">Sin bloqueos</span>`}</td>
+              <td>${row.warnings.length ? row.warnings.map((doc) => `<span class="tag amber">${esc(doc.type)}</span>`).join(" ") : `<span class="muted">Sin avisos</span>`}</td>
+            </tr>
+          `).join("") || `<tr><td colspan="5"><div class="empty">Sin documentos registrados.</div></td></tr>`}</tbody>
+        </table>
+      </div>
+    </section>
     <section class="split-grid">
       <div class="panel">
         <div class="panel-head"><h2>Control documental</h2></div>
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>Operario</th><th>Documento</th><th>Estado</th><th>Caducidad</th><th>Aviso</th><th>Archivo</th></tr></thead>
-            <tbody>${docs.map((doc) => `<tr><td><strong>${esc(doc.employee_name)}</strong><br /><small class="muted">${esc(doc.employee_role)}</small></td><td>${esc(doc.type)}<br /><small class="muted">${esc(doc.name)}</small></td><td>${documentTag(doc.status)}</td><td>${esc(doc.expires_at || "Sin fecha")}</td><td>${documentExpiryText(doc)}</td><td>${doc.has_file ? `<button class="btn" data-document-file="${doc.id}" data-file-name="${esc(doc.file_name || doc.name)}">${icon("download")} Abrir</button>` : `<span class="muted">Sin archivo</span>`}</td></tr>`).join("") || `<tr><td colspan="6"><div class="empty">Sin documentos registrados.</div></td></tr>`}</tbody>
+            <thead><tr><th>Operario</th><th>Revision documental</th><th>Aviso</th><th>Archivo</th></tr></thead>
+            <tbody>${docs.map(documentReviewRow).join("") || `<tr><td colspan="4"><div class="empty">Sin documentos registrados.</div></td></tr>`}</tbody>
           </table>
         </div>
       </div>
@@ -1978,11 +2414,35 @@ function documentsView() {
           <div class="field"><label>Estado</label><select name="status"><option value="vigente">Vigente</option><option value="proximo">Proximo</option><option value="caducado">Caducado</option><option value="pendiente">Pendiente</option></select></div>
           <div class="field"><label>Caducidad</label><input name="expiresAt" type="date" /></div>
         </div>
-        <div class="field"><label>Archivo</label><input name="file" type="file" /></div>
+        <div class="field"><label>Archivo</label><input name="file" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.txt,.csv,.doc,.docx,.xls,.xlsx,application/pdf,image/jpeg,image/png,image/webp,text/plain,text/csv" /></div>
         <button class="btn primary full" type="submit">${icon("upload")} Guardar documento</button>
       </form>
     </section>
   `;
+}
+
+function documentReviewRow(doc) {
+  return `
+    <tr>
+      <td><strong>${esc(doc.employee_name)}</strong><br /><small class="muted">${esc(doc.employee_role)}</small></td>
+      <td>
+        <form class="inline-edit-form document-review-form" data-form="document-review" data-document-id="${esc(doc.id)}">
+          <select name="type">${["PRL", "DNI", "Contrato", "Certificado", "EPI", "Otro"].map((type) => `<option value="${type}" ${doc.type === type ? "selected" : ""}>${type}</option>`).join("")}</select>
+          <input name="name" value="${esc(doc.name)}" aria-label="Nombre documento" />
+          <select name="status">${["vigente", "proximo", "caducado", "pendiente"].map((status) => `<option value="${status}" ${doc.status === status ? "selected" : ""}>${documentStatusLabel(status)}</option>`).join("")}</select>
+          <input name="expiresAt" type="date" value="${esc(doc.expires_at || "")}" aria-label="Caducidad" />
+          <button class="btn compact" type="submit">${icon("check")} Guardar</button>
+        </form>
+      </td>
+      <td>${documentTag(doc.status)}<br />${documentExpiryText(doc)}</td>
+      <td>${doc.has_file ? `<button class="btn" data-document-file="${doc.id}" data-file-name="${esc(doc.file_name || doc.name)}">${icon("download")} Abrir</button>` : `<span class="muted">Sin archivo</span>`}</td>
+    </tr>
+  `;
+}
+
+function documentStatusLabel(status) {
+  const labels = { vigente: "Vigente", proximo: "Proximo", caducado: "Caducado", pendiente: "Pendiente" };
+  return labels[status] || status;
 }
 
 function documentTag(status) {
@@ -1991,6 +2451,16 @@ function documentTag(status) {
     proximo: ["Proximo", "amber"],
     caducado: ["Caducado", "red"],
     pendiente: ["Pendiente", "blue"]
+  };
+  const [label, tone] = map[status] || ["Pendiente", "blue"];
+  return `<span class="tag ${tone}">${label}</span>`;
+}
+
+function documentComplianceTag(status) {
+  const map = {
+    bloqueado: ["Bloqueado", "red"],
+    aviso: ["Aviso", "amber"],
+    vigente: ["Apto", "green"]
   };
   const [label, tone] = map[status] || ["Pendiente", "blue"];
   return `<span class="tag ${tone}">${label}</span>`;
@@ -2026,6 +2496,7 @@ function financesView() {
       ${cardTemplate({ label: "Margen medio", value: `${totals.margin || 0}%`, hint: "Rentabilidad global", tone: "blue" })}
       ${cardTemplate({ label: "Horas vendidas", value: totals.hours || 0, hint: "Horas planificadas", tone: "ink" })}
     </section>
+    ${allowancesControlPanel()}
     <section class="finance-grid">
       <div class="panel">
         <div class="panel-head"><h2>Rentabilidad por cliente</h2></div>
@@ -2044,6 +2515,83 @@ function financesView() {
       <div class="panel-head"><h2>Eventos con mayor beneficio</h2></div>
       ${topEventsFinanceTable(finance.topEvents || [])}
     </section>
+  `;
+}
+
+function allowanceAssignmentKey(eventId, employeeId) {
+  return `${eventId || ""}::${employeeId || ""}`;
+}
+
+function allowancesControlPanel() {
+  const allowances = state.data.allowances || [];
+  const allowanceMap = new Map(allowances.map((item) => [allowanceAssignmentKey(item.event_id, item.employee_id), item]));
+  const editableRows = (state.data.events || [])
+    .filter((event) => !assignmentEventLocked(event))
+    .sort((a, b) => `${a.date} ${a.start_time}`.localeCompare(`${b.date} ${b.start_time}`))
+    .flatMap((event) => (event.assignments || [])
+      .filter((assignment) => assignment.status !== "bloqueado")
+      .map((assignment) => ({
+        event,
+        assignment,
+        allowance: allowanceMap.get(allowanceAssignmentKey(event.id, assignment.employee_id)) || {}
+      })))
+    .slice(0, 18);
+  return `
+    <section class="panel" style="margin-top:16px">
+      <div class="panel-head">
+        <div>
+          <h2>Pluses por evento</h2>
+          <p class="muted">Kilometros, dietas, nocturnidad y extras para coste interno y albaran.</p>
+        </div>
+      </div>
+      <div class="list-grid">
+        ${editableRows.map(({ event, assignment, allowance }) => `
+          <form class="mini-card" data-form="allowance" data-event-id="${esc(event.id)}" data-employee-id="${esc(assignment.employee_id)}" data-allowance-id="${esc(allowance.id || "")}">
+            <div class="row-between">
+              <div>
+                <h3>${esc(assignment.name)}</h3>
+                <p class="muted">${esc(event.name)} · ${esc(shortDate(event.date))} · ${esc(assignment.role)}</p>
+              </div>
+              ${statusTag(allowance.id ? "confirmado" : "pendiente")}
+            </div>
+            <div class="form-grid compact">
+              <div class="field"><label>Km</label><input name="km" type="number" min="0" step="0.1" value="${esc(allowance.km || 0)}" /></div>
+              <div class="field"><label>Dieta</label><input name="diet" type="number" min="0" step="0.01" value="${esc(allowance.diet || 0)}" /></div>
+              <div class="field"><label>Nocturnidad</label><input name="nightHours" type="number" min="0" step="0.1" value="${esc(allowance.night_hours || 0)}" /></div>
+              <div class="field"><label>Extras</label><input name="extras" type="number" min="0" step="0.01" value="${esc(allowance.extras || 0)}" /></div>
+            </div>
+            <div class="filters-row">
+              <button class="btn primary" type="submit">${icon("save")} Guardar</button>
+              ${allowance.id ? `<button class="btn" type="button" data-delete-allowance="${esc(allowance.id)}">${icon("trash")} Quitar</button>` : ""}
+            </div>
+          </form>
+        `).join("") || `<div class="empty">No hay eventos editables con operarios asignados.</div>`}
+      </div>
+      ${allowanceHistoryTable(allowances)}
+    </section>
+  `;
+}
+
+function allowanceHistoryTable(rows) {
+  return `
+    <div class="table-wrap" style="margin-top:16px">
+      <table class="data-table">
+        <thead><tr><th>Evento</th><th>Operario</th><th>Km</th><th>Dieta</th><th>Noct.</th><th>Extras</th><th>Estado</th></tr></thead>
+        <tbody>
+          ${rows.slice(0, 12).map((row) => `
+            <tr>
+              <td><strong>${esc(row.event_name || "")}</strong><br /><small class="muted">${esc(shortDate(row.event_date))} · ${esc(row.event_location || "")}</small></td>
+              <td>${esc(row.employee_name || "")}<br /><small class="muted">${esc(row.assignment_role || row.employee_role || "")}</small></td>
+              <td>${esc(row.km || 0)}</td>
+              <td>${money(row.diet || 0)}</td>
+              <td>${esc(row.night_hours || 0)} h</td>
+              <td>${money(row.extras || 0)}</td>
+              <td>${row.locked ? statusTag("finalizado") : statusTag("confirmado")}</td>
+            </tr>
+          `).join("") || `<tr><td colspan="7"><div class="empty">Sin pluses registrados todavia.</div></td></tr>`}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 
@@ -2115,15 +2663,81 @@ function topEventsFinanceTable(rows) {
   `;
 }
 
+function reportFilterValue(name) {
+  return state.reportFilters?.[name] || "";
+}
+
+function reportStatusOptions() {
+  const options = [
+    ["", "Todos"],
+    ["completo", "Completo"],
+    ["falta_personal", "Falta personal"],
+    ["critico", "Critico"],
+    ["sin_jefe", "Sin jefe"],
+    ["finalizado", "Finalizado"],
+    ["google", "Google"],
+    ["abierta", "Incidencia abierta"],
+    ["resuelta", "Incidencia resuelta"]
+  ];
+  const selected = reportFilterValue("status");
+  return options.map(([value, label]) => `<option value="${esc(value)}" ${value === selected ? "selected" : ""}>${esc(label)}</option>`).join("");
+}
+
+function syncReportFiltersFromDom() {
+  const container = document.querySelector("[data-report-filters]");
+  if (!container) return state.reportFilters || {};
+  state.reportFilters = {
+    from: container.querySelector("[name=from]")?.value || "",
+    to: container.querySelector("[name=to]")?.value || "",
+    clientId: container.querySelector("[name=clientId]")?.value || "",
+    employeeId: container.querySelector("[name=employeeId]")?.value || "",
+    status: container.querySelector("[name=status]")?.value || "",
+    search: container.querySelector("[name=search]")?.value || ""
+  };
+  return state.reportFilters;
+}
+
+function reportPath(path, format) {
+  const filters = syncReportFiltersFromDom();
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) params.set(key, value);
+  }
+  if (format) params.set("format", format);
+  const query = params.toString();
+  return `${path}${query ? `?${query}` : ""}`;
+}
+
 function reportsView() {
+  const clients = state.data.clients || [];
+  const employees = state.data.employees || [];
   return `
     <div class="page-head">
       <div><h1>Informes</h1><p>Exportaciones PDF, Excel, JSON y CSV preparadas para operaciones.</p></div>
     </div>
+    <section class="panel report-filter-panel" data-report-filters>
+      <div class="row-between">
+        <div>
+          <h2>Filtros del informe</h2>
+          <p class="muted">Acota las descargas por periodo, cliente, operario o estado operativo.</p>
+        </div>
+        <button class="btn" type="button" data-clear-report-filters>${icon("refresh")} Limpiar</button>
+      </div>
+      <div class="form-grid compact report-filter-grid">
+        <div class="field"><label>Buscar</label><input name="search" value="${esc(reportFilterValue("search"))}" placeholder="Evento, cliente, operario, DNI..." /></div>
+        <div class="field"><label>Desde</label><input name="from" type="date" value="${esc(reportFilterValue("from"))}" /></div>
+        <div class="field"><label>Hasta</label><input name="to" type="date" value="${esc(reportFilterValue("to"))}" /></div>
+        <div class="field"><label>Cliente</label><select name="clientId"><option value="">Todos</option>${clients.map((client) => `<option value="${esc(client.id)}" ${client.id === reportFilterValue("clientId") ? "selected" : ""}>${esc(client.name)}</option>`).join("")}</select></div>
+        <div class="field"><label>Operario</label><select name="employeeId"><option value="">Todos</option>${employees.map((employee) => `<option value="${esc(employee.id)}" ${employee.id === reportFilterValue("employeeId") ? "selected" : ""}>${esc(employee.name)} · ${esc(employee.role)}</option>`).join("")}</select></div>
+        <div class="field"><label>Estado</label><select name="status">${reportStatusOptions()}</select></div>
+      </div>
+    </section>
     <section class="list-grid">
-      <div class="mini-card row-between"><div><h3>Eventos y rentabilidad</h3><p class="muted">Incluye presupuesto, coste, beneficio, margen y estado operativo.</p></div><div class="filters-row"><button class="btn" data-export-json>${icon("file")} JSON</button><button class="btn" data-export-xls>${icon("download")} Excel</button><button class="btn" data-export-pdf>${icon("file")} PDF</button><button class="btn primary" data-export-csv>${icon("chart")} CSV</button></div></div>
-      <div class="mini-card row-between"><div><h3>Finanzas Pro</h3><p class="muted">Rentabilidad por cliente, mes, operario y ranking de eventos.</p></div><div class="filters-row"><button class="btn" data-finance-json>${icon("file")} JSON</button><button class="btn" data-finance-xls>${icon("download")} Excel</button><button class="btn" data-finance-pdf>${icon("file")} PDF</button><button class="btn primary" data-finance-csv>${icon("chart")} CSV</button></div></div>
-      <div class="mini-card row-between"><div><h3>Albaranes A4</h3><p class="muted">Un albaran por evento con horarios, dietas, kilometraje, precio y firma cliente.</p></div><div class="filters-row"><button class="btn" data-albaran="${state.data.events[0]?.id || ""}">${icon("file")} Abrir ultimo</button><button class="btn primary" data-albaran-pdf="${state.data.events[0]?.id || ""}">${icon("download")} PDF</button></div></div>
+      <div class="mini-card row-between"><div><h3>Eventos y rentabilidad</h3><p class="muted">Incluye presupuesto, coste, beneficio, margen y estado operativo.</p></div><div class="filters-row"><button class="btn" type="button" data-export-json>${icon("file")} JSON</button><button class="btn" type="button" data-export-xls>${icon("download")} Excel</button><button class="btn" type="button" data-export-pdf>${icon("file")} PDF</button><button class="btn primary" type="button" data-export-csv>${icon("chart")} CSV</button></div></div>
+      <div class="mini-card row-between"><div><h3>Finanzas Pro</h3><p class="muted">Rentabilidad por cliente, mes, operario y ranking de eventos.</p></div><div class="filters-row"><button class="btn" type="button" data-finance-json>${icon("file")} JSON</button><button class="btn" type="button" data-finance-xls>${icon("download")} Excel</button><button class="btn" type="button" data-finance-pdf>${icon("file")} PDF</button><button class="btn primary" type="button" data-finance-csv>${icon("chart")} CSV</button></div></div>
+      <div class="mini-card row-between"><div><h3>Operarios y documentacion</h3><p class="muted">Tallaje, contacto, skills y estado documental por operario.</p></div><div class="filters-row"><button class="btn" type="button" data-employees-json>${icon("file")} JSON</button><button class="btn" type="button" data-employees-xls>${icon("download")} Excel</button><button class="btn" type="button" data-employees-pdf>${icon("file")} PDF</button><button class="btn primary" type="button" data-employees-csv>${icon("chart")} CSV</button></div></div>
+      <div class="mini-card row-between"><div><h3>Incidencias Pro</h3><p class="muted">Seguimiento de retrasos, ausencias, documentacion y avisos por evento u operario.</p></div><div class="filters-row"><button class="btn" type="button" data-incidents-json>${icon("file")} JSON</button><button class="btn" type="button" data-incidents-xls>${icon("download")} Excel</button><button class="btn" type="button" data-incidents-pdf>${icon("file")} PDF</button><button class="btn primary" type="button" data-incidents-csv>${icon("chart")} CSV</button></div></div>
+      <div class="mini-card row-between"><div><h3>Albaranes A4</h3><p class="muted">Un albaran por evento con horarios, dietas, kilometraje, precio y firma cliente.</p></div><div class="filters-row"><button class="btn" type="button" data-albaran="${state.data.events[0]?.id || ""}">${icon("file")} Abrir ultimo</button><button class="btn primary" type="button" data-albaran-pdf="${state.data.events[0]?.id || ""}">${icon("download")} PDF</button></div></div>
     </section>
   `;
 }
@@ -2156,11 +2770,22 @@ function settingsView() {
           <div class="field"><label>WhatsApp oficina</label><input name="office_whatsapp" value="${esc(settings.office_whatsapp || "")}" /></div>
         </div>
         <div class="inspector-section">
+          <h3>Fichaje GPS</h3>
+          <div class="form-grid compact">
+            <div class="field"><label>Radio permitido (m)</label><input name="clock_radius_m" type="number" min="25" step="1" value="${esc(settings.clock_radius_m || 150)}" /></div>
+            <div class="field"><label>Entrada antes (min)</label><input name="clock_entry_early_minutes" type="number" min="0" step="1" value="${esc(settings.clock_entry_early_minutes || 90)}" /></div>
+            <div class="field"><label>Salida despues (min)</label><input name="clock_exit_late_minutes" type="number" min="0" step="1" value="${esc(settings.clock_exit_late_minutes || 240)}" /></div>
+            <div class="field"><label>Margen incidencia (min)</label><input name="incident_absence_grace_minutes" type="number" min="1" step="1" value="${esc(settings.incident_absence_grace_minutes || 15)}" /></div>
+          </div>
+        </div>
+        <div class="inspector-section">
           <h3>Google Calendar</h3>
           <label class="toggle-row"><input name="google_calendar_enabled" type="checkbox" value="true" ${settings.google_calendar_enabled === "false" ? "" : "checked"} /> Mostrar eventos externos de Google</label>
           <label class="toggle-row"><input name="google_calendar_sync_enabled" type="checkbox" value="true" ${settings.google_calendar_sync_enabled === "false" ? "" : "checked"} /> Guardar eventos MARFAN en Google</label>
           <div class="role-row"><span>Escritura Google</span><strong>${settings.google_calendar_service_account_configured === "true" ? "Configurada" : "Pendiente"}</strong></div>
           <div class="role-row"><span>OAuth Google</span><strong>${settings.google_calendar_oauth_connected === "true" ? "Conectado" : settings.google_calendar_oauth_client_configured === "true" ? "Cliente cargado" : "Pendiente"}</strong></div>
+          <div class="role-row"><span>Eventos sincronizados</span><strong>${esc(settings.google_sync_synced_count || 0)} / ${esc(settings.google_sync_total_count || 0)}</strong></div>
+          <div class="role-row"><span>Pendientes / errores</span><strong>${esc(Number(settings.google_sync_pending_count || 0) + Number(settings.google_sync_pending_auth_count || 0))} / ${esc(settings.google_sync_error_count || 0)}</strong></div>
           ${settings.google_calendar_oauth_client_id ? `<div class="role-row"><span>Cliente OAuth</span><strong>${esc(settings.google_calendar_oauth_client_id)}</strong></div>` : ""}
           ${settings.google_calendar_service_account_email ? `<div class="role-row"><span>Cuenta servicio</span><strong>${esc(settings.google_calendar_service_account_email)}</strong></div>` : ""}
           <div class="field"><label>ID calendario Google</label><input name="google_calendar_id" value="${esc(settings.google_calendar_id || "")}" /></div>
@@ -2169,6 +2794,7 @@ function settingsView() {
           <div class="field"><label>URL embed Google</label><input name="google_calendar_embed_url" value="${esc(settings.google_calendar_embed_url || "")}" /></div>
           <div class="field"><label>JSON cliente OAuth Google</label><textarea name="google_calendar_oauth_client_json" placeholder="Pega aqui el JSON client_secret de Google. Si lo dejas vacio se conserva el anterior."></textarea></div>
           <button class="btn full" type="button" data-google-oauth-start>${icon("calendar")} Conectar Google Calendar</button>
+          <button class="btn full" type="button" data-google-sync-pending>${icon("refresh")} Reintentar pendientes Google</button>
           <div class="field"><label>JSON cuenta de servicio Google</label><textarea name="google_calendar_service_account_json" placeholder="Pega aqui el JSON de la cuenta de servicio. Si lo dejas vacio se conserva el anterior."></textarea></div>
           <div class="field"><label>Usuario delegado Google Workspace</label><input name="google_calendar_delegated_user" value="${esc(settings.google_calendar_delegated_user || "")}" placeholder="Opcional" /></div>
           <div class="field"><label>Feed MARFAN para suscribir en Google</label><input readonly value="${esc(feedUrl)}" /></div>
@@ -2210,20 +2836,51 @@ function settingsView() {
 
 function backupsView() {
   const backups = state.data.backups || [];
+  const automation = state.data.backupAutomation || {};
   const totalSize = backups.reduce((sum, backup) => sum + Number(backup.actual_size_bytes || backup.size_bytes || 0), 0);
+  const restorePending = Boolean(automation.restorePending);
   const cards = [
     { label: "Copias guardadas", value: backups.length, hint: "Versiones disponibles", tone: "blue" },
     { label: "Verificadas", value: backups.filter((backup) => backup.verified).length, hint: "Archivo presente y tamano correcto", tone: "green" },
-    { label: "Automaticas", value: backups.filter((backup) => backup.type === "auto").length, hint: "Proteccion diaria", tone: "amber" },
+    { label: "Automaticas", value: backups.filter((backup) => backup.type === "auto").length, hint: automation.enabled ? `Cada ${automation.intervalHours || 24} h` : "Desactivadas", tone: "amber" },
     { label: "Espacio usado", value: formatBytes(totalSize), hint: "Tamano real de copias", tone: "blue" }
   ];
   return `
     <div class="page-head">
       <div><h1>Backups</h1><p>Backup manual, automatico, versionado y restauracion protegida.</p></div>
-      <button class="btn primary" data-backup>${icon("backup")} Crear backup</button>
+      <div class="toolbar-actions">
+        <button class="btn" data-auto-backup>${icon("refresh")} Backup auto ahora</button>
+        <button class="btn primary" data-backup>${icon("backup")} Crear backup</button>
+      </div>
     </div>
     <section class="cards-grid">
       ${cards.map(cardTemplate).join("")}
+    </section>
+    ${restorePending ? `<section class="panel warning-panel"><div class="panel-head"><h2>Restauracion preparada</h2></div><p class="muted">Hay una restauracion pendiente. Se aplicara en el proximo reinicio seguro del servidor.</p></section>` : ""}
+    <section class="split-grid">
+      <form class="panel inspector" data-form="backup-settings">
+        <h2>Backup automatico</h2>
+        <label class="toggle-row"><input name="backup_auto_enabled" type="checkbox" ${automation.enabled === false ? "" : "checked"} /> Activado</label>
+        <div class="form-grid compact">
+          <div class="field"><label>Cada horas</label><input name="backup_auto_interval_hours" type="number" min="1" step="1" value="${esc(automation.intervalHours || 24)}" /></div>
+          <div class="field"><label>Conservar dias</label><input name="backup_auto_retention_days" type="number" min="1" step="1" value="${esc(automation.retentionDays || 30)}" /></div>
+          <div class="field"><label>Max. automaticas</label><input name="backup_auto_retention_count" type="number" min="1" step="1" value="${esc(automation.retentionCount || 30)}" /></div>
+        </div>
+        <div class="inspector-section">
+          <div class="role-row"><span>Ultima automatica</span><strong>${esc(automation.latestAutoAt || "-")}</strong></div>
+          <div class="role-row"><span>Proxima automatica</span><strong>${automation.enabled === false ? "Desactivada" : esc(automation.nextAutoAt || "-")}</strong></div>
+          <div class="role-row"><span>Ultima ejecucion</span><strong>${esc(automation.lastRunAt || "-")}</strong></div>
+        </div>
+        <button class="btn primary full" type="submit">${icon("settings")} Guardar backups</button>
+      </form>
+      <div class="panel">
+        <div class="panel-head"><h2>Politica de seguridad</h2></div>
+        <div class="list-grid">
+          <div class="mini-card"><strong>Manual</strong><small>Copia inmediata antes de cambios importantes.</small></div>
+          <div class="mini-card"><strong>Automatico</strong><small>Copia programada mientras el servidor esta activo.</small></div>
+          <div class="mini-card"><strong>Restauracion</strong><small>Solo Super Admin y siempre con copia previa de seguridad.</small></div>
+        </div>
+      </div>
     </section>
     <section class="panel">
       <div class="panel-head"><h2>Copias disponibles</h2></div>
@@ -2235,7 +2892,7 @@ function backupsView() {
               <td>${statusTag(backup.type === "auto" ? "confirmado" : backup.type === "safety" ? "finalizado" : "pendiente")}</td>
               <td><strong>${esc(backup.label)}</strong></td>
               <td>${formatBytes(backup.actual_size_bytes || backup.size_bytes)}</td>
-              <td>${backupIntegrityTag(backup)}</td>
+              <td>${backupIntegrityTag(backup)}<br /><small class="muted">${esc(backup.sqlite_quick_check || backup.integrity_error || "-")}</small></td>
               <td>${esc(backup.created_at)}</td>
               <td><small class="muted">${esc(backup.sha256 ? backup.sha256.slice(0, 12) : "-")}</small></td>
               <td><small class="muted">${esc(backup.file_path)}</small></td>
@@ -2330,8 +2987,8 @@ function employeeHomeView(data) {
       ${employeeClockActionButton(service, "salida")}
       <button data-open-maps="${service.lat},${service.lng}">${icon("map")} Abrir Maps</button>
       ${service.google_maps_url ? `<button data-open-url="${esc(service.google_maps_url)}">${icon("map")} Recinto</button>` : ""}
-      <button data-call-office>${icon("phone")} Llamar oficina</button>
-      <button data-whatsapp>${icon("message")} WhatsApp</button>
+      <button data-call-office="${esc(data.office?.phone || "")}">${icon("phone")} Llamar oficina</button>
+      <button data-whatsapp="${esc(data.office?.whatsapp || data.office?.phone || "")}">${icon("message")} WhatsApp</button>
     </div>
     ${service.is_team_leader ? teamLeaderSignaturePanel(service) : ""}
     <article class="geo-card ${clockMeta.className}">
@@ -2342,17 +2999,48 @@ function employeeHomeView(data) {
       </div>
       <button class="clock-button ${clockMeta.className}" data-clock="${esc(clockMeta.nextType || "entrada")}" ${clockMeta.nextType ? "" : "disabled"}>${icon(clockMeta.nextType === "salida" ? "logout" : "check")} ${esc(clockMeta.action)}</button>
     </article>
-    <div class="mobile-grid">
-      <article class="mobile-card"><h3>Alertas de documentos</h3><p><strong>${docAlerts.length}</strong> documentos pendientes</p><button class="btn" data-employee-tab="documentos">${icon("file")} Ver documentos</button></article>
-      <article class="mobile-card"><h3>Checklist de hoy</h3><p class="muted">3 / 5 completadas</p><div class="bar" style="width:100%"><span style="width:60%"></span></div><p>${statusTag("confirmado")} EPI y calzado</p><p>${statusTag("pendiente")} Revision herramientas</p></article>
-    </div>
+	    <div class="mobile-grid">
+	      <article class="mobile-card"><h3>Alertas de documentos</h3><p><strong>${docAlerts.length}</strong> documentos pendientes</p><button class="btn" data-employee-tab="documentos">${icon("file")} Ver documentos</button></article>
+	      ${employeeChecklistCard(service)}
+	    </div>
+	    <form class="mobile-card" data-form="employee-incident">
+	      <h3>Avisar incidencia</h3>
+	      <input type="hidden" name="eventId" value="${esc(service.id)}" />
+	      <div class="field"><label>Tipo</label><select name="type"><option value="retraso">Retraso</option><option value="accidente">Accidente</option><option value="cliente">Cliente</option><option value="documentacion">Documentacion</option><option value="otro">Otro</option></select></div>
+	      <div class="field"><label>Mensaje</label><textarea name="description" placeholder="Cuenta que ocurre para que oficina lo vea al momento" required></textarea></div>
+	      <button class="btn primary full" type="submit">${icon("alert")} Enviar aviso</button>
+	    </form>
+	  `;
+	}
+
+function employeeChecklistCard(service) {
+  const checklist = service.checklist || { completed: 0, total: 0, percent: 0, items: [] };
+  return `
+    <article class="mobile-card">
+      <h3>Checklist de hoy</h3>
+      <p class="muted">${esc(checklist.completed)} / ${esc(checklist.total)} completadas</p>
+      <div class="bar" style="width:100%"><span style="width:${Math.max(0, Math.min(100, Number(checklist.percent || 0)))}%"></span></div>
+      ${(checklist.items || []).map((item) => `
+        <p>${checklistItemTag(item.status)} ${esc(item.label)}<br /><small class="muted">${esc(item.detail || "")}</small></p>
+      `).join("")}
+    </article>
   `;
+}
+
+function checklistItemTag(status) {
+  const map = {
+    done: ["OK", "green"],
+    warning: ["Aviso", "amber"],
+    pending: ["Pendiente", "blue"]
+  };
+  const [label, tone] = map[status] || map.pending;
+  return `<span class="tag ${tone}">${label}</span>`;
 }
 
 function employeeClockMeta(service) {
   const state = service.clock_state || "sin_fichar";
   const map = {
-    sin_fichar: ["Pendiente de entrada", "Usa GPS real o ubicacion demo para fichar entrada.", "FICHAR ENTRADA", "entrada", "ok", "check"],
+    sin_fichar: ["Pendiente de entrada", "Permite ubicacion GPS real para fichar entrada.", "FICHAR ENTRADA", "entrada", "ok", "check"],
     pendiente: ["Servicio pendiente de confirmar", "Confirma asistencia y ficha entrada al llegar.", "FICHAR ENTRADA", "entrada", "warning", "clock"],
     tarde: ["Entrada pendiente con retraso", "Ficha entrada cuanto antes o avisa a oficina.", "FICHAR ENTRADA", "entrada", "danger", "alert"],
     en_curso: ["Servicio en curso", "Entrada registrada. Al terminar, ficha salida.", "FICHAR SALIDA", "salida", "progress", "clock"],
@@ -2361,6 +3049,21 @@ function employeeClockMeta(service) {
   };
   const [label, detail, action, nextType, className, iconName] = map[state] || map.sin_fichar;
   const last = service.last_clock_at ? String(service.last_clock_at).slice(11, 16) : "GPS";
+  const allowed =
+    nextType === "entrada" ? Boolean(Number(service.can_clock_in || 0)) :
+    nextType === "salida" ? Boolean(Number(service.can_clock_out || 0)) :
+    false;
+  if (nextType && !allowed) {
+    return {
+      label,
+      detail: service.clock_block_reason || detail,
+      action: "NO DISPONIBLE",
+      nextType: null,
+      className: "warning",
+      icon: "clock",
+      last
+    };
+  }
   return { label, detail, action, nextType, className, icon: iconName, last };
 }
 
@@ -2415,6 +3118,12 @@ function employeeTabView(data) {
         </div>
         <div class="mobile-list">
           ${(data.pastServices || []).map(employeeServiceItem).join("") || `<div class="empty">Sin servicios finalizados todavía.</div>`}
+        </div>
+        <div class="inspector-section">
+          <h3>Mis incidencias</h3>
+          <div class="mobile-list">
+            ${(data.incidents || []).map(employeeIncidentItem).join("") || `<div class="empty">Sin incidencias registradas.</div>`}
+          </div>
         </div>
       </div>
     `;
@@ -2633,6 +3342,14 @@ function employeeDocumentsView(data) {
           </div>
         `).join("") || `<div class="empty">Sin documentos registrados.</div>`}
       </div>
+      <form class="inspector-section" data-form="employee-document">
+        <h3>Subir documento</h3>
+        <div class="field"><label>Tipo</label><select name="type"><option>DNI</option><option>PRL</option><option>Contrato</option><option>Certificado</option><option>EPI</option><option>Otro</option></select></div>
+        <div class="field"><label>Nombre</label><input name="name" placeholder="Ej. DNI renovado" required /></div>
+        <div class="field"><label>Caducidad</label><input name="expiresAt" type="date" /></div>
+        <div class="field"><label>Archivo</label><input name="file" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.txt,.csv,.doc,.docx,.xls,.xlsx,application/pdf,image/jpeg,image/png,image/webp,text/plain,text/csv" required /></div>
+        <button class="btn primary full" type="submit">${icon("upload")} Enviar a revision</button>
+      </form>
     </div>
   `;
 }
@@ -2648,6 +3365,23 @@ function employeeServiceItem(service) {
       <div class="doc-actions">
         ${employeeServiceStatusTag(service)}
         ${employeeConfirmButton(service, true)}
+      </div>
+    </div>
+  `;
+}
+
+function employeeIncidentItem(incident) {
+  const tone = incident.status === "resuelta" ? "green" : incident.priority === "critica" ? "red" : incident.priority === "alta" ? "amber" : "blue";
+  return `
+    <div class="mobile-list-item service-list-item">
+      <div>
+        <strong>${esc(incident.title || incident.type || "Incidencia")}</strong>
+        <small class="muted">${esc(incident.event_name || "Sin evento")} · ${esc(incident.event_date || "")}</small>
+        <small>${esc(incident.description || "")}</small>
+      </div>
+      <div class="doc-actions">
+        <span class="tag ${tone}">${esc(incident.status || "abierta")}</span>
+        <small class="muted">${shortDateTime(incident.resolved_at || incident.created_at)}</small>
       </div>
     </div>
   `;
@@ -2762,6 +3496,13 @@ function formData(form) {
   return Object.fromEntries(new FormData(form).entries());
 }
 
+function permissionsFromForm(form) {
+  return Object.fromEntries(adminPermissionDefs.map(([key]) => [
+    key,
+    Boolean(form.querySelector(`[name=perm_${key}]`)?.checked)
+  ]));
+}
+
 function eventRequirementsFromForm(form) {
   return Array.from(form.querySelectorAll("[data-role-count]"))
     .map((input) => ({
@@ -2786,6 +3527,16 @@ function readFilePayload(file) {
   });
 }
 
+function readFileText(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !file.size) return reject(new Error("Selecciona un archivo CSV"));
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
+    reader.readAsText(file, "utf-8");
+  });
+}
+
 async function submitDocument(form) {
   const data = new FormData(form);
   const filePayload = await readFilePayload(data.get("file"));
@@ -2798,6 +3549,34 @@ async function submitDocument(form) {
       status: data.get("status"),
       expiresAt: data.get("expiresAt"),
       ...filePayload
+    }
+  });
+}
+
+async function submitEmployeeDocument(form) {
+  const data = new FormData(form);
+  const filePayload = await readFilePayload(data.get("file"));
+  await api("/api/employee/documents", {
+    method: "POST",
+    body: {
+      type: data.get("type"),
+      name: data.get("name"),
+      expiresAt: data.get("expiresAt"),
+      ...filePayload
+    }
+  });
+}
+
+async function submitCsvImport(form, kind) {
+  const data = new FormData(form);
+  const file = data.get("file");
+  const fileText = await readFileText(file);
+  return api(`/api/imports/${kind}`, {
+    method: "POST",
+    body: {
+      fileName: file.name,
+      fileText,
+      defaultPassword: data.get("defaultPassword") || "Marfan2026!"
     }
   });
 }
@@ -2881,6 +3660,7 @@ async function handleSubmit(event) {
       const body = formData(form);
       body.skills = String(body.skills || "").split(",").map((item) => item.trim()).filter(Boolean);
       body.teamLeader = Boolean(form.querySelector("[name=teamLeader]")?.checked);
+      body.portalAccess = Boolean(form.querySelector("[name=portalAccess]")?.checked);
       if (body.teamLeader) {
         body.role = "Jefe de equipo";
         body.skills = Array.from(new Set([...body.skills, "jefe"]));
@@ -2893,6 +3673,7 @@ async function handleSubmit(event) {
       const body = formData(form);
       body.skills = String(body.skills || "").split(",").map((item) => item.trim()).filter(Boolean);
       body.teamLeader = Boolean(form.querySelector("[name=teamLeader]")?.checked);
+      body.portalAccess = Boolean(form.querySelector("[name=portalAccess]")?.checked);
       if (body.teamLeader) {
         body.role = "Jefe de equipo";
         body.skills = Array.from(new Set([...body.skills, "jefe"]));
@@ -2902,11 +3683,30 @@ async function handleSubmit(event) {
       toast("Operario actualizado");
       await renderAdmin(true);
     }
+    if (type === "employee-import") {
+      const result = await submitCsvImport(form, "employees");
+      toast(`Operarios importados: ${result.inserted} nuevos, ${result.updated} actualizados, ${result.skipped} omitidos`);
+      await renderAdmin(true);
+    }
+    if (type === "client-import") {
+      const result = await submitCsvImport(form, "clients");
+      toast(`Clientes importados: ${result.inserted} nuevos, ${result.updated} actualizados, ${result.skipped} omitidos`);
+      await renderAdmin(true);
+    }
     if (type === "user") {
       const body = formData(form);
       body.skills = String(body.skills || "").split(",").map((item) => item.trim()).filter(Boolean);
+      body.permissions = permissionsFromForm(form);
       await api("/api/users", { method: "POST", body });
       toast("Usuario creado");
+      await renderAdmin(true);
+    }
+    if (type === "user-permissions") {
+      await api(`/api/users/${form.dataset.userId}`, {
+        method: "PATCH",
+        body: { permissions: permissionsFromForm(form) }
+      });
+      toast("Permisos actualizados");
       await renderAdmin(true);
     }
     if (type === "incident") {
@@ -2917,13 +3717,36 @@ async function handleSubmit(event) {
     if (type === "time-entry") {
       const body = formData(form);
       body.accepted = Boolean(form.querySelector("[name=accepted]")?.checked);
+      if (!body.correctionReason) body.correctionReason = body.notes || "Correccion manual oficina";
       await api(`/api/time-entries/${form.dataset.entryId}`, { method: "PATCH", body });
       toast("Fichaje corregido");
+      await renderAdmin(true);
+    }
+    if (type === "allowance") {
+      const body = {
+        ...formData(form),
+        eventId: form.dataset.eventId,
+        employeeId: form.dataset.employeeId
+      };
+      const allowanceId = form.dataset.allowanceId;
+      await api(allowanceId ? `/api/allowances/${encodeURIComponent(allowanceId)}` : "/api/allowances", {
+        method: allowanceId ? "PATCH" : "POST",
+        body
+      });
+      toast("Pluses guardados");
       await renderAdmin(true);
     }
     if (type === "document") {
       await submitDocument(form);
       toast("Documento guardado");
+      await renderAdmin(true);
+    }
+    if (type === "document-review") {
+      await api(`/api/documents/${encodeURIComponent(form.dataset.documentId)}`, {
+        method: "PATCH",
+        body: formData(form)
+      });
+      toast("Documento revisado");
       await renderAdmin(true);
     }
     if (type === "availability-admin") {
@@ -2937,6 +3760,13 @@ async function handleSubmit(event) {
       body.google_calendar_sync_enabled = form.querySelector("[name=google_calendar_sync_enabled]")?.checked ? "true" : "false";
       await api("/api/settings", { method: "PATCH", body });
       toast("Configuracion guardada");
+      await renderAdmin(true);
+    }
+    if (type === "backup-settings") {
+      const body = formData(form);
+      body.backup_auto_enabled = form.querySelector("[name=backup_auto_enabled]")?.checked ? "true" : "false";
+      await api("/api/settings", { method: "PATCH", body });
+      toast("Politica de backups guardada");
       await renderAdmin(true);
     }
     if (type === "role") {
@@ -2960,7 +3790,20 @@ async function handleSubmit(event) {
     }
     if (type === "availability") {
       await api("/api/employee/availability", { method: "POST", body: formData(form) });
+      state.employeeHome = null;
       toast("Disponibilidad enviada");
+      await renderEmployee(true);
+    }
+    if (type === "employee-document") {
+      await submitEmployeeDocument(form);
+      state.employeeHome = null;
+      toast("Documento enviado a revision");
+      await renderEmployee(true);
+    }
+    if (type === "employee-incident") {
+      await api("/api/employee/incidents", { method: "POST", body: formData(form) });
+      state.employeeHome = null;
+      toast("Incidencia enviada a oficina");
       await renderEmployee(true);
     }
     if (type === "profile") {
@@ -2987,6 +3830,7 @@ async function handleClick(event) {
   }
 
   if (target.dataset.demo) {
+    if (!state.publicConfig?.demoMode) return;
     state.loginMode = target.dataset.demo;
     renderLogin();
     return;
@@ -2997,9 +3841,9 @@ async function handleClick(event) {
     const identifier = form?.querySelector("[name=identifier]")?.value || "";
     const result = await api("/api/auth/recover", { method: "POST", body: { identifier } });
     state.recoveryCode = result.recoveryCode || "";
-    state.showReset = true;
+    state.showReset = Boolean(result.recoveryCode);
     renderLogin();
-    return toast(result.recoveryCode ? "Codigo temporal generado" : "Si el usuario existe, se ha generado un codigo");
+    return toast(result.recoveryCode ? "Codigo temporal generado" : "Si el usuario existe, oficina gestionara la recuperacion");
   }
 
   if (target.dataset.showReset !== undefined) {
@@ -3049,6 +3893,7 @@ async function handleClick(event) {
     state.token = null;
     state.user = null;
     state.data = {};
+    state.eventSnapshots = {};
     return renderLogin();
   }
 
@@ -3073,10 +3918,63 @@ async function handleClick(event) {
     return;
   }
 
+  if (target.dataset.googleSyncPending !== undefined) {
+    const result = await api("/api/calendar/google-sync/retry", {
+      method: "POST",
+      body: { limit: 50 }
+    });
+    toast(`Google: ${result.synced} sincronizados, ${result.failed} errores, ${result.pendingAuth} pendientes de conexion`);
+    return renderAdmin(true);
+  }
+
+  if (target.dataset.googleSyncEvent) {
+    const result = await api("/api/calendar/google-sync/retry", {
+      method: "POST",
+      body: { eventId: target.dataset.googleSyncEvent }
+    });
+    const status = googleSyncLabel(result.googleSync?.status);
+    toast(`Google Calendar: ${status}`);
+    return renderAdmin(true);
+  }
+
+  if (target.dataset.detectAttendanceDate) {
+    const result = await api("/api/incidents/detect-attendance", {
+      method: "POST",
+      body: { date: target.dataset.detectAttendanceDate }
+    });
+    toast(`${result.created} nuevas, ${result.updated} actualizadas, ${result.skipped} sin cambios`);
+    return renderAdmin(true);
+  }
+
   if (target.dataset.selectEvent) {
     state.selectedEventId = target.dataset.selectEvent;
     state.editEventId = null;
+    state.selectedEventSnapshotId = null;
     return renderAdmin();
+  }
+
+  if (target.dataset.eventSnapshot) {
+    state.selectedEventSnapshotId =
+      state.selectedEventSnapshotId === target.dataset.eventSnapshot ? null : target.dataset.eventSnapshot;
+    return renderAdmin();
+  }
+
+  if (target.dataset.importVisibleGoogleEvents !== undefined) {
+    const googleEvents = (state.data.calendarEvents || []).filter((item) => item.external);
+    if (!googleEvents.length) return toast("No hay eventos Google pendientes en esta vista");
+    const result = await api("/api/calendar/import-google-events", {
+      method: "POST",
+      body: { events: googleEvents.map(googleEventImportPayload) }
+    });
+    const first = result.events?.[0];
+    if (first) {
+      state.selectedEventId = first.id;
+      state.selectedEventSnapshotId = null;
+      state.editEventId = first.id;
+      state.assignmentEventId = first.id;
+    }
+    toast(`Google importado: ${result.created} nuevos, ${result.existing} ya existentes`);
+    return renderAdmin(true);
   }
 
   if (target.dataset.importGoogleEvent) {
@@ -3084,21 +3982,10 @@ async function handleClick(event) {
     if (!googleEvent) return toast("No encuentro ese evento de Google en el calendario actual", "error");
     const result = await api("/api/calendar/import-google-event", {
       method: "POST",
-      body: {
-        id: googleEvent.id,
-        googleUid: googleEvent.google_uid || googleEvent.id,
-        googleEventId: googleEvent.google_event_id || "",
-        source: googleEvent.source || "google",
-        name: googleEvent.name,
-        date: googleEvent.date,
-        startTime: googleEvent.start_time,
-        endTime: googleEvent.end_time,
-        location: googleEvent.location,
-        address: googleEvent.address,
-        notes: googleEvent.notes
-      }
+      body: googleEventImportPayload(googleEvent)
     });
     state.selectedEventId = result.event.id;
+    state.selectedEventSnapshotId = null;
     state.editEventId = result.event.id;
     state.assignmentEventId = result.event.id;
     state.view = "events";
@@ -3108,6 +3995,7 @@ async function handleClick(event) {
 
   if (target.dataset.newEvent !== undefined) {
     state.selectedEventId = null;
+    state.selectedEventSnapshotId = null;
     state.editEventId = null;
     return renderAdmin();
   }
@@ -3185,8 +4073,14 @@ async function handleClick(event) {
   }
 
   if (target.dataset.duplicate) {
-    await api(`/api/events/${target.dataset.duplicate}/duplicate`, { method: "POST", body: { date: todayIso() } });
-    toast("Evento duplicado");
+    const source = (state.data.events || []).find((event) => event.id === target.dataset.duplicate);
+    const suggestedDate = isoDate(addCalendarDays(parseLocalDate(source?.date || todayIso()), 7));
+    const date = window.prompt("Fecha para la copia (AAAA-MM-DD)", suggestedDate);
+    if (!date) return;
+    const result = await api(`/api/events/${target.dataset.duplicate}/duplicate`, { method: "POST", body: { date } });
+    const copied = result.copiedAssignments?.length || 0;
+    const skipped = result.skippedAssignments?.length || 0;
+    toast(skipped ? `Evento duplicado: ${copied} asignados, ${skipped} omitidos` : `Evento duplicado con ${copied} asignados`);
     return renderAdmin(true);
   }
 
@@ -3202,7 +4096,7 @@ async function handleClick(event) {
   if (target.dataset.assignRecommended) {
     await api("/api/assignments", {
       method: "POST",
-      body: { eventId: target.dataset.eventId, employeeId: target.dataset.assignRecommended }
+      body: { eventId: target.dataset.eventId, employeeId: target.dataset.assignRecommended, role: target.dataset.role }
     });
     toast("Operario asignado");
     state.recommendations = null;
@@ -3212,6 +4106,12 @@ async function handleClick(event) {
   if (target.dataset.deleteAssignment) {
     await api(`/api/assignments/${target.dataset.deleteAssignment}`, { method: "DELETE" });
     toast("Asignacion eliminada");
+    return renderAdmin(true);
+  }
+
+  if (target.dataset.deleteAllowance) {
+    await api(`/api/allowances/${encodeURIComponent(target.dataset.deleteAllowance)}`, { method: "DELETE" });
+    toast("Pluses quitados");
     return renderAdmin(true);
   }
 
@@ -3257,10 +4157,26 @@ async function handleClick(event) {
     return renderAdmin(true);
   }
 
+  if (target.dataset.resetUser) {
+    const password = window.prompt("Nueva contrasena temporal");
+    if (!password) return;
+    if (password.length < 8) return toast("La contrasena debe tener al menos 8 caracteres", "error");
+    if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+      return toast("La contrasena debe incluir letras y numeros", "error");
+    }
+    await api(`/api/users/${target.dataset.resetUser}`, {
+      method: "PATCH",
+      body: { password }
+    });
+    toast("Contrasena temporal actualizada");
+    return renderAdmin(true);
+  }
+
   if (target.dataset.resolveIncident) {
+    const resolutionNote = window.prompt("Nota de resolucion", "Resuelto por oficina") || "";
     await api(`/api/incidents/${target.dataset.resolveIncident}`, {
       method: "PATCH",
-      body: { status: "resuelta" }
+      body: { status: "resuelta", resolutionNote }
     });
     toast("Incidencia resuelta");
     return renderAdmin(true);
@@ -3302,6 +4218,12 @@ async function handleClick(event) {
     return renderAdmin(true);
   }
 
+  if (target.dataset.autoBackup !== undefined) {
+    const result = await api("/api/backups/auto-run", { method: "POST" });
+    toast(result.pruned ? `Backup automatico creado y ${result.pruned} copias antiguas limpiadas` : "Backup automatico creado");
+    return renderAdmin(true);
+  }
+
   if (target.dataset.verifyBackup) {
     const result = await api(`/api/backups/${target.dataset.verifyBackup}/verify`);
     toast(result.backup.verified ? "Backup verificado" : "Backup revisado: necesita atencion", result.backup.verified ? "info" : "error");
@@ -3316,6 +4238,18 @@ async function handleClick(event) {
   if (target.dataset.restoreBackup) {
     await api("/api/backups/restore", { method: "POST", body: { backupId: target.dataset.restoreBackup } });
     return toast("Restauracion preparada para el proximo reinicio");
+  }
+
+  if (target.dataset.syncDocuments !== undefined) {
+    const result = await api("/api/documents/sync-statuses", { method: "POST" });
+    toast(result.updated ? `${result.updated} estados documentales actualizados` : "Estados documentales al dia");
+    return renderAdmin(true);
+  }
+
+  if (target.dataset.clearReportFilters !== undefined) {
+    state.reportFilters = { from: "", to: "", clientId: "", employeeId: "", status: "", search: "" };
+    toast("Filtros de informe limpiados");
+    return renderAdmin();
   }
 
   if (target.dataset.albaran) {
@@ -3358,23 +4292,40 @@ async function handleClick(event) {
     return openDocumentFile(target.dataset.documentFile, target.dataset.fileName || "documento");
   }
 
+  if (target.dataset.employeeTemplate !== undefined) {
+    const csv = await api("/api/imports/templates/employees");
+    return download("plantilla-operarios-marfan.csv", csv, "text/csv");
+  }
+
+  if (target.dataset.clientTemplate !== undefined) {
+    const csv = await api("/api/imports/templates/clients");
+    return download("plantilla-clientes-marfan.csv", csv, "text/csv");
+  }
+
   if (target.dataset.auditCsv !== undefined) {
     const csv = await api("/api/audit-logs?format=csv");
     return download("marfan-auditoria.csv", csv, "text/csv");
   }
 
+  if (target.dataset.snapshotJson) {
+    const snapshot = findSnapshot(target.dataset.snapshotJson);
+    if (!snapshot) return toast("No encuentro esa foto del evento", "error");
+    const eventId = snapshot.event_id || snapshot.payload?.event?.id || "evento";
+    return download(`snapshot-${eventId}-${snapshot.id}.json`, JSON.stringify(snapshot, null, 2), "application/json");
+  }
+
   if (target.dataset.exportCsv !== undefined) {
-    const csv = await api("/api/reports/events?format=csv");
+    const csv = await api(reportPath("/api/reports/events", "csv"));
     return download("marfan-eventos.csv", csv, "text/csv");
   }
 
   if (target.dataset.exportXls !== undefined) {
-    const xls = await api("/api/reports/events?format=xls");
+    const xls = await api(reportPath("/api/reports/events", "xls"));
     return download("marfan-eventos.xls", xls, "application/vnd.ms-excel");
   }
 
   if (target.dataset.exportPdf !== undefined) {
-    const response = await fetch("/api/reports/events?format=pdf", {
+    const response = await fetch(reportPath("/api/reports/events", "pdf"), {
       headers: { authorization: `Bearer ${state.token}` }
     });
     if (!response.ok) throw new Error("No se pudo exportar PDF");
@@ -3383,22 +4334,22 @@ async function handleClick(event) {
   }
 
   if (target.dataset.exportJson !== undefined) {
-    const report = await api("/api/reports/events");
+    const report = await api(reportPath("/api/reports/events"));
     return download("marfan-eventos.json", JSON.stringify(report.rows, null, 2), "application/json");
   }
 
   if (target.dataset.financeCsv !== undefined) {
-    const csv = await api("/api/reports/finance?format=csv");
+    const csv = await api(reportPath("/api/reports/finance", "csv"));
     return download("marfan-finanzas.csv", csv, "text/csv");
   }
 
   if (target.dataset.financeXls !== undefined) {
-    const xls = await api("/api/reports/finance?format=xls");
+    const xls = await api(reportPath("/api/reports/finance", "xls"));
     return download("marfan-finanzas.xls", xls, "application/vnd.ms-excel");
   }
 
   if (target.dataset.financePdf !== undefined) {
-    const response = await fetch("/api/reports/finance?format=pdf", {
+    const response = await fetch(reportPath("/api/reports/finance", "pdf"), {
       headers: { authorization: `Bearer ${state.token}` }
     });
     if (!response.ok) throw new Error("No se pudo exportar finanzas PDF");
@@ -3407,8 +4358,56 @@ async function handleClick(event) {
   }
 
   if (target.dataset.financeJson !== undefined) {
-    const report = await api("/api/reports/finance");
+    const report = await api(reportPath("/api/reports/finance"));
     return download("marfan-finanzas.json", JSON.stringify(report.rows, null, 2), "application/json");
+  }
+
+  if (target.dataset.employeesCsv !== undefined) {
+    const csv = await api(reportPath("/api/reports/employees", "csv"));
+    return download("marfan-operarios.csv", csv, "text/csv");
+  }
+
+  if (target.dataset.employeesXls !== undefined) {
+    const xls = await api(reportPath("/api/reports/employees", "xls"));
+    return download("marfan-operarios.xls", xls, "application/vnd.ms-excel");
+  }
+
+  if (target.dataset.employeesPdf !== undefined) {
+    const response = await fetch(reportPath("/api/reports/employees", "pdf"), {
+      headers: { authorization: `Bearer ${state.token}` }
+    });
+    if (!response.ok) throw new Error("No se pudo exportar operarios PDF");
+    const blob = await response.blob();
+    return downloadBlob("marfan-operarios.pdf", blob);
+  }
+
+  if (target.dataset.employeesJson !== undefined) {
+    const report = await api(reportPath("/api/reports/employees"));
+    return download("marfan-operarios.json", JSON.stringify(report.rows, null, 2), "application/json");
+  }
+
+  if (target.dataset.incidentsCsv !== undefined) {
+    const csv = await api(reportPath("/api/reports/incidents", "csv"));
+    return download("marfan-incidencias.csv", csv, "text/csv");
+  }
+
+  if (target.dataset.incidentsXls !== undefined) {
+    const xls = await api(reportPath("/api/reports/incidents", "xls"));
+    return download("marfan-incidencias.xls", xls, "application/vnd.ms-excel");
+  }
+
+  if (target.dataset.incidentsPdf !== undefined) {
+    const response = await fetch(reportPath("/api/reports/incidents", "pdf"), {
+      headers: { authorization: `Bearer ${state.token}` }
+    });
+    if (!response.ok) throw new Error("No se pudo exportar incidencias PDF");
+    const blob = await response.blob();
+    return downloadBlob("marfan-incidencias.pdf", blob);
+  }
+
+  if (target.dataset.incidentsJson !== undefined) {
+    const report = await api(reportPath("/api/reports/incidents"));
+    return download("marfan-incidencias.json", JSON.stringify(report.rows, null, 2), "application/json");
   }
 
   if (target.dataset.employeeTab) {
@@ -3455,16 +4454,21 @@ async function handleClick(event) {
   }
 
   if (target.dataset.callOffice !== undefined) {
-    window.location.href = "tel:+34910000000";
+    const phone = String(target.dataset.callOffice || state.employeeHome?.office?.phone || "+34910000000").replace(/\s+/g, "");
+    window.location.href = `tel:${phone}`;
   }
 
   if (target.dataset.whatsapp !== undefined) {
-    window.open("https://wa.me/34910000000", "_blank", "noopener");
+    const phone = String(target.dataset.whatsapp || state.employeeHome?.office?.whatsapp || state.employeeHome?.office?.phone || "34910000000").replace(/\D/g, "");
+    window.open(`https://wa.me/${phone}`, "_blank", "noopener");
   }
 }
 
 function handleInput(event) {
   const target = event.target;
+  if (target?.closest?.("[data-report-filters]")) {
+    syncReportFiltersFromDom();
+  }
   if (!target?.dataset || target.dataset.search === undefined) return;
   state.searchQuery = target.value;
   refreshGlobalSearchResults();
@@ -3487,6 +4491,9 @@ function handleKeydown(event) {
 }
 
 async function handleChange(event) {
+  if (event.target.closest?.("[data-report-filters]")) {
+    syncReportFiltersFromDom();
+  }
   if (event.target.matches("[data-assignment-event]")) {
     state.assignmentEventId = event.target.value;
     state.recommendations = null;
@@ -3574,19 +4581,19 @@ function handleDragEnd() {
 }
 
 async function clock(type) {
-  const service = state.employeeHome?.nextService;
-  if (!service) return;
-  const allowed = type === "entrada" ? Boolean(Number(service.can_clock_in || 0)) : Boolean(Number(service.can_clock_out || 0));
-  if (!allowed) return toast(type === "entrada" ? "La entrada no esta disponible ahora" : "La salida no esta disponible ahora", "error");
-  const coords = await getPosition(service);
-  const signature = type === "salida" && service.is_team_leader ? signaturePayload() : {};
-  if (type === "salida" && service.is_team_leader && (!signature.signatureName.trim() || !signature.signatureDni.trim())) {
-    return toast("Faltan nombre y DNI del firmante", "error");
-  }
   try {
+    const service = state.employeeHome?.nextService;
+    if (!service) return;
+    const allowed = type === "entrada" ? Boolean(Number(service.can_clock_in || 0)) : Boolean(Number(service.can_clock_out || 0));
+    if (!allowed) return toast(type === "entrada" ? "La entrada no esta disponible ahora" : "La salida no esta disponible ahora", "error");
+    const coords = await getPosition();
+    const signature = type === "salida" && service.is_team_leader ? signaturePayload() : {};
+    if (type === "salida" && service.is_team_leader && (!signature.signatureName.trim() || !signature.signatureDni.trim())) {
+      return toast("Faltan nombre y DNI del firmante", "error");
+    }
     const result = await api("/api/time-entries/clock", {
       method: "POST",
-      body: { eventId: service.id, type, lat: coords.lat, lng: coords.lng, ...signature }
+      body: { eventId: service.id, type, lat: coords.lat, lng: coords.lng, accuracy: coords.accuracy, ...signature }
     });
     toast(result.deliveryNote ? "Salida registrada y albaran firmado" : `${type === "salida" ? "Salida" : "Entrada"} registrada · ${result.distance} m`);
     await renderEmployee(true);
@@ -3595,15 +4602,22 @@ async function clock(type) {
   }
 }
 
-function getPosition(service) {
-  return new Promise((resolve) => {
+function getPosition() {
+  return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
-      return resolve({ lat: Number(service.lat) + 0.0005, lng: Number(service.lng) + 0.0005 });
+      return reject(new Error("Este dispositivo no permite geolocalizacion"));
     }
     navigator.geolocation.getCurrentPosition(
-      (position) => resolve({ lat: position.coords.latitude, lng: position.coords.longitude }),
-      () => resolve({ lat: Number(service.lat) + 0.0005, lng: Number(service.lng) + 0.0005 }),
-      { enableHighAccuracy: true, timeout: 3000, maximumAge: 30000 }
+      (position) => resolve({
+        lat: position.coords.latitude,
+        lng: position.coords.longitude,
+        accuracy: position.coords.accuracy
+      }),
+      (error) => {
+        const denied = error?.code === error?.PERMISSION_DENIED;
+        reject(new Error(denied ? "Activa el permiso de ubicacion para fichar" : "No se pudo obtener GPS real"));
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 15000 }
     );
   });
 }
