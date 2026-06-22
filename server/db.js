@@ -7,14 +7,22 @@ const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), "
 const BACKUP_DIR = path.resolve(process.env.BACKUP_DIR || path.join(process.cwd(), "backups"));
 const DB_PATH = path.resolve(process.env.SQLITE_PATH || path.join(DATA_DIR, "marfan.sqlite"));
 const AUTO_BACKUP_ON_START = process.env.AUTO_BACKUP_ON_START !== "false";
-const SEED_DEMO_DATA = process.env.MARFAN_SEED_DEMO_DATA === undefined
-  ? process.env.NODE_ENV !== "production"
-  : !["false", "0", "no"].includes(String(process.env.MARFAN_SEED_DEMO_DATA).toLowerCase());
+const SEED_DEMO_DATA = envFlag("MARFAN_SEED_DEMO_DATA", process.env.NODE_ENV !== "production");
+const SEED_REAL_DATA = envFlag("MARFAN_SEED_REAL_DATA", true);
+const PRODUCTION_SEED_PATH = path.resolve(
+  process.env.MARFAN_REAL_DATA_SEED_PATH || path.join(process.cwd(), "seed", "production-data.json")
+);
 const PRODUCTION_SUPERADMIN_ID = process.env.MARFAN_SUPERADMIN_ID || "usr_german";
 const PRODUCTION_SUPERADMIN_NAME = process.env.MARFAN_SUPERADMIN_NAME || "German";
 const PRODUCTION_SUPERADMIN_EMAIL = process.env.MARFAN_SUPERADMIN_EMAIL || "info@marquee.es";
 const PRODUCTION_SUPERADMIN_PHONE = process.env.MARFAN_SUPERADMIN_PHONE || null;
 const PRODUCTION_SUPERADMIN_PASSWORD = process.env.MARFAN_SUPERADMIN_PASSWORD || "Marquee2026!";
+
+function envFlag(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  return !["false", "0", "no", "off"].includes(String(raw).trim().toLowerCase());
+}
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
@@ -526,6 +534,125 @@ function addUser({ id, role, name, email, phone, password }) {
   );
 }
 
+const PRODUCTION_USER_SEED_COLUMNS = [
+  "id",
+  "role",
+  "name",
+  "email",
+  "phone",
+  "password_hash",
+  "salt",
+  "avatar_url",
+  "active",
+  "last_login_at",
+  "created_at",
+  "permissions_json"
+];
+
+const PRODUCTION_CLIENT_SEED_COLUMNS = [
+  "id",
+  "name",
+  "tax_id",
+  "contact_name",
+  "email",
+  "phone",
+  "address",
+  "notes",
+  "created_at",
+  "legal_name",
+  "province",
+  "source_ref"
+];
+
+const PRODUCTION_EMPLOYEE_SEED_COLUMNS = [
+  "id",
+  "user_id",
+  "name",
+  "role",
+  "phone",
+  "email",
+  "status",
+  "city",
+  "lat",
+  "lng",
+  "hourly_rate",
+  "km_rate",
+  "diet_rate",
+  "skills",
+  "photo_url",
+  "notes",
+  "created_at",
+  "dni",
+  "social_security_number",
+  "bank_account",
+  "address",
+  "province",
+  "postal_code",
+  "birth_date",
+  "shirt_size",
+  "pants_size",
+  "shoe_size",
+  "jacket_size",
+  "epi_size",
+  "emergency_contact",
+  "source_ref",
+  "imported_at"
+];
+
+const PRODUCTION_SEED_TABLES = [
+  { table: "company_settings", conflictColumn: "key", columns: ["key", "value", "updated_at"] },
+  { table: "work_roles", columns: ["id", "name", "base_price", "night_price", "active", "created_at"] },
+  { table: "users", columns: PRODUCTION_USER_SEED_COLUMNS },
+  { table: "clients", columns: PRODUCTION_CLIENT_SEED_COLUMNS },
+  { table: "employees", columns: PRODUCTION_EMPLOYEE_SEED_COLUMNS },
+  {
+    table: "documents",
+    columns: [
+      "id", "employee_id", "type", "name", "status", "expires_at", "url", "created_at",
+      "file_name", "file_mime", "file_size", "storage_path", "uploaded_at", "uploaded_by_user_id"
+    ]
+  },
+  { table: "availability", columns: ["id", "employee_id", "start_date", "end_date", "type", "reason", "status", "created_at"] },
+  {
+    table: "events",
+    columns: [
+      "id", "name", "client_id", "date", "start_time", "end_time", "location", "address", "lat", "lng",
+      "team_leader_id", "required_total", "status", "notes", "budget", "closed_at", "created_at",
+      "google_maps_url", "vehicle_count", "base_distance_km", "billable_km", "kilometre_price",
+      "role_price_total", "night_price_total", "distance_price_total", "service_price",
+      "google_calendar_uid", "google_calendar_source", "google_calendar_event_id",
+      "google_calendar_html_link", "google_sync_status", "google_sync_error", "google_synced_at"
+    ]
+  },
+  { table: "event_requirements", columns: ["id", "event_id", "role", "count"] },
+  { table: "assignments", columns: ["id", "event_id", "employee_id", "role", "status", "created_at"] },
+  {
+    table: "time_entries",
+    columns: [
+      "id", "event_id", "employee_id", "type", "timestamp", "lat", "lng", "distance_m", "within_radius",
+      "accepted", "notes", "created_at", "gps_accuracy_m", "ip_address", "user_agent", "corrected_at",
+      "corrected_by_user_id", "correction_reason"
+    ]
+  },
+  {
+    table: "incidents",
+    columns: [
+      "id", "event_id", "employee_id", "type", "priority", "status", "title", "description",
+      "created_at", "resolved_at", "resolution_note"
+    ]
+  },
+  { table: "allowances", columns: ["id", "event_id", "employee_id", "km", "diet", "night_hours", "extras", "created_at"] },
+  {
+    table: "delivery_notes",
+    columns: [
+      "id", "event_id", "status", "signature_name", "signature_dni", "signed_at", "pdf_path", "locked",
+      "created_at", "signature_image", "service_price", "client_notes"
+    ]
+  },
+  { table: "data_imports", columns: ["id", "source", "rows_read", "inserted", "updated", "skipped", "metadata", "created_at"] },
+  { table: "event_snapshots", columns: ["id", "event_id", "action", "actor_user_id", "payload", "metadata", "created_at"] }
+];
+
 function seedProductionInstall() {
   transaction(() => {
     addUser({
@@ -539,10 +666,41 @@ function seedProductionInstall() {
   });
 }
 
+function rowValues(row, columns) {
+  return columns.map((column) => Object.prototype.hasOwnProperty.call(row, column) ? row[column] : null);
+}
+
+function upsertSeedRows(table, columns, rows = [], conflictColumn = "id") {
+  if (!Array.isArray(rows) || rows.length === 0) return 0;
+  const placeholders = columns.map(() => "?").join(", ");
+  const updates = columns
+    .filter((column) => column !== conflictColumn)
+    .map((column) => `${column} = excluded.${column}`)
+    .join(", ");
+  const conflictAction = updates ? `DO UPDATE SET ${updates}` : "DO NOTHING";
+  const sql = `INSERT INTO ${table} (${columns.join(", ")}) VALUES (${placeholders})
+    ON CONFLICT(${conflictColumn}) ${conflictAction}`;
+  for (const row of rows) {
+    run(sql, rowValues(row, columns));
+  }
+  return rows.length;
+}
+
+function seedBundledProductionData() {
+  if (!SEED_REAL_DATA || !fs.existsSync(PRODUCTION_SEED_PATH)) return;
+  const seed = JSON.parse(fs.readFileSync(PRODUCTION_SEED_PATH, "utf8"));
+  transaction(() => {
+    for (const { table, columns, conflictColumn = "id" } of PRODUCTION_SEED_TABLES) {
+      upsertSeedRows(table, columns, seed[table] || [], conflictColumn);
+    }
+  });
+}
+
 function seedIfNewInstall() {
   if (!wasNewDatabase) return;
   if (!SEED_DEMO_DATA) {
     seedProductionInstall();
+    seedBundledProductionData();
     return;
   }
 

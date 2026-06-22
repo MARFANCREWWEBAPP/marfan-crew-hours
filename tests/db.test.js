@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -64,4 +65,62 @@ test("restore requests reject corrupted SQLite backup files", () => {
     () => dbModule.requestRestore(backup.id),
     /Backup no restaurable/
   );
+});
+
+test("production installations seed German and restored operational data", () => {
+  const prodTmp = fs.mkdtempSync(path.join(os.tmpdir(), "marfan-production-seed-"));
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `
+          const { get, db } = require("./server/db");
+          const { verifyPassword } = require("./server/security");
+          const sampleEmployeeUser = get("SELECT salt, password_hash FROM users WHERE role = 'employee' ORDER BY name LIMIT 1");
+          console.log(JSON.stringify({
+            german: get("SELECT role, name, email FROM users WHERE lower(email) = lower('info@marquee.es')"),
+            users: get("SELECT COUNT(*) AS count FROM users").count,
+            employees: get("SELECT COUNT(*) AS count FROM employees").count,
+            clients: get("SELECT COUNT(*) AS count FROM clients").count,
+            events: get("SELECT COUNT(*) AS count FROM events").count,
+            assignments: get("SELECT COUNT(*) AS count FROM assignments").count,
+            timeEntries: get("SELECT COUNT(*) AS count FROM time_entries").count,
+            employeePasswordWorks: verifyPassword("Marfan2026!", sampleEmployeeUser.salt, sampleEmployeeUser.password_hash)
+          }));
+          db.close();
+        `
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        env: {
+          ...process.env,
+          NODE_ENV: "production",
+          DATA_DIR: prodTmp,
+          BACKUP_DIR: path.join(prodTmp, "backups"),
+          SQLITE_PATH: path.join(prodTmp, "marfan.sqlite"),
+          AUTO_BACKUP_ON_START: "false",
+          MARFAN_SEED_DEMO_DATA: "false",
+          MARFAN_SEED_REAL_DATA: "true"
+        },
+        encoding: "utf8"
+      }
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.deepEqual(payload.german, {
+      role: "super_admin",
+      name: "German",
+      email: "info@marquee.es"
+    });
+    assert.ok(payload.events >= 22);
+    assert.ok(payload.assignments >= 28);
+    assert.ok(payload.timeEntries >= 10);
+    assert.equal(payload.employeePasswordWorks, true);
+    assert.ok(payload.users >= 20);
+    assert.ok(payload.employees >= 27);
+    assert.ok(payload.clients >= 125);
+  } finally {
+    fs.rmSync(prodTmp, { recursive: true, force: true });
+  }
 });

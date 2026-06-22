@@ -1031,6 +1031,15 @@ test("Google Calendar sync writes imported and new events with OAuth credentials
     assert.equal(login.status, 200);
     const token = login.json.token;
 
+    const oauthStart = await jsonRequest(baseUrl, "/api/calendar/google-oauth/start", {
+      method: "POST",
+      token,
+      body: { returnUrl: baseUrl }
+    });
+    assert.equal(oauthStart.status, 200);
+    assert.equal(oauthStart.json.redirectUri, `${baseUrl}/api/calendar/google-oauth/callback`);
+    assert.match(decodeURIComponent(oauthStart.json.authUrl), /redirect_uri=http:\/\/127\.0\.0\.1:\d+\/api\/calendar\/google-oauth\/callback/);
+
     const oauthCalendar = await jsonRequest(baseUrl, "/api/calendar?from=2026-07-01&to=2026-07-05", { token });
     assert.equal(oauthCalendar.status, 200);
     assert.equal(oauthCalendar.json.googleStatus.status, "connected_oauth");

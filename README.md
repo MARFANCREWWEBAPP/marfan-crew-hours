@@ -16,11 +16,13 @@ http://localhost:3000
 
 ## Usuario inicial de produccion
 
-En Railway, con `NODE_ENV=production` y `MARFAN_SEED_DEMO_DATA=false`, una base nueva arranca sin datos demo y crea:
+En Railway, con `NODE_ENV=production`, `MARFAN_SEED_DEMO_DATA=false` y `MARFAN_SEED_REAL_DATA=true`, una base nueva arranca con la base recuperada incluida en el proyecto:
 
 - Super Admin: `info@marquee.es` / `Marquee2026!`
+- Datos iniciales recuperados: 27 operarios, 125 clientes, 22 eventos, 28 asignaciones y fichajes/incidencias existentes desde `seed/production-data.json`
+- Acceso inicial operarios: email o telefono importado / `Marfan2026!`
 
-Cambia `MARFAN_SUPERADMIN_PASSWORD` en Railway antes de abrir la app a mas usuarios.
+Cambia `MARFAN_SUPERADMIN_PASSWORD` en Railway antes de abrir la app a mas usuarios. Para operarios, cambia las contrasenas desde `Administradores` o pide que las actualicen en su perfil.
 
 ## Demo desechable
 
@@ -30,7 +32,7 @@ La pantalla de acceso no muestra ni rellena estas credenciales en un entorno rea
 
 ## Preparar base real
 
-Este comando deja la base local lista para pruebas reales: crea/actualiza a German como superadministrador, borra sesiones, eventos existentes y cuentas/fichas/clientes de demo.
+Este comando deja la base local lista para pruebas reales: crea/actualiza a German como superadministrador y cierra sesiones antiguas. No borra eventos, clientes ni operarios.
 
 ```bash
 npm run prepare:production
@@ -93,6 +95,7 @@ SQLITE_PATH=/data/marfan.sqlite
 AUTO_BACKUP_ON_START=true
 APP_DEMO_MODE=false
 MARFAN_SEED_DEMO_DATA=false
+MARFAN_SEED_REAL_DATA=true
 MARFAN_SUPERADMIN_NAME=German
 MARFAN_SUPERADMIN_EMAIL=info@marquee.es
 MARFAN_SUPERADMIN_PASSWORD=Marquee2026!
@@ -100,6 +103,13 @@ GOOGLE_CALENDAR_ID=21102c189e2a9f5fb7072b9475554e93ae0b5124176fdfaa3da9470149b39
 ```
 
 En Railway, montar un volumen persistente en `/data`. Sin volumen, cualquier servicio con SQLite acabará dependiendo del disco efímero del despliegue.
+El ZIP no debe subir `data/` ni `backups/`; en una base nueva Railway carga la semilla real incluida en `seed/production-data.json`.
+
+Para conectar Google Calendar con OAuth en Railway, anade esta URI autorizada en Google Cloud sustituyendo el dominio por el de Railway:
+
+```text
+https://TU-DOMINIO.up.railway.app/api/calendar/google-oauth/callback
+```
 
 ## Módulos incluidos
 

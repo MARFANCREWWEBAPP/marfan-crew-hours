@@ -63,7 +63,7 @@ const GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const AUTH_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const AUTH_RATE_LIMIT_MAX_FAILURES = 5;
 let googleAccessTokenCache = null;
-const googleOauthLoopbacks = new Map();
+const googleOauthStates = new Map();
 const authFailureBuckets = new Map();
 const backupAutomationState = {
   running: false,
@@ -3762,55 +3762,59 @@ function createGoogleOAuthAuthorizationUrl({ client, redirectUri, state, codeCha
   return authUrl.toString();
 }
 
-function startGoogleOAuthLoopback({ client, actor, appUrl }) {
-  return new Promise((resolve, reject) => {
-    const state = randomToken();
-    const codeVerifier = randomToken() + randomToken();
-    const codeChallenge = base64Url(crypto.createHash("sha256").update(codeVerifier).digest());
-    let redirectUri = "";
-    const server = http.createServer(async (req, res) => {
-      const callbackUrl = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
-      try {
-        const expected = googleOauthLoopbacks.get(state);
-        if (!expected || callbackUrl.searchParams.get("state") !== state) {
-          throw new Error("Estado OAuth no valido");
-        }
-        if (callbackUrl.searchParams.get("error")) {
-          throw new Error(callbackUrl.searchParams.get("error_description") || callbackUrl.searchParams.get("error"));
-        }
-        const code = callbackUrl.searchParams.get("code");
-        if (!code) throw new Error("Google no devolvio codigo de autorizacion");
-        const tokens = await exchangeGoogleOAuthCode(client, code, codeVerifier, redirectUri);
-        storeGoogleOAuthTokens(tokens);
-        audit(actor, "google_calendar_oauth_connected", "company_settings", "google_calendar", {
-          clientId: client.client_id
-        });
-        send(res, 200, oauthSuccessPage(appUrl), { "content-type": "text/html; charset=utf-8" });
-      } catch (error) {
-        audit(actor, "google_calendar_oauth_failed", "company_settings", "google_calendar", {
-          error: error.message
-        });
-        send(res, 400, oauthErrorPage(error.message, appUrl), { "content-type": "text/html; charset=utf-8" });
-      } finally {
-        const item = googleOauthLoopbacks.get(state);
-        if (item?.timeout) clearTimeout(item.timeout);
-        googleOauthLoopbacks.delete(state);
-        setTimeout(() => item?.server.close(), 250);
-      }
-    });
-    server.on("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      redirectUri = `http://127.0.0.1:${address.port}`;
-      const timeout = setTimeout(() => {
-        googleOauthLoopbacks.delete(state);
-        server.close();
-      }, 10 * 60 * 1000);
-      googleOauthLoopbacks.set(state, { server, timeout });
-      const authUrl = createGoogleOAuthAuthorizationUrl({ client, redirectUri, state, codeChallenge });
-      resolve({ authUrl, redirectUri });
-    });
+function startGoogleOAuthWebFlow({ client, actor, appUrl, redirectUri }) {
+  const state = randomToken();
+  const codeVerifier = randomToken() + randomToken();
+  const codeChallenge = base64Url(crypto.createHash("sha256").update(codeVerifier).digest());
+  const timeout = setTimeout(() => googleOauthStates.delete(state), 10 * 60 * 1000);
+  googleOauthStates.set(state, {
+    actorId: actor?.id || null,
+    appUrl,
+    clientId: client.client_id,
+    codeVerifier,
+    expiresAt: Date.now() + 10 * 60 * 1000,
+    redirectUri,
+    timeout
   });
+  const authUrl = createGoogleOAuthAuthorizationUrl({ client, redirectUri, state, codeChallenge });
+  return { authUrl, redirectUri };
+}
+
+async function handleGoogleOAuthCallback(req, res, url) {
+  const state = url.searchParams.get("state") || "";
+  const expected = googleOauthStates.get(state);
+  const appUrl = expected?.appUrl || appOriginFromRequest(req);
+  const actor = expected?.actorId ? { id: expected.actorId } : null;
+  try {
+    if (!expected || expected.expiresAt < Date.now()) {
+      throw new Error("Estado OAuth caducado o no valido");
+    }
+    if (url.searchParams.get("error")) {
+      throw new Error(url.searchParams.get("error_description") || url.searchParams.get("error"));
+    }
+    const code = url.searchParams.get("code");
+    if (!code) throw new Error("Google no devolvio codigo de autorizacion");
+    const settings = settingMap();
+    const client = googleOAuthClientCredentials(settings, { throwOnInvalid: true });
+    if (!client || client.client_id !== expected.clientId) {
+      throw new Error("Cliente OAuth de Google no coincide con la solicitud inicial");
+    }
+    const tokens = await exchangeGoogleOAuthCode(client, code, expected.codeVerifier, expected.redirectUri);
+    storeGoogleOAuthTokens(tokens);
+    audit(actor, "google_calendar_oauth_connected", "company_settings", "google_calendar", {
+      clientId: client.client_id,
+      redirectUri: expected.redirectUri
+    });
+    return send(res, 200, oauthSuccessPage(appUrl), { "content-type": "text/html; charset=utf-8" });
+  } catch (error) {
+    audit(actor, "google_calendar_oauth_failed", "company_settings", "google_calendar", {
+      error: error.message
+    });
+    return send(res, 400, oauthErrorPage(error.message, appUrl), { "content-type": "text/html; charset=utf-8" });
+  } finally {
+    if (expected?.timeout) clearTimeout(expected.timeout);
+    if (state) googleOauthStates.delete(state);
+  }
 }
 
 async function googleCalendarWriteRequest(settings, method, suffix = "", payload = null, query = {}) {
@@ -4701,6 +4705,10 @@ async function handleApi(req, res, url) {
     });
   }
 
+  if (pathname === "/api/calendar/google-oauth/callback" && method === "GET") {
+    return handleGoogleOAuthCallback(req, res, url);
+  }
+
   enforceAdminRoutePermission(user, pathname, method);
 
   if (pathname === "/api/auth/login" && method === "POST") {
@@ -4897,7 +4905,8 @@ async function handleApi(req, res, url) {
     const client = googleOAuthClientCredentials(settings, { throwOnInvalid: true });
     if (!client) return sendJson(res, 400, { error: "Falta configurar el cliente OAuth de Google" });
     const appUrl = body.returnUrl || appOriginFromRequest(req);
-    const result = await startGoogleOAuthLoopback({ client, actor: user, appUrl });
+    const redirectUri = `${appOriginFromRequest(req)}/api/calendar/google-oauth/callback`;
+    const result = startGoogleOAuthWebFlow({ client, actor: user, appUrl, redirectUri });
     return sendJson(res, 200, result);
   }
 
