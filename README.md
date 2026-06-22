@@ -32,7 +32,7 @@ La pantalla de acceso no muestra ni rellena estas credenciales en un entorno rea
 
 ## Preparar base real
 
-Este comando deja la base local lista para pruebas reales: crea/actualiza a German como superadministrador y cierra sesiones antiguas. No borra eventos, clientes ni operarios.
+Este comando deja la base local lista para pruebas reales: crea/actualiza a German como superadministrador, crea un backup de seguridad y cierra sesiones antiguas. No borra eventos, clientes ni operarios; si detecta que baja algun conteo de negocio, falla.
 
 ```bash
 npm run prepare:production
@@ -82,6 +82,7 @@ Regla importante:
 - Las migraciones se aplican de forma incremental.
 - Las semillas solo se crean en una instalación nueva.
 - Los backups se guardan en `backups/` o en `BACKUP_DIR`, con verificacion de integridad, descarga protegida y restauracion solo para super admin.
+- Para preparar una restauracion hay que escribir `RESTAURAR`; antes de aplicarla se genera siempre un backup de seguridad.
 
 ## Railway
 

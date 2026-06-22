@@ -301,6 +301,23 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(autoBackup.json.automation.intervalHours, 6);
     assert.equal(fs.existsSync(autoBackup.json.backup.file_path), true);
 
+    const restoreWithoutConfirmation = await jsonRequest(baseUrl, "/api/backups/restore", {
+      method: "POST",
+      token: superToken,
+      body: { backupId: autoBackup.json.backup.id }
+    });
+    assert.equal(restoreWithoutConfirmation.status, 400);
+    assert.match(restoreWithoutConfirmation.json.error, /Confirmacion obligatoria/);
+
+    const restoreWithConfirmation = await jsonRequest(baseUrl, "/api/backups/restore", {
+      method: "POST",
+      token: superToken,
+      body: { backupId: autoBackup.json.backup.id, confirm: "RESTAURAR" }
+    });
+    assert.equal(restoreWithConfirmation.status, 202);
+    assert.match(restoreWithConfirmation.json.message, /Restauracion preparada/);
+    assert.equal(fs.existsSync(path.join(tmp, "restore-request.json")), true);
+
     const documents = await jsonRequest(baseUrl, "/api/documents", { token });
     assert.equal(documents.status, 200);
     assert.ok(documents.json.compliance.totals.caducado >= 1);

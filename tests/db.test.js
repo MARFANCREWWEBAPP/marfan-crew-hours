@@ -124,3 +124,59 @@ test("production installations seed German and restored operational data", () =>
     fs.rmSync(prodTmp, { recursive: true, force: true });
   }
 });
+
+test("prepare:production keeps business data and writes a safety backup", () => {
+  const prodTmp = fs.mkdtempSync(path.join(os.tmpdir(), "marfan-prepare-production-"));
+  try {
+    const script = `
+      const { get, db } = require("./server/db");
+      console.log(JSON.stringify({
+        before: {
+          employees: get("SELECT COUNT(*) AS count FROM employees").count,
+          clients: get("SELECT COUNT(*) AS count FROM clients").count,
+          events: get("SELECT COUNT(*) AS count FROM events").count,
+          assignments: get("SELECT COUNT(*) AS count FROM assignments").count
+        }
+      }));
+      db.close();
+    `;
+    const env = {
+      ...process.env,
+      NODE_ENV: "production",
+      DATA_DIR: prodTmp,
+      BACKUP_DIR: path.join(prodTmp, "backups"),
+      SQLITE_PATH: path.join(prodTmp, "marfan.sqlite"),
+      AUTO_BACKUP_ON_START: "false",
+      MARFAN_SEED_DEMO_DATA: "false",
+      MARFAN_SEED_REAL_DATA: "true"
+    };
+    const beforeResult = spawnSync(process.execPath, ["-e", script], {
+      cwd: path.resolve(__dirname, ".."),
+      env,
+      encoding: "utf8"
+    });
+    assert.equal(beforeResult.status, 0, beforeResult.stderr);
+    const before = JSON.parse(beforeResult.stdout.trim()).before;
+
+    const prepare = spawnSync(process.execPath, ["scripts/prepare_production.js"], {
+      cwd: path.resolve(__dirname, ".."),
+      env,
+      encoding: "utf8"
+    });
+    assert.equal(prepare.status, 0, prepare.stderr);
+    const payload = JSON.parse(prepare.stdout.trim());
+    assert.equal(payload.ok, true);
+    assert.equal(fs.existsSync(payload.safetyBackup.filePath), true);
+    assert.deepEqual(
+      {
+        employees: payload.after.employees,
+        clients: payload.after.clients,
+        events: payload.after.events,
+        assignments: payload.after.assignments
+      },
+      before
+    );
+  } finally {
+    fs.rmSync(prodTmp, { recursive: true, force: true });
+  }
+});

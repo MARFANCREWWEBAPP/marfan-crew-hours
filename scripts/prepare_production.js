@@ -3,7 +3,7 @@
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
 process.env.MARFAN_SEED_DEMO_DATA = process.env.MARFAN_SEED_DEMO_DATA || "false";
 
-const { DB_PATH, get, run, transaction } = require("../server/db");
+const { DB_PATH, createBackup, get, run, transaction } = require("../server/db");
 const { hashPassword } = require("../server/security");
 
 const SUPERADMIN_ID = process.env.MARFAN_SUPERADMIN_ID || "usr_german";
@@ -67,8 +67,11 @@ const before = {
   users: count("users"),
   employees: count("employees"),
   clients: count("clients"),
-  events: count("events")
+  events: count("events"),
+  assignments: count("assignments")
 };
+
+const safetyBackup = createBackup("safety", "Backup previo a preparacion de produccion");
 
 let summary;
 transaction(() => {
@@ -87,12 +90,24 @@ const after = {
   users: count("users"),
   employees: count("employees"),
   clients: count("clients"),
-  events: count("events")
+  events: count("events"),
+  assignments: count("assignments")
 };
+
+for (const key of ["employees", "clients", "events", "assignments"]) {
+  if (after[key] < before[key]) {
+    throw new Error(`Proteccion de datos: ${key} bajo de ${before[key]} a ${after[key]}`);
+  }
+}
 
 console.log(JSON.stringify({
   ok: true,
   database: DB_PATH,
+  safetyBackup: {
+    id: safetyBackup.id,
+    filePath: safetyBackup.file_path,
+    sizeBytes: safetyBackup.size_bytes
+  },
   superAdmin: {
     id: summary.superAdminId,
     name: SUPERADMIN_NAME,

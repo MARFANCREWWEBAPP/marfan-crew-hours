@@ -7136,6 +7136,12 @@ async function handleApi(req, res, url) {
   if (pathname === "/api/backups/restore" && method === "POST") {
     requireSuperAdmin(user);
     const body = await readBody(req);
+    const confirmation = String(body.confirm || body.confirmation || "").trim().toUpperCase();
+    if (confirmation !== "RESTAURAR") {
+      return sendJson(res, 400, {
+        error: "Confirmacion obligatoria: escribe RESTAURAR para preparar la restauracion."
+      });
+    }
     const backup = requestRestore(body.backupId);
     audit(user, "backup_restore_requested", "backup", backup.id, {
       type: backup.type,

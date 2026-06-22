@@ -4236,7 +4236,14 @@ async function handleClick(event) {
   }
 
   if (target.dataset.restoreBackup) {
-    await api("/api/backups/restore", { method: "POST", body: { backupId: target.dataset.restoreBackup } });
+    const typed = window.prompt("Para preparar esta restauracion escribe RESTAURAR. Se creara una copia de seguridad previa y se aplicara en el proximo reinicio.");
+    if (String(typed || "").trim().toUpperCase() !== "RESTAURAR") {
+      return toast("Restauracion cancelada", "info");
+    }
+    await api("/api/backups/restore", {
+      method: "POST",
+      body: { backupId: target.dataset.restoreBackup, confirm: "RESTAURAR" }
+    });
     return toast("Restauracion preparada para el proximo reinicio");
   }
 
