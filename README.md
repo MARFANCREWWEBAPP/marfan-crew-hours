@@ -106,11 +106,21 @@ GOOGLE_CALENDAR_ID=21102c189e2a9f5fb7072b9475554e93ae0b5124176fdfaa3da9470149b39
 En Railway, montar un volumen persistente en `/data`. Sin volumen, cualquier servicio con SQLite acabará dependiendo del disco efímero del despliegue.
 El ZIP no debe subir `data/` ni `backups/`; en una base nueva Railway carga la semilla real incluida en `seed/production-data.json`.
 
-Para conectar Google Calendar con OAuth en Railway, anade esta URI autorizada en Google Cloud sustituyendo el dominio por el de Railway:
+Para conectar Google Calendar con OAuth, usa un cliente OAuth de Google de tipo `Web application` y anade la URI exacta que muestra MARFAN en `Configuracion > Google Calendar`.
+
+En local suele ser:
+
+```text
+http://localhost:3010/api/calendar/google-oauth/callback
+```
+
+En Railway, sustituyendo el dominio por el de Railway:
 
 ```text
 https://TU-DOMINIO.up.railway.app/api/calendar/google-oauth/callback
 ```
+
+Si Google muestra `redirect_uri_mismatch`, la URI autorizada en Google Cloud no coincide exactamente con la que esta usando la app.
 
 ## Módulos incluidos
 

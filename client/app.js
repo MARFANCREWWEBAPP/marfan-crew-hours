@@ -2751,6 +2751,12 @@ function settingsView() {
   const settings = state.data.settings || {};
   const roles = state.data.roles || [];
   const feedUrl = marfanCalendarFeedUrl(settings);
+  const oauthRedirectUri = `${window.location.origin}/api/calendar/google-oauth/callback`;
+  const oauthAuthorizedUris = String(settings.google_calendar_oauth_redirect_uris || "")
+    .split(/\n+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const oauthRedirectMismatch = oauthAuthorizedUris.length && !oauthAuthorizedUris.includes(oauthRedirectUri);
   return `
     <div class="page-head">
       <div><h1>Configuracion</h1><p>Base operativa, kilometraje, telefono de oficina y precios por rol.</p></div>
@@ -2787,6 +2793,15 @@ function settingsView() {
           <div class="role-row"><span>Eventos sincronizados</span><strong>${esc(settings.google_sync_synced_count || 0)} / ${esc(settings.google_sync_total_count || 0)}</strong></div>
           <div class="role-row"><span>Pendientes / errores</span><strong>${esc(Number(settings.google_sync_pending_count || 0) + Number(settings.google_sync_pending_auth_count || 0))} / ${esc(settings.google_sync_error_count || 0)}</strong></div>
           ${settings.google_calendar_oauth_client_id ? `<div class="role-row"><span>Cliente OAuth</span><strong>${esc(settings.google_calendar_oauth_client_id)}</strong></div>` : ""}
+          ${settings.google_calendar_oauth_client_type ? `<div class="role-row"><span>Tipo cliente OAuth</span><strong>${esc(settings.google_calendar_oauth_client_type)}</strong></div>` : ""}
+          <div class="field"><label>URI retorno OAuth para Google Cloud</label><input readonly value="${esc(oauthRedirectUri)}" /></div>
+          ${oauthRedirectMismatch ? `
+            <div class="mini-card">
+              <strong>Google rechazara la conexion</strong>
+              <small>Anade exactamente la URI de retorno anterior en Google Cloud o crea un cliente OAuth de tipo Web application.</small>
+            </div>
+          ` : ""}
+          ${oauthAuthorizedUris.length ? `<div class="field"><label>URIs autorizadas en el JSON actual</label><textarea readonly>${esc(oauthAuthorizedUris.join("\n"))}</textarea></div>` : ""}
           ${settings.google_calendar_service_account_email ? `<div class="role-row"><span>Cuenta servicio</span><strong>${esc(settings.google_calendar_service_account_email)}</strong></div>` : ""}
           <div class="field"><label>ID calendario Google</label><input name="google_calendar_id" value="${esc(settings.google_calendar_id || "")}" /></div>
           <div class="field"><label>API key Google Calendar</label><input name="google_calendar_api_key" type="password" value="${esc(settings.google_calendar_api_key || "")}" placeholder="Opcional para leer eventos como tarjetas nativas" /></div>
@@ -3903,18 +3918,27 @@ async function handleClick(event) {
   }
 
   if (target.dataset.googleOauthStart !== undefined) {
-    const form = target.closest("form");
-    if (form) {
-      const body = formData(form);
-      body.google_calendar_enabled = form.querySelector("[name=google_calendar_enabled]")?.checked ? "true" : "false";
-      body.google_calendar_sync_enabled = form.querySelector("[name=google_calendar_sync_enabled]")?.checked ? "true" : "false";
-      await api("/api/settings", { method: "PATCH", body });
+    try {
+      const form = target.closest("form");
+      if (form) {
+        const body = formData(form);
+        body.google_calendar_enabled = form.querySelector("[name=google_calendar_enabled]")?.checked ? "true" : "false";
+        body.google_calendar_sync_enabled = form.querySelector("[name=google_calendar_sync_enabled]")?.checked ? "true" : "false";
+        await api("/api/settings", { method: "PATCH", body });
+      }
+      const result = await api("/api/calendar/google-oauth/start", {
+        method: "POST",
+        body: { returnUrl: window.location.origin }
+      });
+      window.location.href = result.authUrl;
+    } catch (error) {
+      if (error.payload?.code === "google_redirect_uri_mismatch") {
+        window.prompt("Copia esta URI en Google Cloud > Authorized redirect URIs y vuelve a conectar:", error.payload.redirectUri || "");
+        toast("Google necesita autorizar la URI de retorno exacta", "error");
+        return renderAdmin(true);
+      }
+      toast(error.message, "error");
     }
-    const result = await api("/api/calendar/google-oauth/start", {
-      method: "POST",
-      body: { returnUrl: window.location.origin }
-    });
-    window.location.href = result.authUrl;
     return;
   }
 

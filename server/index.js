@@ -628,6 +628,8 @@ function settingsForAdmin() {
     google_calendar_oauth_client_json: "",
     google_calendar_oauth_refresh_token: "",
     google_calendar_oauth_client_id: oauthClient?.client_id || "",
+    google_calendar_oauth_client_type: oauthClient?.client_type || "",
+    google_calendar_oauth_redirect_uris: (oauthClient?.redirect_uris || []).join("\n"),
     google_calendar_oauth_client_configured: oauthClient ? "true" : "false",
     google_calendar_oauth_connected: settings.google_calendar_oauth_refresh_token ? "true" : "false",
     google_sync_total_count: syncSummary.total,
@@ -3181,6 +3183,16 @@ function appOriginFromRequest(req) {
   return `${protocol}://${host}`;
 }
 
+function safeBrowserOrigin(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    if (!["http:", "https:"].includes(parsed.protocol)) return "";
+    return parsed.origin;
+  } catch {
+    return "";
+  }
+}
+
 function requestIp(req) {
   const forwarded = String(req.headers["x-forwarded-for"] || "")
     .split(",")[0]
@@ -3582,7 +3594,8 @@ function parseGoogleOAuthClientJson(rawValue) {
     client_secret: client.client_secret || "",
     auth_uri: client.auth_uri || "https://accounts.google.com/o/oauth2/v2/auth",
     token_uri: client.token_uri || GOOGLE_OAUTH_TOKEN_URL,
-    redirect_uris: client.redirect_uris || []
+    redirect_uris: client.redirect_uris || [],
+    client_type: parsed.web ? "web" : parsed.installed ? "installed" : "manual"
   };
 }
 
@@ -3594,7 +3607,8 @@ function googleOAuthClientCredentials(settings = settingMap(), options = {}) {
       client_secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET || settings.google_calendar_oauth_client_secret,
       auth_uri: "https://accounts.google.com/o/oauth2/v2/auth",
       token_uri: GOOGLE_OAUTH_TOKEN_URL,
-      redirect_uris: []
+      redirect_uris: [],
+      client_type: "manual"
     };
     if (!credentials.client_id) return null;
     return credentials;
@@ -3760,6 +3774,28 @@ function createGoogleOAuthAuthorizationUrl({ client, redirectUri, state, codeCha
   authUrl.searchParams.set("code_challenge", codeChallenge);
   authUrl.searchParams.set("code_challenge_method", "S256");
   return authUrl.toString();
+}
+
+function googleOAuthRedirectUris(client) {
+  return (client?.redirect_uris || [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+}
+
+function assertGoogleOAuthRedirectAllowed(client, redirectUri) {
+  const authorizedRedirectUris = googleOAuthRedirectUris(client);
+  if (!authorizedRedirectUris.length || authorizedRedirectUris.includes(redirectUri)) {
+    return { authorizedRedirectUris, ok: true };
+  }
+  const error = new Error(
+    `Google no tiene autorizada esta URI de retorno: ${redirectUri}. En Google Cloud crea un cliente OAuth tipo Web application o anade esa URI exacta en Authorized redirect URIs.`
+  );
+  error.status = 409;
+  error.code = "google_redirect_uri_mismatch";
+  error.redirectUri = redirectUri;
+  error.authorizedRedirectUris = authorizedRedirectUris;
+  error.clientType = client?.client_type || "";
+  throw error;
 }
 
 function startGoogleOAuthWebFlow({ client, actor, appUrl, redirectUri }) {
@@ -4080,17 +4116,152 @@ function createPdfLines(title, lines) {
 
 function createPdfReport(title, rows) {
   const headers = rows.length ? Object.keys(rows[0]) : [];
-  const lines = [
-    title,
-    `Generado: ${new Date().toLocaleString("es-ES")}`,
-    "",
-    headers.join(" | ")
-  ];
-  for (const row of rows.slice(0, 34)) {
-    lines.push(headers.map((header) => String(row[header] ?? "")).join(" | "));
+  const titleKey = title.toLowerCase();
+  const isKnownReport =
+    titleKey.includes("evento") ||
+    titleKey.includes("finanza") ||
+    titleKey.includes("operario") ||
+    titleKey.includes("incidencia");
+  const preferredColumns =
+    titleKey.includes("evento")
+      ? ["evento", "cliente", "fecha", "inicio", "estado", "precio_servicio", "beneficio"]
+      : titleKey.includes("finanza")
+        ? ["seccion", "nombre", "ingresos", "coste", "beneficio", "margen", "detalle"]
+        : titleKey.includes("operario")
+          ? ["nombre", "rol", "telefono", "estado_documental", "documentos_caducados", "bloqueos"]
+          : titleKey.includes("incidencia")
+            ? ["fecha_incidencia", "prioridad", "tipo", "titulo", "evento", "operario", "estado"]
+            : headers;
+  const columns = [
+    ...preferredColumns.filter((header) => headers.includes(header)),
+    ...headers.filter((header) => !preferredColumns.includes(header))
+  ].slice(0, isKnownReport ? preferredColumns.length : 8);
+  const columnWidths = {
+    1: [515],
+    2: [260, 255],
+    3: [205, 155, 155],
+    4: [170, 135, 105, 105],
+    5: [145, 110, 90, 85, 85],
+    6: [128, 92, 78, 75, 72, 70],
+    7: [112, 84, 70, 68, 68, 58, 55],
+    8: [100, 78, 65, 58, 58, 58, 50, 48]
+  }[Math.max(columns.length, 1)] || [515];
+  const numberTotal = (names) => rows.reduce((sum, row) => {
+    const name = names.find((item) => row[item] !== undefined);
+    return sum + Number(row[name] || 0);
+  }, 0);
+  const moneyText = (value) => `${Number(value || 0).toFixed(2)} EUR`;
+  const cardData = (() => {
+    const revenue = numberTotal(["ingresos", "precio_servicio", "facturacion"]);
+    const cost = numberTotal(["coste"]);
+    const benefit = numberTotal(["beneficio"]);
+    const expiredDocs = numberTotal(["documentos_caducados"]);
+    const critical = rows.filter((row) => String(row.prioridad || "").toLowerCase() === "critica").length;
+    const cards = [{ label: "Registros", value: String(rows.length), tone: "dark" }];
+    if (revenue) cards.push({ label: "Ingresos", value: moneyText(revenue), tone: "green" });
+    if (cost) cards.push({ label: "Coste", value: moneyText(cost), tone: "light" });
+    if (benefit || revenue || cost) cards.push({ label: "Beneficio", value: moneyText(benefit), tone: benefit >= 0 ? "green" : "amber" });
+    if (expiredDocs) cards.push({ label: "Docs cad.", value: String(expiredDocs), tone: "amber" });
+    if (critical) cards.push({ label: "Criticas", value: String(critical), tone: "amber" });
+    cards.push({ label: "Generado", value: new Date().toLocaleDateString("es-ES"), tone: "light" });
+    return cards.slice(0, 4);
+  })();
+  const cellText = (header, value) => {
+    if (value === null || value === undefined || value === "") return "-";
+    if (typeof value === "number") {
+      if (/precio|ingres|coste|beneficio|kilometraje|dieta|extras/i.test(header)) return moneyText(value);
+      if (/margen/i.test(header)) return `${value.toFixed(1)}%`;
+      if (/km|distancia|horas|noct/i.test(header)) return value.toFixed(1);
+      return Number.isInteger(value) ? String(value) : value.toFixed(2);
+    }
+    return String(value);
+  };
+  const reportCellMax = (header, width) => {
+    if (/evento|cliente|nombre|titulo|detalle|operario|ubicacion|bloqueos/i.test(header)) {
+      return Math.max(8, Math.floor(width / 5.8));
+    }
+    return Math.max(8, Math.floor(width / 4.4));
+  };
+  const labelText = (header) => String(header || "").replace(/_/g, " ").toUpperCase();
+  const ops = [];
+  const fill = (r, g, b) => ops.push(`${r} ${g} ${b} rg`);
+  const stroke = (r, g, b) => ops.push(`${r} ${g} ${b} RG`);
+  const rect = (x, y, w, h, mode = "f") => ops.push(`${x} ${y} ${w} ${h} re ${mode}`);
+  const text = (value, x, y, size = 9, font = "F1", color = [0.06, 0.09, 0.16], max = 80) => {
+    fill(...color);
+    ops.push("BT", `/${font} ${size} Tf`, `${x} ${y} Td`, `(${pdfSafeText(value, max)}) Tj`, "ET");
+  };
+  const drawCard = (card, index) => {
+    const x = 40 + index * 132;
+    const tone = card.tone || "light";
+    const bg = tone === "dark" ? [0.024, 0.063, 0.11] : tone === "green" ? [0.027, 0.58, 0.33] : tone === "amber" ? [1, 0.95, 0.82] : [1, 1, 1];
+    const fg = tone === "dark" || tone === "green" ? [1, 1, 1] : [0.06, 0.09, 0.16];
+    const muted = tone === "dark" || tone === "green" ? [0.84, 0.91, 0.97] : [0.39, 0.45, 0.55];
+    fill(...bg);
+    stroke(tone === "light" ? 0.84 : bg[0], tone === "light" ? 0.87 : bg[1], tone === "light" ? 0.91 : bg[2]);
+    rect(x, 622, 119, 58, "B");
+    text(card.label, x + 12, 660, 7, "F2", muted, 24);
+    text(card.value, x + 12, 638, 12, "F2", fg, 28);
+  };
+
+  fill(0.965, 0.976, 0.988);
+  rect(0, 0, 595, 842);
+  fill(0.024, 0.063, 0.11);
+  rect(0, 748, 595, 94);
+  fill(0.027, 0.58, 0.33);
+  rect(0, 748, 12, 94);
+  fill(1, 1, 1);
+  rect(40, 779, 36, 36);
+  text("M", 52, 790, 18, "F2", [0.024, 0.063, 0.11], 2);
+  text("MARFAN CREW", 88, 804, 12, "F2", [1, 1, 1], 34);
+  text("Informe corporativo de operaciones", 88, 787, 8, "F1", [0.78, 0.86, 0.94], 62);
+  text(`Generado ${new Date().toLocaleString("es-ES")}`, 390, 804, 8, "F1", [0.78, 0.86, 0.94], 52);
+  text("ERP SaaS eventos", 390, 787, 8, "F2", [1, 1, 1], 35);
+  text(title, 40, 714, 20, "F2", [0.024, 0.063, 0.11], 70);
+  text(`${rows.length} registros exportados · CSV y Excel disponibles para detalle completo`, 40, 693, 8, "F1", [0.36, 0.43, 0.53], 100);
+  cardData.forEach(drawCard);
+
+  text("Detalle del informe", 40, 588, 12, "F2", [0.024, 0.063, 0.11], 38);
+  fill(0.024, 0.063, 0.11);
+  rect(40, 558, 515, 22);
+  let x = 48;
+  columns.forEach((header, index) => {
+    text(labelText(header), x, 566, 6.5, "F2", [1, 1, 1], Math.max(12, Math.floor(columnWidths[index] / 4.6)));
+    x += columnWidths[index];
+  });
+  let y = 535;
+  for (const [rowIndex, row] of rows.slice(0, 20).entries()) {
+    fill(rowIndex % 2 ? 1 : 0.985, rowIndex % 2 ? 1 : 0.988, rowIndex % 2 ? 1 : 0.992);
+    stroke(0.89, 0.91, 0.94);
+    rect(40, y - 6, 515, 22, "B");
+    let cellX = 48;
+    columns.forEach((header, index) => {
+      const max = reportCellMax(header, columnWidths[index]);
+      text(cellText(header, row[header]), cellX, y + 1, 6.8, "F1", [0.06, 0.09, 0.16], max);
+      cellX += columnWidths[index];
+    });
+    y -= 22;
   }
-  if (rows.length > 34) lines.push(`... ${rows.length - 34} filas adicionales`);
-  return createPdfLines(title, lines);
+  if (!rows.length) {
+    fill(1, 1, 1);
+    stroke(0.89, 0.91, 0.94);
+    rect(40, 500, 515, 38, "B");
+    text("No hay datos para los filtros seleccionados.", 56, 518, 9, "F1", [0.39, 0.45, 0.55], 80);
+  } else if (rows.length > 20) {
+    text(`Informe truncado en PDF: ${rows.length - 20} filas adicionales disponibles en CSV/Excel.`, 40, y - 6, 8, "F2", [0.55, 0.29, 0.02], 88);
+  }
+
+  fill(1, 1, 1);
+  stroke(0.84, 0.87, 0.91);
+  rect(40, 58, 515, 44, "B");
+  text("Uso interno MARFAN CREW", 54, 82, 8, "F2", [0.024, 0.063, 0.11], 45);
+  text("Documento generado automaticamente desde datos persistentes del ERP. Conserva CSV/Excel para auditoria completa.", 54, 68, 7, "F1", [0.39, 0.45, 0.55], 118);
+
+  fill(0.024, 0.063, 0.11);
+  rect(0, 0, 595, 36);
+  text("MARFAN CREW ERP", 40, 14, 9, "F2", [1, 1, 1], 36);
+  text("Informes · operaciones · finanzas · RRHH", 344, 14, 7, "F1", [0.78, 0.86, 0.94], 58);
+  return createPdfDocument(ops);
 }
 
 function safeFileName(name) {
@@ -4904,10 +5075,26 @@ async function handleApi(req, res, url) {
     const settings = settingMap();
     const client = googleOAuthClientCredentials(settings, { throwOnInvalid: true });
     if (!client) return sendJson(res, 400, { error: "Falta configurar el cliente OAuth de Google" });
-    const appUrl = body.returnUrl || appOriginFromRequest(req);
-    const redirectUri = `${appOriginFromRequest(req)}/api/calendar/google-oauth/callback`;
+    const appOrigin = safeBrowserOrigin(body.returnUrl) || appOriginFromRequest(req);
+    const appUrl = appOrigin;
+    const redirectUri = `${appOrigin}/api/calendar/google-oauth/callback`;
+    try {
+      assertGoogleOAuthRedirectAllowed(client, redirectUri);
+    } catch (error) {
+      return sendJson(res, error.status || 400, {
+        error: error.message,
+        code: error.code || "google_oauth_redirect_error",
+        redirectUri: error.redirectUri || redirectUri,
+        authorizedRedirectUris: error.authorizedRedirectUris || [],
+        clientType: error.clientType || client.client_type || ""
+      });
+    }
     const result = startGoogleOAuthWebFlow({ client, actor: user, appUrl, redirectUri });
-    return sendJson(res, 200, result);
+    return sendJson(res, 200, {
+      ...result,
+      authorizedRedirectUris: googleOAuthRedirectUris(client),
+      clientType: client.client_type || ""
+    });
   }
 
   if (pathname === "/api/calendar/google-sync/retry" && method === "POST") {

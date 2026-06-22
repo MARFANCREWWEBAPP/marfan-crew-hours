@@ -276,6 +276,33 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.match(feedText, /MARFAN CREW ERP/);
     assert.match(feedText, /BEGIN:VEVENT/);
 
+    const oauthMismatchSettings = await jsonRequest(baseUrl, "/api/settings", {
+      method: "PATCH",
+      token,
+      body: {
+        google_calendar_oauth_client_json: JSON.stringify({
+          web: {
+            client_id: "oauth-mismatch.test",
+            client_secret: "oauth-secret",
+            redirect_uris: ["http://localhost"]
+          }
+        })
+      }
+    });
+    assert.equal(oauthMismatchSettings.status, 200);
+    assert.equal(oauthMismatchSettings.json.settings.google_calendar_oauth_client_type, "web");
+    assert.match(oauthMismatchSettings.json.settings.google_calendar_oauth_redirect_uris, /http:\/\/localhost/);
+
+    const oauthMismatch = await jsonRequest(baseUrl, "/api/calendar/google-oauth/start", {
+      method: "POST",
+      token,
+      body: { returnUrl: baseUrl }
+    });
+    assert.equal(oauthMismatch.status, 409);
+    assert.equal(oauthMismatch.json.code, "google_redirect_uri_mismatch");
+    assert.equal(oauthMismatch.json.redirectUri, `${baseUrl}/api/calendar/google-oauth/callback`);
+    assert.deepEqual(oauthMismatch.json.authorizedRedirectUris, ["http://localhost"]);
+
     const backupSettings = await jsonRequest(baseUrl, "/api/settings", {
       method: "PATCH",
       token,
@@ -704,6 +731,19 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(filteredEventsReport.json.rows.some((row) => row.id === createdEvent.json.event.id), true);
     assert.equal(filteredEventsReport.json.rows.every((row) => row.fecha === "2026-06-22" && row.cliente === "Tech Events S.L."), true);
 
+    const eventsPdfReport = await fetch(
+      `${baseUrl}/api/reports/events?from=2026-06-22&to=2026-06-22&clientId=cli_tech&employeeId=emp_alejandro&format=pdf`,
+      { headers: { authorization: `Bearer ${token}` } }
+    );
+    const eventsPdfBuffer = Buffer.from(await eventsPdfReport.arrayBuffer());
+    const eventsPdfText = eventsPdfBuffer.toString("utf8");
+    assert.equal(eventsPdfReport.status, 200);
+    assert.match(eventsPdfReport.headers.get("content-type"), /application\/pdf/);
+    assert.equal(eventsPdfBuffer.subarray(0, 4).toString(), "%PDF");
+    assert.ok(eventsPdfBuffer.length > 3000);
+    assert.match(eventsPdfText, /MARFAN CREW/);
+    assert.match(eventsPdfText, /Informe corporativo de operaciones/);
+
     const filteredFinanceReport = await jsonRequest(
       baseUrl,
       "/api/reports/finance?from=2026-06-22&to=2026-06-22&clientId=cli_tech&employeeId=emp_alejandro",
@@ -719,6 +759,16 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
       row.detalle.includes("2 h noct.")
     ), true);
     assert.equal(filteredFinanceReport.json.rows.some((row) => row.seccion === "evento" && row.nombre === "Servicio pendiente Google"), true);
+
+    const openClockWindowForGpsTest = await jsonRequest(baseUrl, "/api/settings", {
+      method: "PATCH",
+      token,
+      body: {
+        clock_entry_early_minutes: "1440",
+        clock_exit_late_minutes: "2880"
+      }
+    });
+    assert.equal(openClockWindowForGpsTest.status, 200);
 
     const missingGpsClock = await jsonRequest(baseUrl, "/api/time-entries/clock", {
       method: "POST",
