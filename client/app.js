@@ -428,7 +428,7 @@ async function loadAdminData(force = false) {
     userCan("imports") ? api("/api/imports") : Promise.resolve({ imports: [] }),
     state.user.role === "super_admin" ? api("/api/audit-logs") : Promise.resolve({ logs: [] })
   ]);
-  state.data = { dashboard, live, clients: clients.clients, employees: employees.employees, events: events.events, calendarEvents: calendar.events, googleStatus: calendar.googleStatus, backups: backups.backups, backupAutomation: backups.automation, incidents: incidents.incidents, availability: availability.availability, documents: documents.documents, documentCompliance: documents.compliance, timeEntries: timeEntries.entries, finance: finance.finance, allowances: allowances.allowances, settings: settings.settings, roles: settings.roles, users: users.users, imports: imports.imports, auditLogs: auditLogs.logs };
+  state.data = { dashboard, live, clients: clients.clients, employees: employees.employees, events: events.events, calendarEvents: calendar.events, googleStatus: calendar.googleStatus, backups: backups.backups, backupAutomation: backups.automation, incidents: incidents.incidents, incidentDetection: incidents.attendanceDetection, availability: availability.availability, documents: documents.documents, documentCompliance: documents.compliance, timeEntries: timeEntries.entries, finance: finance.finance, allowances: allowances.allowances, settings: settings.settings, roles: settings.roles, users: users.users, imports: imports.imports, auditLogs: auditLogs.logs };
   state.selectedEventId ||= dashboard.live[0]?.id || events.events[0]?.id;
   state.assignmentEventId ||= dashboard.live[0]?.id || events.events[0]?.id;
 }
@@ -658,6 +658,7 @@ function liveOperationsView() {
     <section class="cards-grid">
       ${(live.cards || []).map(cardTemplate).join("")}
     </section>
+    ${attendanceDetectionNotice(live.attendanceDetection)}
     <section class="live-layout">
       <div class="live-events">
         ${(live.events || []).map(liveEventCard).join("") || `<div class="panel"><div class="empty">No hay eventos programados para hoy.</div></div>`}
@@ -1478,6 +1479,11 @@ function eventSnapshotDetail(snapshot) {
         <strong>${delivery ? `${esc(delivery.status || "borrador")} · ${delivery.locked ? "bloqueado" : "editable"}` : "No generado"}</strong>
         ${delivery?.signature_name ? `<small>${esc(delivery.signature_name)} · ${esc(delivery.signature_dni || "")} · ${esc(shortDateTime(delivery.signed_at))}</small>` : ""}
       </div>
+      <div class="snapshot-integrity ${snapshot.payload_hash_valid ? "valid" : "invalid"}">
+        <span>Integridad</span>
+        <strong>${snapshot.payload_hash_valid ? "Verificada" : "Alterada"}</strong>
+        <small>${esc(snapshot.payload_hash ? snapshot.payload_hash.slice(0, 24) : "sin huella")}</small>
+      </div>
     </div>
   `;
 }
@@ -2240,12 +2246,27 @@ function clockingView() {
   `;
 }
 
+function attendanceDetectionNotice(summary) {
+  if (!summary || summary.skippedReason === "future_date") return "";
+  const created = Number(summary.created || 0);
+  const updated = Number(summary.updated || 0);
+  if (!created && !updated) return "";
+  return `
+    <section class="panel warning-panel">
+      <div class="panel-head"><h2>Incidencias detectadas por la app</h2><span class="tag amber">${created + updated}</span></div>
+      <p class="muted">${created} nuevas y ${updated} actualizadas para ${esc(summary.date || todayIso())}. Revisa ausencias y retrasos antes de cerrar el servicio.</p>
+    </section>
+  `;
+}
+
 function incidentsView() {
+  const detection = state.data.incidentDetection;
   return `
     <div class="page-head">
       <div><h1>Incidencias Pro</h1><p>Ausencias, retrasos, accidentes, clientes, horas extra y documentacion.</p></div>
       <button class="btn" data-detect-attendance-date="${todayIso()}">${icon("alert")} Detectar hoy</button>
     </div>
+    ${attendanceDetectionNotice(detection)}
     <section class="split-grid">
       <div class="panel">
         <div class="panel-head"><h2>Incidencias abiertas y recientes</h2></div>
@@ -2747,16 +2768,54 @@ function marfanCalendarFeedUrl(settings) {
   return `${window.location.origin}/api/calendar/marfan.ics?token=${encodeURIComponent(token)}`;
 }
 
+function googleOAuthCallbackUriForOrigin(origin) {
+  return `${String(origin || "").replace(/\/+$/, "")}/api/calendar/google-oauth/callback`;
+}
+
+function googleOAuthLocalAlternateUri(uri) {
+  try {
+    const parsed = new URL(uri);
+    if (parsed.hostname === "localhost") {
+      parsed.hostname = "127.0.0.1";
+      return parsed.toString();
+    }
+    if (parsed.hostname === "127.0.0.1") {
+      parsed.hostname = "localhost";
+      return parsed.toString();
+    }
+  } catch {}
+  return "";
+}
+
+function googleOAuthSetupIssue(settings, redirectUri, authorizedUris) {
+  if (settings.google_calendar_oauth_client_type === "installed") {
+    return "El JSON actual es Desktop/Installed. Crea un cliente OAuth tipo Web application y pega ese JSON en MARFAN.";
+  }
+  if (settings.google_calendar_oauth_client_configured === "true" && !authorizedUris.length) {
+    return "El cliente OAuth actual no trae URIs autorizadas. Usa un cliente Web application con la URI de retorno configurada.";
+  }
+  if (authorizedUris.length && !authorizedUris.includes(redirectUri)) {
+    return "Google rechazara la conexion porque no tiene autorizada la URI de retorno actual.";
+  }
+  return "";
+}
+
+function googleOAuthSetupPrompt(payload = {}) {
+  const uri = payload.redirectUri || payload.suggestedRedirectUris?.[0] || googleOAuthCallbackUriForOrigin(window.location.origin);
+  window.prompt("Copia esta URI en Google Cloud > Authorized redirect URIs y vuelve a conectar:", uri);
+}
+
 function settingsView() {
   const settings = state.data.settings || {};
   const roles = state.data.roles || [];
   const feedUrl = marfanCalendarFeedUrl(settings);
-  const oauthRedirectUri = `${window.location.origin}/api/calendar/google-oauth/callback`;
+  const oauthRedirectUri = googleOAuthCallbackUriForOrigin(window.location.origin);
   const oauthAuthorizedUris = String(settings.google_calendar_oauth_redirect_uris || "")
     .split(/\n+/)
     .map((item) => item.trim())
     .filter(Boolean);
-  const oauthRedirectMismatch = oauthAuthorizedUris.length && !oauthAuthorizedUris.includes(oauthRedirectUri);
+  const oauthSetupIssue = googleOAuthSetupIssue(settings, oauthRedirectUri, oauthAuthorizedUris);
+  const oauthSuggestedUris = [oauthRedirectUri, googleOAuthLocalAlternateUri(oauthRedirectUri)].filter((item, index, list) => item && list.indexOf(item) === index);
   return `
     <div class="page-head">
       <div><h1>Configuracion</h1><p>Base operativa, kilometraje, telefono de oficina y precios por rol.</p></div>
@@ -2795,17 +2854,18 @@ function settingsView() {
           ${settings.google_calendar_oauth_client_id ? `<div class="role-row"><span>Cliente OAuth</span><strong>${esc(settings.google_calendar_oauth_client_id)}</strong></div>` : ""}
           ${settings.google_calendar_oauth_client_type ? `<div class="role-row"><span>Tipo cliente OAuth</span><strong>${esc(settings.google_calendar_oauth_client_type)}</strong></div>` : ""}
           <div class="field"><label>URI retorno OAuth para Google Cloud</label><input readonly value="${esc(oauthRedirectUri)}" /></div>
-          ${oauthRedirectMismatch ? `
+          ${oauthSetupIssue ? `
             <div class="mini-card">
               <strong>Google rechazara la conexion</strong>
-              <small>Anade exactamente la URI de retorno anterior en Google Cloud o crea un cliente OAuth de tipo Web application.</small>
+              <small>${esc(oauthSetupIssue)}</small>
+              ${oauthSuggestedUris.map((uri) => `<input readonly value="${esc(uri)}" />`).join("")}
             </div>
           ` : ""}
           ${oauthAuthorizedUris.length ? `<div class="field"><label>URIs autorizadas en el JSON actual</label><textarea readonly>${esc(oauthAuthorizedUris.join("\n"))}</textarea></div>` : ""}
           ${settings.google_calendar_service_account_email ? `<div class="role-row"><span>Cuenta servicio</span><strong>${esc(settings.google_calendar_service_account_email)}</strong></div>` : ""}
           <div class="field"><label>ID calendario Google</label><input name="google_calendar_id" value="${esc(settings.google_calendar_id || "")}" /></div>
-          <div class="field"><label>API key Google Calendar</label><input name="google_calendar_api_key" type="password" value="${esc(settings.google_calendar_api_key || "")}" placeholder="Opcional para leer eventos como tarjetas nativas" /></div>
-          <div class="field"><label>URL iCal publica/secreta</label><input name="google_calendar_public_ics_url" type="password" value="${esc(settings.google_calendar_public_ics_url || "")}" /></div>
+          <div class="field"><label>API key Google Calendar</label><input name="google_calendar_api_key" type="password" value="" placeholder="${settings.google_calendar_api_key_configured === "true" ? "Configurada: dejar vacio para conservar" : "Opcional para leer eventos como tarjetas nativas"}" /></div>
+          <div class="field"><label>URL iCal publica/secreta</label><input name="google_calendar_public_ics_url" type="password" value="" placeholder="${settings.google_calendar_public_ics_url_configured === "true" ? "Configurada: dejar vacio para conservar" : "Pega la direccion iCal si quieres leer eventos"}" /></div>
           <div class="field"><label>URL embed Google</label><input name="google_calendar_embed_url" value="${esc(settings.google_calendar_embed_url || "")}" /></div>
           <div class="field"><label>JSON cliente OAuth Google</label><textarea name="google_calendar_oauth_client_json" placeholder="Pega aqui el JSON client_secret de Google. Si lo dejas vacio se conserva el anterior."></textarea></div>
           <button class="btn full" type="button" data-google-oauth-start>${icon("calendar")} Conectar Google Calendar</button>
@@ -2871,7 +2931,13 @@ function backupsView() {
     <section class="cards-grid">
       ${cards.map(cardTemplate).join("")}
     </section>
-    ${restorePending ? `<section class="panel warning-panel"><div class="panel-head"><h2>Restauracion preparada</h2></div><p class="muted">Hay una restauracion pendiente. Se aplicara en el proximo reinicio seguro del servidor.</p></section>` : ""}
+    ${restorePending ? `
+      <section class="panel warning-panel">
+        <div class="panel-head"><h2>Restauracion preparada</h2></div>
+        <p class="muted">Hay una restauracion pendiente. Se aplicara en el proximo reinicio seguro del servidor.</p>
+        ${automation.restorePending?.safetyBackupId ? `<p class="muted">Copia previa: <strong>${esc(automation.restorePending.safetyBackupId)}</strong></p>` : ""}
+      </section>
+    ` : ""}
     <section class="split-grid">
       <form class="panel inspector" data-form="backup-settings">
         <h2>Backup automatico</h2>
@@ -3005,7 +3071,7 @@ function employeeHomeView(data) {
       <button data-call-office="${esc(data.office?.phone || "")}">${icon("phone")} Llamar oficina</button>
       <button data-whatsapp="${esc(data.office?.whatsapp || data.office?.phone || "")}">${icon("message")} WhatsApp</button>
     </div>
-    ${service.is_team_leader ? teamLeaderSignaturePanel(service) : ""}
+    ${service.is_team_leader ? teamLeaderSignaturePanel(service, data.coworkers || []) : ""}
     <article class="geo-card ${clockMeta.className}">
       <div class="row-between"><strong>FICHAJE POR GEOLOCALIZACION</strong><small class="muted">Radio ${data.radius} m</small></div>
       <div class="geo-main">
@@ -3089,7 +3155,7 @@ function employeeClockActionButton(service, type, primary = false) {
   return `<button class="${className}" data-clock="${type}" ${enabled ? "" : "disabled"}>${icon(type === "entrada" ? "check" : "logout")} ${label}</button>`;
 }
 
-function teamLeaderSignaturePanel(service) {
+function teamLeaderSignaturePanel(service, coworkers = []) {
   if (service.delivery_note_locked) {
     return `
       <article class="mobile-card signature-panel locked">
@@ -3098,9 +3164,18 @@ function teamLeaderSignaturePanel(service) {
       </article>
     `;
   }
+  const teamSize = coworkers.length + 1;
+  const roles = teamLeaderSignatureRoles(service, coworkers);
   return `
     <article class="mobile-card signature-panel" data-signature-panel>
       <div class="row-between"><h3>Firma cliente</h3><span class="tag blue">Jefe de equipo</span></div>
+      <div class="signature-summary">
+        <div><span>Servicio</span><strong>${esc(service.name)}</strong></div>
+        <div><span>Horario</span><strong>${esc(service.start_time)} - ${esc(service.end_time)}</strong></div>
+        <div><span>Equipo</span><strong>${esc(teamSize)} personas</strong></div>
+        <div><span>Recinto</span><strong>${esc(service.location || "-")}</strong></div>
+      </div>
+      ${roles.length ? `<div class="signature-role-strip">${roles.map((item) => `<span class="tag blue">${esc(item.role)} x${esc(item.count)}</span>`).join("")}</div>` : ""}
       <div class="field"><label>Nombre firmante</label><input name="signatureName" data-signature-name autocomplete="name" /></div>
       <div class="field"><label>DNI/NIF firmante</label><input name="signatureDni" data-signature-dni /></div>
       <div class="field"><label>Firma</label><canvas class="signature-pad" width="520" height="180" data-signature-canvas></canvas></div>
@@ -3110,6 +3185,17 @@ function teamLeaderSignaturePanel(service) {
       </div>
     </article>
   `;
+}
+
+function teamLeaderSignatureRoles(service, coworkers = []) {
+  const counts = new Map();
+  const addRole = (role) => {
+    const clean = String(role || "Operario").trim() || "Operario";
+    counts.set(clean, (counts.get(clean) || 0) + 1);
+  };
+  addRole(service.assignment_role);
+  coworkers.forEach((worker) => addRole(worker.role));
+  return Array.from(counts.entries()).map(([role, count]) => ({ role, count }));
 }
 
 function employeeTabView(data) {
@@ -3932,9 +4018,9 @@ async function handleClick(event) {
       });
       window.location.href = result.authUrl;
     } catch (error) {
-      if (error.payload?.code === "google_redirect_uri_mismatch") {
-        window.prompt("Copia esta URI en Google Cloud > Authorized redirect URIs y vuelve a conectar:", error.payload.redirectUri || "");
-        toast("Google necesita autorizar la URI de retorno exacta", "error");
+      if (["google_redirect_uri_mismatch", "google_oauth_client_type_invalid", "google_redirect_uri_missing"].includes(error.payload?.code)) {
+        googleOAuthSetupPrompt(error.payload);
+        toast("Google necesita un cliente OAuth Web con la URI autorizada", "error");
         return renderAdmin(true);
       }
       toast(error.message, "error");

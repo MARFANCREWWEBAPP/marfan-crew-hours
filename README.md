@@ -107,6 +107,7 @@ En Railway, montar un volumen persistente en `/data`. Sin volumen, cualquier ser
 El ZIP no debe subir `data/` ni `backups/`; en una base nueva Railway carga la semilla real incluida en `seed/production-data.json`.
 
 Para conectar Google Calendar con OAuth, usa un cliente OAuth de Google de tipo `Web application` y anade la URI exacta que muestra MARFAN en `Configuracion > Google Calendar`.
+No uses un cliente `Desktop app`/`Installed`; Google lo rechazara con `redirect_uri_mismatch` en esta aplicacion.
 
 En local suele ser:
 
@@ -132,12 +133,12 @@ Si Google muestra `redirect_uri_mismatch`, la URI autorizada en Google Cloud no 
 - Clientes
 - Operarios
 - Asignaciones con recomendaciones y prevalidacion visible de bloqueos
-- Planificador con rol sugerido, distancia, carga reciente, disponibilidad, descanso y documentacion
+- Planificador con rol sugerido, distancia, carga reciente, disponibilidad, descanso y documentacion obligatoria por rol critico
 - Fichajes geolocalizados con secuencia entrada/salida, evidencia GPS/dispositivo y trazabilidad de correcciones
 - Portal empleado con confirmacion de asistencia a servicios
 - Portal empleado con checklist operativo real y botones de oficina configurables
 - Calendario personal del empleado con vistas mes, semana, dia y agenda
-- Incidencias con deteccion, resolucion, nota de cierre e informes
+- Incidencias con deteccion automatica de retrasos/ausencias, resolucion, nota de cierre e informes
 - Documentación RRHH con archivos protegidos, tipos/tamaños validados, trazabilidad de aperturas, pestaña Docs en portal empleado, subida de documentos y revisión desde oficina
 - Finanzas con pluses por evento: kilometros, dietas, nocturnidad y extras por operario
 - Informes JSON/CSV/Excel/PDF

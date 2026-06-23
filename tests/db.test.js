@@ -25,13 +25,14 @@ test("new installations create schema and seed data once", () => {
 
   assert.equal(users, 4);
   assert.equal(events, 7);
-  assert.equal(migrations, 12);
+  assert.equal(migrations, 14);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('employees') WHERE name = 'shirt_size'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('documents') WHERE name = 'storage_path'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('delivery_notes') WHERE name = 'signature_image'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('events') WHERE name = 'google_calendar_event_id'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('events') WHERE name = 'google_sync_status'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'event_snapshots'").count, 1);
+  assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('event_snapshots') WHERE name = 'payload_hash'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('time_entries') WHERE name = 'gps_accuracy_m'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('time_entries') WHERE name = 'ip_address'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('time_entries') WHERE name = 'user_agent'").count, 1);
@@ -42,6 +43,7 @@ test("new installations create schema and seed data once", () => {
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('incidents') WHERE name = 'resolution_note'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM company_settings").count, 7);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM work_roles").count, 9);
+  assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM delivery_notes").count, events);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'password_reset_tokens'").count, 1);
 });
 
@@ -65,6 +67,18 @@ test("restore requests reject corrupted SQLite backup files", () => {
     () => dbModule.requestRestore(backup.id),
     /Backup no restaurable/
   );
+});
+
+test("restore requests register a downloadable safety backup", () => {
+  const backup = dbModule.createBackup("manual", "Restore target");
+  const restore = dbModule.requestRestore(backup.id);
+  assert.equal(restore.backup.id, backup.id);
+  assert.equal(restore.safetyBackup.type, "safety");
+  assert.equal(fs.existsSync(restore.safetyBackup.file_path), true);
+  const marker = JSON.parse(fs.readFileSync(path.join(tmp, "restore-request.json"), "utf8"));
+  assert.equal(marker.backupId, backup.id);
+  assert.equal(marker.safetyBackupId, restore.safetyBackup.id);
+  assert.equal(marker.safetyBackupPath, restore.safetyBackup.file_path);
 });
 
 test("production installations seed German and restored operational data", () => {

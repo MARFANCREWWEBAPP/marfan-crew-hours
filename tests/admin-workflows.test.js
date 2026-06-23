@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const net = require("node:net");
+const zlib = require("node:zlib");
 const { spawn } = require("node:child_process");
 const { DatabaseSync } = require("node:sqlite");
 
@@ -41,6 +42,16 @@ function todayLocal() {
   ].join("-");
 }
 
+function addDaysLocal(days) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0")
+  ].join("-");
+}
+
 async function jsonRequest(baseUrl, pathName, { method = "GET", token, body, headers = {} } = {}) {
   const response = await fetch(`${baseUrl}${pathName}`, {
     method,
@@ -56,6 +67,42 @@ async function jsonRequest(baseUrl, pathName, { method = "GET", token, body, hea
     headers: response.headers,
     json: await response.json().catch(() => ({}))
   };
+}
+
+function testSignaturePngDataUrl() {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const chunk = (type, data) => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    return Buffer.concat([length, Buffer.from(type, "ascii"), data, Buffer.alloc(4)]);
+  };
+  const width = 24;
+  const height = 8;
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const rows = [];
+  for (let y = 0; y < height; y += 1) {
+    const row = Buffer.alloc(1 + width * 4);
+    for (let x = 0; x < width; x += 1) {
+      const offset = 1 + x * 4;
+      const ink = Math.abs(y - Math.round((x / width) * (height - 1))) <= 1;
+      row[offset] = 10;
+      row[offset + 1] = 20;
+      row[offset + 2] = 30;
+      row[offset + 3] = ink ? 255 : 0;
+    }
+    rows.push(row);
+  }
+  const png = Buffer.concat([
+    signature,
+    chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(Buffer.concat(rows))),
+    chunk("IEND", Buffer.alloc(0))
+  ]);
+  return `data:image/png;base64,${png.toString("base64")}`;
 }
 
 test("admin users, team leaders and performed-event assignment locks work", async () => {
@@ -265,6 +312,31 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(settings.json.settings.google_calendar_id.includes("@group.calendar.google.com"), true);
     assert.ok(settings.json.settings.calendar_feed_token);
 
+    const sensitiveGoogleSettings = await jsonRequest(baseUrl, "/api/settings", {
+      method: "PATCH",
+      token,
+      body: {
+        google_calendar_api_key: "AIzaSensitiveCalendarKey",
+        google_calendar_public_ics_url: "https://calendar.google.com/calendar/ical/private-secret/basic.ics"
+      }
+    });
+    assert.equal(sensitiveGoogleSettings.status, 200);
+    assert.equal(sensitiveGoogleSettings.json.settings.google_calendar_api_key, "");
+    assert.equal(sensitiveGoogleSettings.json.settings.google_calendar_public_ics_url, "");
+    assert.equal(sensitiveGoogleSettings.json.settings.google_calendar_api_key_configured, "true");
+    assert.equal(sensitiveGoogleSettings.json.settings.google_calendar_public_ics_url_configured, "true");
+    assert.doesNotMatch(JSON.stringify(sensitiveGoogleSettings.json), /AIzaSensitiveCalendarKey|private-secret/);
+
+    const sensitiveGoogleSettingsAgain = await jsonRequest(baseUrl, "/api/settings", {
+      method: "PATCH",
+      token,
+      body: { google_calendar_api_key: "", google_calendar_public_ics_url: "" }
+    });
+    assert.equal(sensitiveGoogleSettingsAgain.status, 200);
+    assert.equal(sensitiveGoogleSettingsAgain.json.settings.google_calendar_api_key_configured, "true");
+    assert.equal(sensitiveGoogleSettingsAgain.json.settings.google_calendar_public_ics_url_configured, "true");
+    assert.doesNotMatch(JSON.stringify(sensitiveGoogleSettingsAgain.json), /AIzaSensitiveCalendarKey|private-secret/);
+
     const deniedFeed = await fetch(`${baseUrl}/api/calendar/marfan.ics?token=wrong`);
     assert.equal(deniedFeed.status, 403);
 
@@ -275,6 +347,33 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.match(feedText, /BEGIN:VCALENDAR/);
     assert.match(feedText, /MARFAN CREW ERP/);
     assert.match(feedText, /BEGIN:VEVENT/);
+
+    const oauthInstalledSettings = await jsonRequest(baseUrl, "/api/settings", {
+      method: "PATCH",
+      token,
+      body: {
+        google_calendar_oauth_client_json: JSON.stringify({
+          installed: {
+            client_id: "oauth-installed.test",
+            client_secret: "oauth-secret",
+            redirect_uris: ["http://localhost"]
+          }
+        })
+      }
+    });
+    assert.equal(oauthInstalledSettings.status, 200);
+    assert.equal(oauthInstalledSettings.json.settings.google_calendar_oauth_client_type, "installed");
+
+    const oauthInstalled = await jsonRequest(baseUrl, "/api/calendar/google-oauth/start", {
+      method: "POST",
+      token,
+      body: { returnUrl: baseUrl }
+    });
+    assert.equal(oauthInstalled.status, 409);
+    assert.equal(oauthInstalled.json.code, "google_oauth_client_type_invalid");
+    assert.equal(oauthInstalled.json.redirectUri, `${baseUrl}/api/calendar/google-oauth/callback`);
+    assert.deepEqual(oauthInstalled.json.authorizedRedirectUris, ["http://localhost"]);
+    assert.equal(oauthInstalled.json.suggestedRedirectUris.includes(`${baseUrl}/api/calendar/google-oauth/callback`), true);
 
     const oauthMismatchSettings = await jsonRequest(baseUrl, "/api/settings", {
       method: "PATCH",
@@ -302,6 +401,7 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(oauthMismatch.json.code, "google_redirect_uri_mismatch");
     assert.equal(oauthMismatch.json.redirectUri, `${baseUrl}/api/calendar/google-oauth/callback`);
     assert.deepEqual(oauthMismatch.json.authorizedRedirectUris, ["http://localhost"]);
+    assert.equal(oauthMismatch.json.suggestedRedirectUris.includes(`${baseUrl}/api/calendar/google-oauth/callback`), true);
 
     const backupSettings = await jsonRequest(baseUrl, "/api/settings", {
       method: "PATCH",
@@ -343,7 +443,13 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     });
     assert.equal(restoreWithConfirmation.status, 202);
     assert.match(restoreWithConfirmation.json.message, /Restauracion preparada/);
-    assert.equal(fs.existsSync(path.join(tmp, "restore-request.json")), true);
+    assert.equal(restoreWithConfirmation.json.safetyBackup.type, "safety");
+    assert.equal(restoreWithConfirmation.json.safetyBackup.verified, true);
+    assert.equal(fs.existsSync(restoreWithConfirmation.json.safetyBackup.file_path), true);
+    const restoreRequestPath = path.join(tmp, "restore-request.json");
+    assert.equal(fs.existsSync(restoreRequestPath), true);
+    const restoreRequest = JSON.parse(fs.readFileSync(restoreRequestPath, "utf8"));
+    assert.equal(restoreRequest.safetyBackupId, restoreWithConfirmation.json.safetyBackup.id);
 
     const documents = await jsonRequest(baseUrl, "/api/documents", { token });
     assert.equal(documents.status, 200);
@@ -422,6 +528,119 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(documentSync.status, 200);
     assert.ok(Number.isInteger(documentSync.json.updated));
     assert.ok(documentSync.json.compliance.totals.total >= documents.json.compliance.totals.total);
+
+    const forkliftEvent = await jsonRequest(baseUrl, "/api/events", {
+      method: "POST",
+      token,
+      body: {
+        name: "Servicio carretillero certificado",
+        clientId: "cli_tech",
+        date: "2026-08-01",
+        startTime: "09:00",
+        endTime: "12:00",
+        location: "Recinto carretillero",
+        address: "Recinto carretillero",
+        lat: 36.694,
+        lng: -4.4605,
+        requiredTotal: 1,
+        requirements: [{ role: "Carretillero", count: 1 }]
+      }
+    });
+    assert.equal(forkliftEvent.status, 201);
+
+    const forkliftRecommendations = await jsonRequest(
+      baseUrl,
+      `/api/planner/recommendations?eventId=${encodeURIComponent(forkliftEvent.json.event.id)}`,
+      { token }
+    );
+    assert.equal(forkliftRecommendations.status, 200);
+    const alejandroForklift = forkliftRecommendations.json.recommendations.find((item) => item.employee.id === "emp_alejandro");
+    assert.equal(alejandroForklift.issues.some((issue) =>
+      issue.type === "documentacion" &&
+      issue.severity === "block" &&
+      issue.message.includes("carretillero")
+    ), true);
+
+    const blockedForkliftAssignment = await jsonRequest(baseUrl, "/api/assignments", {
+      method: "POST",
+      token,
+      body: { eventId: forkliftEvent.json.event.id, employeeId: "emp_alejandro", role: "Carretillero" }
+    });
+    assert.equal(blockedForkliftAssignment.status, 409);
+    assert.equal(blockedForkliftAssignment.json.issues.some((issue) => issue.message.includes("carretillero")), true);
+
+    const forkliftPatchEvent = await jsonRequest(baseUrl, "/api/events", {
+      method: "POST",
+      token,
+      body: {
+        name: "Servicio carretillero por edicion",
+        clientId: "cli_tech",
+        date: "2026-08-02",
+        startTime: "09:00",
+        endTime: "12:00",
+        location: "Recinto carretillero edicion",
+        address: "Recinto carretillero edicion",
+        lat: 36.694,
+        lng: -4.4605,
+        requiredTotal: 1,
+        requirements: [{ role: "Carretillero", count: 1 }]
+      }
+    });
+    assert.equal(forkliftPatchEvent.status, 201);
+
+    const editableForkliftAssignment = await jsonRequest(baseUrl, "/api/assignments", {
+      method: "POST",
+      token,
+      body: { eventId: forkliftPatchEvent.json.event.id, employeeId: "emp_alejandro", role: "Montaje" }
+    });
+    assert.equal(editableForkliftAssignment.status, 201);
+
+    const blockedForkliftRoleChange = await jsonRequest(
+      baseUrl,
+      `/api/assignments/${editableForkliftAssignment.json.assignment.id}`,
+      {
+        method: "PATCH",
+        token,
+        body: { role: "Carretillero" }
+      }
+    );
+    assert.equal(blockedForkliftRoleChange.status, 409);
+    assert.equal(blockedForkliftRoleChange.json.issues.some((issue) => issue.message.includes("carretillero")), true);
+
+    const forkliftDocument = await jsonRequest(baseUrl, "/api/documents", {
+      method: "POST",
+      token,
+      body: {
+        employeeId: "emp_alejandro",
+        type: "Carnet carretillero",
+        name: "Carnet carretillero vigente",
+        status: "vigente",
+        fileName: "carnet-carretillero.txt",
+        fileMime: "text/plain",
+        fileDataBase64: `data:text/plain;base64,${Buffer.from("CARNET CARRETILLERO OK").toString("base64")}`
+      }
+    });
+    assert.equal(forkliftDocument.status, 201);
+
+    const allowedForkliftRoleChange = await jsonRequest(
+      baseUrl,
+      `/api/assignments/${editableForkliftAssignment.json.assignment.id}`,
+      {
+        method: "PATCH",
+        token,
+        body: { role: "Carretillero" }
+      }
+    );
+    assert.equal(allowedForkliftRoleChange.status, 200);
+    assert.equal(allowedForkliftRoleChange.json.assignment.role, "Carretillero");
+
+    const allowedForkliftAssignment = await jsonRequest(baseUrl, "/api/assignments", {
+      method: "POST",
+      token,
+      body: { eventId: forkliftEvent.json.event.id, employeeId: "emp_alejandro", role: "Carretillero" }
+    });
+    assert.equal(allowedForkliftAssignment.status, 201);
+    assert.equal(allowedForkliftAssignment.json.assignment.role, "Carretillero");
 
     const employeeReport = await jsonRequest(baseUrl, "/api/reports/employees?employeeId=emp_javier", { token });
     assert.equal(employeeReport.status, 200);
@@ -514,6 +733,8 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(importedGoogle.json.created, true);
     assert.equal(importedGoogle.json.event.google_calendar_uid, googleImportBody.googleUid);
     assert.equal(importedGoogle.json.event.location, "Recinto Google");
+    assert.equal(importedGoogle.json.event.deliveryNote.status, "borrador");
+    assert.equal(importedGoogle.json.event.deliveryNote.locked, 0);
 
     const duplicateGoogle = await jsonRequest(baseUrl, "/api/calendar/import-google-event", {
       method: "POST",
@@ -550,14 +771,15 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(bulkGoogle.json.existing, 1);
     assert.equal(bulkGoogle.json.events.some((event) => event.google_calendar_uid === "google-bulk-calendar-event@example.com"), true);
 
+    const planningDate = addDaysLocal(1);
     const createdEvent = await jsonRequest(baseUrl, "/api/events", {
       method: "POST",
       token,
       body: {
         name: "Servicio pendiente Google",
         clientId: "cli_tech",
-        date: "2026-06-22",
-        startTime: "10:00",
+        date: planningDate,
+        startTime: "09:00",
         endTime: "14:00",
         location: "Palacio de Ferias Malaga",
         address: "Palacio de Ferias Malaga",
@@ -570,6 +792,8 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(createdEvent.status, 201);
     assert.equal(createdEvent.json.googleSync.status, "pending_auth");
     assert.equal(createdEvent.json.event.google_sync_status, "pending_auth");
+    assert.equal(createdEvent.json.event.deliveryNote.status, "borrador");
+    assert.equal(createdEvent.json.event.deliveryNote.locked, 0);
 
     const eventRecommendations = await jsonRequest(
       baseUrl,
@@ -629,20 +853,65 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
       allowance.night_hours === 2
     ), true);
 
+    const duplicateDate = addDaysLocal(2);
     const duplicatedEvent = await jsonRequest(baseUrl, `/api/events/${createdEvent.json.event.id}/duplicate`, {
       method: "POST",
       token,
-      body: { date: "2026-06-24" }
+      body: { date: duplicateDate }
     });
     assert.equal(duplicatedEvent.status, 201);
     assert.equal(duplicatedEvent.json.copiedAssignments.length, 1);
     assert.equal(duplicatedEvent.json.skippedAssignments.length, 0);
-    assert.equal(duplicatedEvent.json.event.date, "2026-06-24");
+    assert.equal(duplicatedEvent.json.event.date, duplicateDate);
+    assert.equal(duplicatedEvent.json.event.deliveryNote.status, "borrador");
+    assert.equal(duplicatedEvent.json.event.deliveryNote.locked, 0);
     assert.equal(duplicatedEvent.json.event.assignments.some((assignment) =>
       assignment.employee_id === "emp_alejandro" &&
       assignment.role === "Montaje"
     ), true);
     assert.equal(duplicatedEvent.json.event.assigned_count, 1);
+
+    const duplicatedAssignment = duplicatedEvent.json.event.assignments.find((assignment) =>
+      assignment.employee_id === "emp_alejandro"
+    );
+    const traceAllowance = await jsonRequest(baseUrl, "/api/allowances", {
+      method: "POST",
+      token,
+      body: {
+        eventId: duplicatedEvent.json.event.id,
+        employeeId: "emp_alejandro",
+        km: 3.5,
+        diet: 9,
+        nightHours: 0.5,
+        extras: 2
+      }
+    });
+    assert.equal(traceAllowance.status, 201);
+
+    const deletedAllowance = await jsonRequest(baseUrl, `/api/allowances/${traceAllowance.json.allowance.id}`, {
+      method: "DELETE",
+      token
+    });
+    assert.equal(deletedAllowance.status, 200);
+
+    const deletedAssignment = await jsonRequest(baseUrl, `/api/assignments/${duplicatedAssignment.id}`, {
+      method: "DELETE",
+      token
+    });
+    assert.equal(deletedAssignment.status, 200);
+
+    const traceSnapshots = await jsonRequest(baseUrl, `/api/events/${duplicatedEvent.json.event.id}/snapshots?limit=10`, { token });
+    assert.equal(traceSnapshots.status, 200);
+    const assignmentDeletedSnapshot = traceSnapshots.json.snapshots.find((snapshot) => snapshot.action === "assignment_deleted");
+    assert.equal(assignmentDeletedSnapshot.payload_hash_valid, true);
+    assert.equal(assignmentDeletedSnapshot.metadata.deletedAssignment.employee_id, "emp_alejandro");
+    assert.equal(assignmentDeletedSnapshot.metadata.deletedAssignment.role, "Montaje");
+    assert.equal(assignmentDeletedSnapshot.metadata.deletedAssignment.name, "Alejandro Perez");
+    const allowanceDeletedSnapshot = traceSnapshots.json.snapshots.find((snapshot) => snapshot.action === "allowance_deleted");
+    assert.equal(allowanceDeletedSnapshot.payload_hash_valid, true);
+    assert.equal(allowanceDeletedSnapshot.metadata.deletedAllowance.employee_id, "emp_alejandro");
+    assert.equal(allowanceDeletedSnapshot.metadata.deletedAllowance.km, 3.5);
+    assert.equal(allowanceDeletedSnapshot.metadata.deletedAllowance.diet, 9);
 
     const clientDossier = await fetch(`${baseUrl}/api/events/${createdEvent.json.event.id}/client-dossier`, {
       headers: { authorization: `Bearer ${token}` }
@@ -722,17 +991,17 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 
     const filteredEventsReport = await jsonRequest(
       baseUrl,
-      "/api/reports/events?from=2026-06-22&to=2026-06-22&clientId=cli_tech&employeeId=emp_alejandro",
+      `/api/reports/events?from=${planningDate}&to=${planningDate}&clientId=cli_tech&employeeId=emp_alejandro`,
       { token }
     );
     assert.equal(filteredEventsReport.status, 200);
     assert.equal(filteredEventsReport.json.filters.clientId, "cli_tech");
     assert.equal(filteredEventsReport.json.filters.employeeId, "emp_alejandro");
     assert.equal(filteredEventsReport.json.rows.some((row) => row.id === createdEvent.json.event.id), true);
-    assert.equal(filteredEventsReport.json.rows.every((row) => row.fecha === "2026-06-22" && row.cliente === "Tech Events S.L."), true);
+    assert.equal(filteredEventsReport.json.rows.every((row) => row.fecha === planningDate && row.cliente === "Tech Events S.L."), true);
 
     const eventsPdfReport = await fetch(
-      `${baseUrl}/api/reports/events?from=2026-06-22&to=2026-06-22&clientId=cli_tech&employeeId=emp_alejandro&format=pdf`,
+      `${baseUrl}/api/reports/events?from=${planningDate}&to=${planningDate}&clientId=cli_tech&employeeId=emp_alejandro&format=pdf`,
       { headers: { authorization: `Bearer ${token}` } }
     );
     const eventsPdfBuffer = Buffer.from(await eventsPdfReport.arrayBuffer());
@@ -746,7 +1015,7 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 
     const filteredFinanceReport = await jsonRequest(
       baseUrl,
-      "/api/reports/finance?from=2026-06-22&to=2026-06-22&clientId=cli_tech&employeeId=emp_alejandro",
+      `/api/reports/finance?from=${planningDate}&to=${planningDate}&clientId=cli_tech&employeeId=emp_alejandro`,
       { token }
     );
     assert.equal(filteredFinanceReport.status, 200);
@@ -769,6 +1038,80 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
       }
     });
     assert.equal(openClockWindowForGpsTest.status, 200);
+
+    const autoConfirmEmployee = await jsonRequest(baseUrl, "/api/employees", {
+      method: "POST",
+      token,
+      body: {
+        name: "Operario Autoconfirma",
+        phone: "+34600111999",
+        email: "autoconfirma@marfancrew.test",
+        role: "Montaje",
+        portalAccess: true
+      }
+    });
+    assert.equal(autoConfirmEmployee.status, 201);
+
+    const autoConfirmEvent = await jsonRequest(baseUrl, "/api/events", {
+      method: "POST",
+      token,
+      body: {
+        name: "Servicio pendiente que ficha entrada",
+        clientId: "cli_tech",
+        date: todayLocal(),
+        startTime: "00:00",
+        endTime: "23:59",
+        location: "Recinto autoconfirma",
+        address: "Recinto autoconfirma",
+        lat: 36.694,
+        lng: -4.4605,
+        requiredTotal: 1,
+        requirements: [{ role: "Montaje", count: 1 }]
+      }
+    });
+    assert.equal(autoConfirmEvent.status, 201);
+
+    const pendingClockAssignment = await jsonRequest(baseUrl, "/api/assignments", {
+      method: "POST",
+      token,
+      body: {
+        eventId: autoConfirmEvent.json.event.id,
+        employeeId: autoConfirmEmployee.json.employee.id,
+        role: "Montaje",
+        status: "pendiente"
+      }
+    });
+    assert.equal(pendingClockAssignment.status, 201);
+    assert.equal(pendingClockAssignment.json.assignment.status, "pendiente");
+
+    const autoConfirmLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: { identifier: "600111999", password: "Marfan2026!", mode: "employee" }
+    });
+    assert.equal(autoConfirmLogin.status, 200);
+
+    const autoConfirmClock = await jsonRequest(baseUrl, "/api/time-entries/clock", {
+      method: "POST",
+      token: autoConfirmLogin.json.token,
+      headers: { "user-agent": "MARFAN-Test-Employee" },
+      body: {
+        eventId: autoConfirmEvent.json.event.id,
+        type: "entrada",
+        lat: 36.694,
+        lng: -4.4605,
+        accuracy: 6
+      }
+    });
+    assert.equal(autoConfirmClock.status, 201);
+    assert.equal(autoConfirmClock.json.entry.employee_id, autoConfirmEmployee.json.employee.id);
+
+    const autoConfirmedEvent = await jsonRequest(baseUrl, `/api/events/${autoConfirmEvent.json.event.id}`, { token });
+    assert.equal(autoConfirmedEvent.status, 200);
+    assert.equal(autoConfirmedEvent.json.event.assignments[0].status, "confirmado");
+    const autoConfirmSnapshots = await jsonRequest(baseUrl, `/api/events/${autoConfirmEvent.json.event.id}/snapshots?limit=5`, { token });
+    const autoConfirmSnapshot = autoConfirmSnapshots.json.snapshots.find((snapshot) => snapshot.action === "time_entry_created");
+    assert.equal(autoConfirmSnapshot.metadata.autoConfirmedAssignment, true);
+    assert.equal(autoConfirmSnapshot.payload_hash_valid, true);
 
     const missingGpsClock = await jsonRequest(baseUrl, "/api/time-entries/clock", {
       method: "POST",
@@ -838,7 +1181,7 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
       token,
       body: {
         type: "entrada",
-        timestamp: "2026-06-22T10:05",
+        timestamp: `${planningDate}T10:05`,
         accepted: true,
         notes: "Entrada aceptada tras llamada de oficina",
         correctionReason: "GPS corregido por oficina tras validar presencia"
@@ -891,6 +1234,8 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(snapshotActions.includes("time_entry_blocked"), true);
     assert.equal(snapshotActions.includes("incident_updated"), true);
     const blockedSnapshot = eventSnapshots.json.snapshots.find((snapshot) => snapshot.action === "time_entry_blocked");
+    assert.match(blockedSnapshot.payload_hash, /^[a-f0-9]{64}$/);
+    assert.equal(blockedSnapshot.payload_hash_valid, true);
     assert.equal(blockedSnapshot.payload.event.id, createdEvent.json.event.id);
     assert.equal(blockedSnapshot.payload.event.assignments.some((assignment) => assignment.employee_id === "emp_alejandro"), true);
     assert.equal(blockedSnapshot.payload.event.timeEntries.some((entry) => entry.type === "entrada_bloqueada"), true);
@@ -963,13 +1308,66 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
         lng: -4.4605,
         signatureName: "Cliente Firma",
         signatureDni: "00000000T",
-        signatureImage: "data:image/png;base64,iVBORw0KGgo=",
+        signatureImage: testSignaturePngDataUrl(),
         clientNotes: "Servicio conforme"
       }
     });
     assert.equal(signedClockOut.status, 201);
     assert.equal(signedClockOut.json.deliveryNote.status, "firmado");
     assert.equal(signedClockOut.json.deliveryNote.locked, 1);
+
+    const lockedTimeEntryCorrection = await jsonRequest(baseUrl, `/api/time-entries/${signedClockOut.json.entry.id}`, {
+      method: "PATCH",
+      token,
+      body: {
+        timestamp: `${today}T23:30`,
+        accepted: true,
+        notes: "Intento de correccion posterior a firma",
+        correctionReason: "No debe alterar un albaran firmado"
+      }
+    });
+    assert.equal(lockedTimeEntryCorrection.status, 409);
+    assert.match(lockedTimeEntryCorrection.json.error, /Albaran firmado/i);
+
+    const signedEventEdit = await jsonRequest(baseUrl, `/api/events/${deliveryEvent.json.event.id}`, {
+      method: "PATCH",
+      token,
+      body: {
+        notes: "Intento de editar despues de firma",
+        budget: 9999
+      }
+    });
+    assert.equal(signedEventEdit.status, 409);
+    assert.match(signedEventEdit.json.error, /Albaran firmado/i);
+
+    const signedAssignmentCreate = await jsonRequest(baseUrl, "/api/assignments", {
+      method: "POST",
+      token,
+      body: {
+        eventId: deliveryEvent.json.event.id,
+        employeeId: "emp_alejandro",
+        role: "Montaje"
+      }
+    });
+    assert.equal(signedAssignmentCreate.status, 409);
+    assert.match(signedAssignmentCreate.json.error, /Albaran firmado/i);
+
+    const signedAssignmentUpdate = await jsonRequest(baseUrl, `/api/assignments/${deliveryAssignment.json.assignment.id}`, {
+      method: "PATCH",
+      token,
+      body: {
+        status: "bloqueado"
+      }
+    });
+    assert.equal(signedAssignmentUpdate.status, 409);
+    assert.match(signedAssignmentUpdate.json.error, /Albaran firmado/i);
+
+    const signedAssignmentDelete = await jsonRequest(baseUrl, `/api/assignments/${deliveryAssignment.json.assignment.id}`, {
+      method: "DELETE",
+      token
+    });
+    assert.equal(signedAssignmentDelete.status, 409);
+    assert.match(signedAssignmentDelete.json.error, /Albaran firmado/i);
 
     const deliveryPdf = await fetch(`${baseUrl}/api/delivery-notes/${deliveryEvent.json.event.id}?format=pdf`, {
       headers: { authorization: `Bearer ${token}` }
@@ -979,6 +1377,7 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.match(deliveryPdf.headers.get("content-type"), /application\/pdf/);
     assert.equal(deliveryPdfBuffer.subarray(0, 4).toString(), "%PDF");
     assert.ok(deliveryPdfBuffer.length > 2500);
+    assert.match(deliveryPdfBuffer.toString("latin1"), /\/Subtype \/Image/);
 
     const lockedAllowance = await jsonRequest(baseUrl, "/api/allowances", {
       method: "POST",
@@ -1017,13 +1416,28 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     });
     assert.equal(attendanceAssignment.status, 201);
 
+    const autoDetectedLive = await jsonRequest(baseUrl, `/api/live?date=${today}`, { token });
+    assert.equal(autoDetectedLive.status, 200);
+    assert.equal(autoDetectedLive.json.attendanceDetection.created >= 1, true);
+    assert.equal(autoDetectedLive.json.events.some((event) =>
+      event.id === attendanceEvent.json.event.id &&
+      event.liveIncidents.some((incident) =>
+        incident.employee_id === "emp_alejandro" &&
+        incident.type === "ausencia"
+      )
+    ), true);
+
+    const autoDetectedLiveAgain = await jsonRequest(baseUrl, `/api/live?date=${today}`, { token });
+    assert.equal(autoDetectedLiveAgain.status, 200);
+    assert.equal(autoDetectedLiveAgain.json.attendanceDetection.created, 0);
+
     const detectedAttendance = await jsonRequest(baseUrl, "/api/incidents/detect-attendance", {
       method: "POST",
       token,
       body: { date: today }
     });
     assert.equal(detectedAttendance.status, 200);
-    assert.equal(detectedAttendance.json.created >= 1, true);
+    assert.equal(detectedAttendance.json.created, 0);
     assert.equal(detectedAttendance.json.incidents.some((incident) =>
       incident.event_id === attendanceEvent.json.event.id &&
       incident.employee_id === "emp_alejandro" &&
@@ -1075,9 +1489,12 @@ test("Google Calendar sync writes imported and new events with OAuth credentials
       NODE_OPTIONS: nodeOptions,
       MOCK_GOOGLE_FETCH_LOG: googleLog,
       GOOGLE_OAUTH_CLIENT_JSON: JSON.stringify({
-        client_id: "oauth-client.test",
-        client_secret: "oauth-secret",
-        token_uri: "https://oauth2.test/token"
+        web: {
+          client_id: "oauth-client.test",
+          client_secret: "oauth-secret",
+          token_uri: "https://oauth2.test/token",
+          redirect_uris: [`${baseUrl}/api/calendar/google-oauth/callback`]
+        }
       }),
       GOOGLE_OAUTH_REFRESH_TOKEN: "refresh-token-test",
       PORT: String(port),
@@ -1150,6 +1567,7 @@ test("Google Calendar sync writes imported and new events with OAuth credentials
     });
     assert.equal(importedGoogle.status, 201);
     assert.equal(importedGoogle.json.event.google_sync_status, "imported");
+    assert.equal(importedGoogle.json.event.deliveryNote.status, "borrador");
 
     const editedGoogle = await jsonRequest(baseUrl, `/api/events/${importedGoogle.json.event.id}`, {
       method: "PATCH",

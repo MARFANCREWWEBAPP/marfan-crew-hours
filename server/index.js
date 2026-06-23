@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const crypto = require("node:crypto");
 const http = require("node:http");
 const path = require("node:path");
+const zlib = require("node:zlib");
 const {
   all,
   BACKUP_DIR,
@@ -378,20 +379,28 @@ function eventSnapshotPayload(eventId) {
   };
 }
 
+function eventSnapshotPayloadHash(payloadText) {
+  return crypto.createHash("sha256").update(String(payloadText || "")).digest("hex");
+}
+
 function createEventSnapshot(eventId, action, actor = null, metadata = {}) {
   const payload = eventSnapshotPayload(eventId);
   if (!payload) return null;
   const id = randomId("evs");
+  const payloadText = JSON.stringify(payload);
+  const metadataText = JSON.stringify(metadata || {});
+  const payloadHash = eventSnapshotPayloadHash(payloadText);
   run(
-    `INSERT INTO event_snapshots (id, event_id, action, actor_user_id, payload, metadata)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO event_snapshots (id, event_id, action, actor_user_id, payload, metadata, payload_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       eventId,
       action,
       actor?.id || null,
-      JSON.stringify(payload),
-      JSON.stringify(metadata || {})
+      payloadText,
+      metadataText,
+      payloadHash
     ]
   );
   return {
@@ -401,6 +410,8 @@ function createEventSnapshot(eventId, action, actor = null, metadata = {}) {
     actor_user_id: actor?.id || null,
     payload,
     metadata,
+    payload_hash: payloadHash,
+    payload_hash_valid: true,
     created_at: new Date().toISOString()
   };
 }
@@ -417,18 +428,28 @@ function listEventSnapshots(eventId, limit = 50) {
      ORDER BY event_snapshots.created_at DESC, event_snapshots.id DESC
      LIMIT ?`,
     [eventId, Math.min(Math.max(Number(limit || 50), 1), 200)]
-  ).map((row) => ({
-    id: row.id,
-    event_id: row.event_id,
-    action: row.action,
-    actor_user_id: row.actor_user_id,
-    actor_name: row.actor_name || "Sistema",
-    actor_email: row.actor_email || "",
-    actor_role: row.actor_role || "system",
-    payload: jsonField(row.payload, {}),
-    metadata: jsonField(row.metadata, {}),
-    created_at: row.created_at
-  }));
+  ).map((row) => {
+    const computedHash = eventSnapshotPayloadHash(row.payload || "");
+    let payloadHash = row.payload_hash || "";
+    if (!payloadHash) {
+      payloadHash = computedHash;
+      run("UPDATE event_snapshots SET payload_hash = ? WHERE id = ?", [payloadHash, row.id]);
+    }
+    return {
+      id: row.id,
+      event_id: row.event_id,
+      action: row.action,
+      actor_user_id: row.actor_user_id,
+      actor_name: row.actor_name || "Sistema",
+      actor_email: row.actor_email || "",
+      actor_role: row.actor_role || "system",
+      payload: jsonField(row.payload, {}),
+      metadata: jsonField(row.metadata, {}),
+      payload_hash: payloadHash,
+      payload_hash_valid: payloadHash === computedHash,
+      created_at: row.created_at
+    };
+  });
 }
 
 function normalizeAdminPermissions(value, role = "admin") {
@@ -620,8 +641,14 @@ function settingsForAdmin() {
   const serviceAccount = googleServiceAccountCredentials(settings);
   const oauthClient = googleOAuthClientCredentials(settings);
   const syncSummary = googleSyncSummary();
+  const googleApiKeyConfigured = Boolean(String(settings.google_calendar_api_key || "").trim());
+  const googleIcsUrlConfigured = Boolean(String(settings.google_calendar_public_ics_url || "").trim());
   return {
     ...settings,
+    google_calendar_api_key: "",
+    google_calendar_api_key_configured: googleApiKeyConfigured ? "true" : "false",
+    google_calendar_public_ics_url: "",
+    google_calendar_public_ics_url_configured: googleIcsUrlConfigured ? "true" : "false",
     google_calendar_service_account_json: "",
     google_calendar_service_account_email: serviceAccount?.client_email || "",
     google_calendar_service_account_configured: serviceAccount ? "true" : "false",
@@ -866,6 +893,26 @@ function detectAttendanceIncidents({ date = formatDate(), actor = null, now = ne
     summary.incidents.push({ id, eventId: row.event_id, employeeId: row.employee_id, type, action: "created" });
   }
   return summary;
+}
+
+function autoDetectAttendanceIncidents({ date = formatDate(), actor = null, now = new Date() } = {}) {
+  const targetDate = String(date || formatDate()).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate) || targetDate > formatDate()) {
+    return {
+      date: targetDate,
+      checked: 0,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      incidents: [],
+      automatic: true,
+      skippedReason: "future_date"
+    };
+  }
+  return {
+    ...detectAttendanceIncidents({ date: targetDate, actor, now }),
+    automatic: true
+  };
 }
 
 function latestAutoBackup() {
@@ -1656,6 +1703,20 @@ function eventPerformed(event, today = formatDate()) {
   return Boolean(event && (event.status === "finalizado" || String(event.date) < today));
 }
 
+function eventWithDeliveryState(eventId) {
+  return get(
+    `SELECT events.*, COALESCE(delivery_notes.locked, 0) AS delivery_note_locked
+     FROM events
+     LEFT JOIN delivery_notes ON delivery_notes.event_id = events.id
+     WHERE events.id = ?`,
+    [eventId]
+  );
+}
+
+function deliveryNoteLocked(event) {
+  return Number(event?.delivery_note_locked || 0) === 1;
+}
+
 function recoveryCode() {
   return randomToken().replaceAll("-", "").replaceAll("_", "").slice(0, 16).toUpperCase();
 }
@@ -2313,6 +2374,27 @@ function ensureAllowanceEventEditable(eventId) {
   return event;
 }
 
+function ensureTimeEntryEventEditable(eventId) {
+  const event = get(
+    `SELECT events.*, COALESCE(delivery_notes.locked, 0) AS delivery_note_locked
+     FROM events
+     LEFT JOIN delivery_notes ON delivery_notes.event_id = events.id
+     WHERE events.id = ?`,
+    [eventId]
+  );
+  if (!event) {
+    const error = new Error("Evento no encontrado");
+    error.status = 404;
+    throw error;
+  }
+  if (Number(event.delivery_note_locked || 0) === 1) {
+    const error = new Error("Albaran firmado: no se pueden corregir fichajes");
+    error.status = 409;
+    throw error;
+  }
+  return event;
+}
+
 function assignedAllowanceEmployee(eventId, employeeId) {
   return get(
     `SELECT assignments.*, employees.name AS employee_name
@@ -2585,7 +2667,7 @@ function updateEventStatus(eventId) {
   return status;
 }
 
-function dashboardPayload() {
+function dashboardPayload(attendanceDetection = null) {
   const today = formatDate();
   const todaysEvents = listEvents({ from: today, to: today });
   const assigned = todaysEvents.reduce((sum, event) => sum + event.assigned_count, 0);
@@ -2616,6 +2698,7 @@ function dashboardPayload() {
     cards,
     live: todaysEvents,
     alerts: buildAlerts(todaysEvents),
+    attendanceDetection,
     updatedAt: new Date().toISOString()
   };
 }
@@ -2848,7 +2931,7 @@ function clockSequenceError(event, assignment, employeeId, type, policy = clockP
   return null;
 }
 
-function livePayload(date = formatDate()) {
+function livePayload(date = formatDate(), attendanceDetection = null) {
   const events = listEvents({ from: date, to: date });
   const enrichedEvents = events.map((event) => {
     const incidents = all(
@@ -2915,6 +2998,7 @@ function livePayload(date = formatDate()) {
     cards,
     events: enrichedEvents,
     alerts: buildAlerts(enrichedEvents),
+    attendanceDetection,
     updatedAt: new Date().toISOString()
   };
 }
@@ -2954,8 +3038,45 @@ function eventDetailByGoogleUid(googleUid) {
   return row ? eventDetail(row.id) : null;
 }
 
-function validateAssignment(event, employee) {
+const ROLE_DOCUMENT_REQUIREMENTS = [
+  {
+    roleIncludes: ["carretill"],
+    documentIncludes: ["carretill"],
+    label: "certificado/carnet de carretillero"
+  }
+];
+
+function roleDocumentRequirementIssue(targetRole, documents = []) {
+  const targetRoleKey = roleKey(targetRole);
+  const requirement = ROLE_DOCUMENT_REQUIREMENTS.find((item) =>
+    item.roleIncludes.some((fragment) => targetRoleKey.includes(fragment))
+  );
+  if (!requirement) return null;
+  const matches = documents.filter((document) => {
+    const haystack = roleKey(`${document.type || ""} ${document.name || ""}`);
+    return requirement.documentIncludes.some((fragment) => haystack.includes(fragment));
+  });
+  const valid = matches.find((document) => ["vigente", "proximo"].includes(document.status));
+  if (!valid) {
+    return {
+      type: "documentacion",
+      severity: "block",
+      message: `Falta ${requirement.label} vigente para rol ${targetRole}`
+    };
+  }
+  if (valid.status === "proximo") {
+    return {
+      type: "documentacion",
+      severity: "warning",
+      message: `${valid.type} vence en ${valid.days_to_expiry} dias`
+    };
+  }
+  return null;
+}
+
+function validateAssignment(event, employee, targetRole = null) {
   const employeeId = employee.id || employee.employee_id;
+  const assignmentRole = targetRole || employee.role || employee.assignment_role || employee.employee_role || "Operario";
   const issues = [];
   const currentRange = eventClockRange(event);
   const existing = all(
@@ -3000,6 +3121,10 @@ function validateAssignment(event, employee) {
   }
 
   const documents = listDocuments({ employeeId });
+  const roleDocumentIssue = roleDocumentRequirementIssue(assignmentRole, documents);
+  if (roleDocumentIssue?.severity === "block") {
+    issues.push(roleDocumentIssue);
+  }
   const blockingDoc = documents.find((document) => ["caducado", "pendiente"].includes(document.status));
   if (blockingDoc) {
     issues.push({
@@ -3008,7 +3133,9 @@ function validateAssignment(event, employee) {
       message: blockingDoc.status === "pendiente" ? `${blockingDoc.type} pendiente` : `${blockingDoc.type} caducado`
     });
   } else {
-    const soonDoc = documents.find((document) => document.status === "proximo");
+    const soonDoc = roleDocumentIssue?.severity === "warning"
+      ? null
+      : documents.find((document) => document.status === "proximo");
     if (soonDoc) {
       issues.push({
         type: "documentacion",
@@ -3016,6 +3143,9 @@ function validateAssignment(event, employee) {
         message: `${soonDoc.type} vence en ${soonDoc.days_to_expiry} dias`
       });
     }
+  }
+  if (roleDocumentIssue?.severity === "warning" && !issues.some((issue) => issue.message === roleDocumentIssue.message)) {
+    issues.push(roleDocumentIssue);
   }
 
   return issues;
@@ -3084,7 +3214,8 @@ function plannerRecommendations(eventId) {
     all("SELECT employee_id FROM assignments WHERE event_id = ?", [eventId]).map((row) => row.employee_id)
   );
   return all("SELECT * FROM employees WHERE status = 'activo' ORDER BY name").map(parseEmployee).map((employee) => {
-    const issues = validateAssignment(event, employee);
+    const roleFit = roleFitForEmployee(employee, targetRoles);
+    const issues = validateAssignment(event, employee, roleFit.role);
     const distance = isInsideRadius(employee.lat || event.lat, employee.lng || event.lng, event.lat, event.lng, 50_000).distance;
     const hours = get(
       `SELECT COALESCE(SUM(
@@ -3098,7 +3229,6 @@ function plannerRecommendations(eventId) {
       WHERE assignments.employee_id = ? AND events.date >= date('now', '-30 day')`,
       [employee.id]
     ).total;
-    const roleFit = roleFitForEmployee(employee, targetRoles);
     const noteMatch = employee.skills.some((skill) => event.notes?.toLowerCase().includes(String(skill).toLowerCase()));
     let score = 80;
     score += roleFit.bonus;
@@ -3178,8 +3308,9 @@ function icsDateTime(date, time) {
 }
 
 function appOriginFromRequest(req) {
-  const protocol = req.headers["x-forwarded-proto"] || "http";
-  const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
+  const firstHeaderValue = (value) => String(value || "").split(",")[0].trim();
+  const protocol = firstHeaderValue(req.headers["x-forwarded-proto"]) || "http";
+  const host = firstHeaderValue(req.headers["x-forwarded-host"]) || firstHeaderValue(req.headers.host) || "localhost";
   return `${protocol}://${host}`;
 }
 
@@ -3333,6 +3464,7 @@ function importGoogleCalendarEvent(body, actor) {
       "imported"
     ]
   );
+  ensureDraftDeliveryNote({ id, service_price: pricing.servicePrice, budget: 0 });
   audit(actor, "google_event_imported", "event", id, { googleUid, source: body.source || "google" });
   createEventSnapshot(id, "google_event_imported", actor, { googleUid, source: body.source || "google" });
   return { event: eventDetail(id), created: true };
@@ -3782,9 +3914,64 @@ function googleOAuthRedirectUris(client) {
     .filter(Boolean);
 }
 
+function googleOAuthSuggestedRedirectUris(redirectUri) {
+  const suggestions = new Set();
+  const addOrigin = (origin) => {
+    const cleanOrigin = String(origin || "").replace(/\/+$/, "");
+    if (cleanOrigin) suggestions.add(`${cleanOrigin}/api/calendar/google-oauth/callback`);
+  };
+  addOrigin(String(redirectUri || "").replace(/\/api\/calendar\/google-oauth\/callback$/, ""));
+  try {
+    const parsed = new URL(redirectUri);
+    if (parsed.hostname === "127.0.0.1") {
+      parsed.hostname = "localhost";
+      addOrigin(parsed.origin);
+    } else if (parsed.hostname === "localhost") {
+      parsed.hostname = "127.0.0.1";
+      addOrigin(parsed.origin);
+    }
+  } catch {}
+  for (const domain of [
+    process.env.RAILWAY_PUBLIC_DOMAIN,
+    process.env.RAILWAY_STATIC_URL,
+    process.env.PUBLIC_URL,
+    process.env.APP_URL
+  ]) {
+    if (!domain) continue;
+    const value = String(domain).trim();
+    addOrigin(value.startsWith("http://") || value.startsWith("https://") ? value : `https://${value}`);
+  }
+  return Array.from(suggestions);
+}
+
 function assertGoogleOAuthRedirectAllowed(client, redirectUri) {
   const authorizedRedirectUris = googleOAuthRedirectUris(client);
-  if (!authorizedRedirectUris.length || authorizedRedirectUris.includes(redirectUri)) {
+  const suggestedRedirectUris = googleOAuthSuggestedRedirectUris(redirectUri);
+  if (client?.client_type === "installed") {
+    const error = new Error(
+      "El cliente OAuth cargado es de tipo Desktop/Installed. Para MARFAN crea un cliente OAuth tipo Web application y autoriza la URI de retorno exacta."
+    );
+    error.status = 409;
+    error.code = "google_oauth_client_type_invalid";
+    error.redirectUri = redirectUri;
+    error.authorizedRedirectUris = authorizedRedirectUris;
+    error.suggestedRedirectUris = suggestedRedirectUris;
+    error.clientType = client?.client_type || "";
+    throw error;
+  }
+  if (!authorizedRedirectUris.length) {
+    const error = new Error(
+      "El cliente OAuth no incluye Authorized redirect URIs. Pega en MARFAN el JSON de un cliente OAuth tipo Web application con la URI de retorno autorizada."
+    );
+    error.status = 409;
+    error.code = "google_redirect_uri_missing";
+    error.redirectUri = redirectUri;
+    error.authorizedRedirectUris = authorizedRedirectUris;
+    error.suggestedRedirectUris = suggestedRedirectUris;
+    error.clientType = client?.client_type || "";
+    throw error;
+  }
+  if (authorizedRedirectUris.includes(redirectUri)) {
     return { authorizedRedirectUris, ok: true };
   }
   const error = new Error(
@@ -3794,6 +3981,7 @@ function assertGoogleOAuthRedirectAllowed(client, redirectUri) {
   error.code = "google_redirect_uri_mismatch";
   error.redirectUri = redirectUri;
   error.authorizedRedirectUris = authorizedRedirectUris;
+  error.suggestedRedirectUris = suggestedRedirectUris;
   error.clientType = client?.client_type || "";
   throw error;
 }
@@ -4017,29 +4205,156 @@ function pdfSafeText(value, max = 112) {
   return escapePdf(ascii.replace(/\s+/g, " ").trim()).slice(0, max);
 }
 
-function createPdfDocument(ops) {
+function paethPredictor(left, above, upperLeft) {
+  const p = left + above - upperLeft;
+  const pa = Math.abs(p - left);
+  const pb = Math.abs(p - above);
+  const pc = Math.abs(p - upperLeft);
+  if (pa <= pb && pa <= pc) return left;
+  return pb <= pc ? above : upperLeft;
+}
+
+function decodePngDataUrlImage(value) {
+  try {
+    const match = String(value || "").trim().match(/^data:image\/png;base64,([A-Za-z0-9+/=\s]+)$/i);
+    if (!match) return null;
+    const buffer = Buffer.from(match[1].replace(/\s+/g, ""), "base64");
+    const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    if (buffer.length < 33 || !buffer.subarray(0, 8).equals(signature)) return null;
+
+    let offset = 8;
+    let width = 0;
+    let height = 0;
+    let bitDepth = 0;
+    let colorType = 0;
+    const idatChunks = [];
+    while (offset + 12 <= buffer.length) {
+      const length = buffer.readUInt32BE(offset);
+      const type = buffer.subarray(offset + 4, offset + 8).toString("ascii");
+      const dataStart = offset + 8;
+      const dataEnd = dataStart + length;
+      if (dataEnd + 4 > buffer.length) return null;
+      const data = buffer.subarray(dataStart, dataEnd);
+      if (type === "IHDR") {
+        width = data.readUInt32BE(0);
+        height = data.readUInt32BE(4);
+        bitDepth = data[8];
+        colorType = data[9];
+      } else if (type === "IDAT") {
+        idatChunks.push(data);
+      } else if (type === "IEND") {
+        break;
+      }
+      offset = dataEnd + 4;
+    }
+    if (!width || !height || bitDepth !== 8 || ![2, 6].includes(colorType) || !idatChunks.length) return null;
+
+    const channels = colorType === 6 ? 4 : 3;
+    const rowLength = width * channels;
+    const inflated = zlib.inflateSync(Buffer.concat(idatChunks));
+    if (inflated.length < (rowLength + 1) * height) return null;
+    const pixels = Buffer.alloc(rowLength * height);
+    let inputOffset = 0;
+    let previous = Buffer.alloc(rowLength);
+    for (let y = 0; y < height; y += 1) {
+      const filter = inflated[inputOffset];
+      inputOffset += 1;
+      const row = Buffer.alloc(rowLength);
+      for (let x = 0; x < rowLength; x += 1) {
+        const raw = inflated[inputOffset + x];
+        const left = x >= channels ? row[x - channels] : 0;
+        const above = previous[x] || 0;
+        const upperLeft = x >= channels ? previous[x - channels] || 0 : 0;
+        let valueByte = raw;
+        if (filter === 1) valueByte = raw + left;
+        else if (filter === 2) valueByte = raw + above;
+        else if (filter === 3) valueByte = raw + Math.floor((left + above) / 2);
+        else if (filter === 4) valueByte = raw + paethPredictor(left, above, upperLeft);
+        else if (filter !== 0) return null;
+        row[x] = valueByte & 0xff;
+      }
+      inputOffset += rowLength;
+      row.copy(pixels, y * rowLength);
+      previous = row;
+    }
+
+    if (colorType === 2) {
+      return { width, height, colorData: zlib.deflateSync(pixels), alphaData: null };
+    }
+    const rgb = Buffer.alloc(width * height * 3);
+    const alpha = Buffer.alloc(width * height);
+    for (let pixel = 0; pixel < width * height; pixel += 1) {
+      const source = pixel * 4;
+      const target = pixel * 3;
+      rgb[target] = pixels[source];
+      rgb[target + 1] = pixels[source + 1];
+      rgb[target + 2] = pixels[source + 2];
+      alpha[pixel] = pixels[source + 3];
+    }
+    return { width, height, colorData: zlib.deflateSync(rgb), alphaData: zlib.deflateSync(alpha) };
+  } catch {
+    return null;
+  }
+}
+
+function pdfStreamObject(dictionary, stream) {
+  return Buffer.concat([
+    Buffer.from(`<< ${dictionary} /Length ${stream.length} >>\nstream\n`, "utf8"),
+    stream,
+    Buffer.from("\nendstream", "utf8")
+  ]);
+}
+
+function createPdfDocument(ops, images = []) {
   const content = ops.join("\n");
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
+    "",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-    `<< /Length ${Buffer.byteLength(content, "utf8")} >>\nstream\n${content}\nendstream`
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>"
   ];
-  let pdf = "%PDF-1.4\n";
+  const xObjects = [];
+  images.forEach((image, index) => {
+    if (!image?.width || !image?.height || !image.colorData) return;
+    let smaskRef = "";
+    if (image.alphaData) {
+      const objectNumber = objects.length + 1;
+      objects.push(pdfStreamObject(
+        `/Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode`,
+        image.alphaData
+      ));
+      smaskRef = `/SMask ${objectNumber} 0 R `;
+    }
+    const imageObjectNumber = objects.length + 1;
+    objects.push(pdfStreamObject(
+      `/Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode ${smaskRef}`,
+      image.colorData
+    ));
+    xObjects.push(`/Im${index + 1} ${imageObjectNumber} 0 R`);
+  });
+  const contentObjectNumber = objects.length + 1;
+  const xObjectResources = xObjects.length ? `/XObject << ${xObjects.join(" ")} >> ` : "";
+  objects[2] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> ${xObjectResources}>> /Contents ${contentObjectNumber} 0 R >>`;
+  objects.push(pdfStreamObject("", Buffer.from(content, "utf8")));
+
+  const chunks = [Buffer.from("%PDF-1.4\n", "utf8")];
   const offsets = [0];
   objects.forEach((object, index) => {
-    offsets.push(Buffer.byteLength(pdf, "utf8"));
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+    const currentOffset = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    offsets.push(currentOffset);
+    chunks.push(Buffer.from(`${index + 1} 0 obj\n`, "utf8"));
+    chunks.push(Buffer.isBuffer(object) ? object : Buffer.from(object, "utf8"));
+    chunks.push(Buffer.from("\nendobj\n", "utf8"));
   });
-  const xrefOffset = Buffer.byteLength(pdf, "utf8");
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  const xrefOffset = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  let xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
   for (let i = 1; i < offsets.length; i += 1) {
-    pdf += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+    xref += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
   }
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-  return Buffer.from(pdf, "utf8");
+  xref += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  chunks.push(Buffer.from(xref, "utf8"));
+  return Buffer.concat(chunks);
 }
 
 function createPdfLines(title, lines) {
@@ -4412,6 +4727,19 @@ function signDeliveryNote(event, body) {
   return get("SELECT * FROM delivery_notes WHERE id = ?", [id]);
 }
 
+function ensureDraftDeliveryNote(event) {
+  if (!event?.id) return null;
+  const existing = get("SELECT * FROM delivery_notes WHERE event_id = ?", [event.id]);
+  if (existing) return existing;
+  const id = randomId("dn");
+  run(
+    `INSERT INTO delivery_notes (id, event_id, status, service_price, locked)
+     VALUES (?, ?, 'borrador', ?, 0)`,
+    [id, event.id, Number(event.service_price || event.budget || 0)]
+  );
+  return get("SELECT * FROM delivery_notes WHERE id = ?", [id]);
+}
+
 function listUsers() {
   return all(
     `SELECT users.id, users.role, users.name, users.email, users.phone, users.avatar_url, users.active,
@@ -4487,6 +4815,8 @@ function deliveryNotePdf(event) {
   const note = event.deliveryNote || {};
   const servicePrice = Number(note.service_price ?? event.service_price ?? event.budget ?? 0);
   const rows = deliveryNoteRows(event);
+  const signatureImage = decodePngDataUrlImage(note.signature_image);
+  const pdfImages = signatureImage ? [signatureImage] : [];
   const ops = [];
   const fill = (r, g, b) => ops.push(`${r} ${g} ${b} rg`);
   const stroke = (r, g, b) => ops.push(`${r} ${g} ${b} RG`);
@@ -4495,6 +4825,7 @@ function deliveryNotePdf(event) {
     fill(...color);
     ops.push("BT", `/${font} ${size} Tf`, `${x} ${y} Td`, `(${pdfSafeText(value, max)}) Tj`, "ET");
   };
+  const image = (index, x, y, w, h) => ops.push("q", `${w} 0 0 ${h} ${x} ${y} cm`, `/Im${index + 1} Do`, "Q");
   const moneyText = (value) => `${Number(value || 0).toFixed(2)} EUR`;
   const card = (x, y, w, h, label, value, tone = "light") => {
     const bg = tone === "dark" ? [0.024, 0.063, 0.11] : tone === "green" ? [0.027, 0.58, 0.33] : [1, 1, 1];
@@ -4579,9 +4910,21 @@ function deliveryNotePdf(event) {
   rect(40, 90, 245, 118, "B");
   rect(310, 90, 245, 118, "B");
   text("Firma cliente", 56, 184, 11, "F2", [0.024, 0.063, 0.11], 28);
-  text(note.signature_image ? "Firma grafica capturada digitalmente" : "Firma grafica no capturada", 56, 162, 8, "F1", [0.39, 0.45, 0.55], 48);
-  text(`Nombre: ${note.signature_name || ""}`, 56, 130, 8.5, "F1", [0.06, 0.09, 0.16], 52);
-  text(`DNI/NIF: ${note.signature_dni || ""}`, 56, 114, 8.5, "F1", [0.06, 0.09, 0.16], 40);
+  if (signatureImage) {
+    const aspect = signatureImage.width / signatureImage.height;
+    let signatureWidth = 205;
+    let signatureHeight = signatureWidth / aspect;
+    if (signatureHeight > 38) {
+      signatureHeight = 38;
+      signatureWidth = signatureHeight * aspect;
+    }
+    image(0, 56, 138, signatureWidth, signatureHeight);
+    text("Firma grafica capturada digitalmente", 56, 128, 7.5, "F1", [0.39, 0.45, 0.55], 48);
+  } else {
+    text(note.signature_image ? "Firma guardada, imagen no legible en PDF" : "Firma grafica no capturada", 56, 154, 8, "F1", [0.39, 0.45, 0.55], 52);
+  }
+  text(`Nombre: ${note.signature_name || ""}`, 56, 114, 8.5, "F1", [0.06, 0.09, 0.16], 52);
+  text(`DNI/NIF: ${note.signature_dni || ""}`, 56, 100, 8.5, "F1", [0.06, 0.09, 0.16], 40);
   text("Control MARFAN", 326, 184, 11, "F2", [0.024, 0.063, 0.11], 28);
   text(`Estado: ${signed ? "Firmado y bloqueado" : "Pendiente"}`, 326, 162, 8.5, "F2", signed ? [0.03, 0.46, 0.28] : [0.71, 0.28, 0.03], 42);
   text(`Fecha firma: ${note.signed_at || ""}`, 326, 146, 8, "F1", [0.16, 0.22, 0.31], 44);
@@ -4592,7 +4935,7 @@ function deliveryNotePdf(event) {
   rect(0, 0, 595, 36);
   text("MARFAN CREW ERP", 40, 14, 9, "F2", [1, 1, 1], 36);
   text("Precio, equipo, kilometraje y firma de cliente", 330, 14, 7, "F1", [0.78, 0.86, 0.94], 54);
-  return createPdfDocument(ops);
+  return createPdfDocument(ops, pdfImages);
 }
 
 function deliveryNoteHtml(event) {
@@ -5055,7 +5398,12 @@ async function handleApi(req, res, url) {
     transaction(() => {
       for (const key of allowed) {
         if (body[key] === undefined) continue;
-        if (["google_calendar_service_account_json", "google_calendar_oauth_client_json"].includes(key) && !String(body[key] || "").trim()) continue;
+        if ([
+          "google_calendar_api_key",
+          "google_calendar_public_ics_url",
+          "google_calendar_service_account_json",
+          "google_calendar_oauth_client_json"
+        ].includes(key) && !String(body[key] || "").trim()) continue;
         run(
           `INSERT INTO company_settings (key, value, updated_at)
            VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -5085,6 +5433,7 @@ async function handleApi(req, res, url) {
         error: error.message,
         code: error.code || "google_oauth_redirect_error",
         redirectUri: error.redirectUri || redirectUri,
+        suggestedRedirectUris: error.suggestedRedirectUris || googleOAuthSuggestedRedirectUris(redirectUri),
         authorizedRedirectUris: error.authorizedRedirectUris || [],
         clientType: error.clientType || client.client_type || ""
       });
@@ -5092,6 +5441,7 @@ async function handleApi(req, res, url) {
     const result = startGoogleOAuthWebFlow({ client, actor: user, appUrl, redirectUri });
     return sendJson(res, 200, {
       ...result,
+      suggestedRedirectUris: googleOAuthSuggestedRedirectUris(redirectUri),
       authorizedRedirectUris: googleOAuthRedirectUris(client),
       clientType: client.client_type || ""
     });
@@ -5369,12 +5719,15 @@ async function handleApi(req, res, url) {
 
   if (pathname === "/api/dashboard" && method === "GET") {
     requireAdmin(user);
-    return sendJson(res, 200, dashboardPayload());
+    const attendanceDetection = autoDetectAttendanceIncidents({ date: formatDate(), actor: user });
+    return sendJson(res, 200, dashboardPayload(attendanceDetection));
   }
 
   if (pathname === "/api/live" && method === "GET") {
     requireAdmin(user);
-    return sendJson(res, 200, livePayload(url.searchParams.get("date") || formatDate()));
+    const date = url.searchParams.get("date") || formatDate();
+    const attendanceDetection = autoDetectAttendanceIncidents({ date, actor: user });
+    return sendJson(res, 200, livePayload(date, attendanceDetection));
   }
 
   if (pathname === "/api/calendar" && method === "GET") {
@@ -5552,6 +5905,7 @@ async function handleApi(req, res, url) {
           Number(requirement.count || 1)
         ]);
       }
+      ensureDraftDeliveryNote({ id, service_price: pricing.servicePrice, budget });
       updateEventStatus(id);
       audit(user, "event_created", "event", id, {
         name: body.name,
@@ -5584,8 +5938,11 @@ async function handleApi(req, res, url) {
     requireAdmin(user);
     const body = await readBody(req);
     const eventId = eventMatch[1];
-    const existing = get("SELECT * FROM events WHERE id = ?", [eventId]);
+    const existing = eventWithDeliveryState(eventId);
     if (!existing) return sendJson(res, 404, { error: "Evento no encontrado" });
+    if (deliveryNoteLocked(existing)) {
+      return sendJson(res, 409, { error: "Albaran firmado: no se puede modificar el evento" });
+    }
     if (eventPerformed(existing)) {
       return sendJson(res, 409, { error: "Evento efectuado: solo se permite revisar o crear incidencias" });
     }
@@ -5663,10 +6020,12 @@ async function handleApi(req, res, url) {
     const event = get("SELECT * FROM events WHERE id = ?", [closeEventMatch[1]]);
     if (!event) return sendJson(res, 404, { error: "Evento no encontrado" });
     run("UPDATE events SET status = 'finalizado', closed_at = CURRENT_TIMESTAMP WHERE id = ?", [event.id]);
+    ensureDraftDeliveryNote(event);
     audit(user, "event_closed", "event", event.id, { closedBy: user.id });
     createEventSnapshot(event.id, "event_closed", user, { closedBy: user.id });
+    const attendanceDetection = autoDetectAttendanceIncidents({ date: event.date, actor: user });
     const googleSync = await syncEventToGoogleCalendar(event.id, user, "event_closed", appOriginFromRequest(req));
-    return sendJson(res, 200, { event: eventDetail(event.id), googleSync });
+    return sendJson(res, 200, { event: eventDetail(event.id), googleSync, attendanceDetection });
   }
 
   const duplicateMatch = pathname.match(/^\/api\/events\/([^/]+)\/duplicate$/);
@@ -5743,7 +6102,7 @@ async function handleApi(req, res, url) {
           });
           continue;
         }
-        const issues = validateAssignment(targetEvent, employee);
+        const issues = validateAssignment(targetEvent, employee, assignment.role);
         const blocker = issues.find((issue) => issue.severity === "block");
         if (blocker) {
           skippedAssignments.push({
@@ -5775,6 +6134,7 @@ async function handleApi(req, res, url) {
       }
       updateEventStatus(id);
       updateEventPricing(id, pricingForEvent(id));
+      ensureDraftDeliveryNote(get("SELECT * FROM events WHERE id = ?", [id]));
       audit(user, "event_duplicated", "event", id, {
         sourceEventId: source.id,
         date: targetDate,
@@ -6037,9 +6397,12 @@ async function handleApi(req, res, url) {
   if (pathname === "/api/assignments" && method === "POST") {
     requireAdmin(user);
     const body = await readBody(req);
-    const event = get("SELECT * FROM events WHERE id = ?", [body.eventId]);
+    const event = eventWithDeliveryState(body.eventId);
     const employee = get("SELECT * FROM employees WHERE id = ?", [body.employeeId]);
     if (!event || !employee) return sendJson(res, 404, { error: "Evento u operario no encontrado" });
+    if (deliveryNoteLocked(event)) {
+      return sendJson(res, 409, { error: "Albaran firmado: no se pueden modificar asignaciones" });
+    }
     if (eventPerformed(event)) {
       return sendJson(res, 409, { error: "Evento efectuado: las asignaciones quedan en modo solo revision" });
     }
@@ -6048,12 +6411,12 @@ async function handleApi(req, res, url) {
       employee.id
     ]);
     if (existing) return sendJson(res, 409, { error: "El operario ya esta asignado a este evento" });
-    const issues = validateAssignment(event, employee);
+    const role = body.role || employee.role;
+    const issues = validateAssignment(event, employee, role);
     if (issues.some((issue) => issue.severity === "block")) {
       return sendJson(res, 409, { error: "Asignacion bloqueada", issues });
     }
     const id = randomId("asg");
-    const role = body.role || employee.role;
     const status = cleanAssignmentStatus(body.status, "confirmado");
     transaction(() => {
       run("INSERT INTO assignments (id, event_id, employee_id, role, status) VALUES (?, ?, ?, ?, ?)", [
@@ -6089,15 +6452,18 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const existing = get("SELECT * FROM assignments WHERE id = ?", [assignmentMatch[1]]);
     if (!existing) return sendJson(res, 404, { error: "Asignacion no encontrada" });
-    const event = get("SELECT * FROM events WHERE id = ?", [existing.event_id]);
+    const event = eventWithDeliveryState(existing.event_id);
     const employee = get("SELECT * FROM employees WHERE id = ?", [existing.employee_id]);
     if (!event || !employee) return sendJson(res, 404, { error: "Evento u operario no encontrado" });
+    if (deliveryNoteLocked(event)) {
+      return sendJson(res, 409, { error: "Albaran firmado: no se pueden modificar asignaciones" });
+    }
     if (eventPerformed(event)) {
       return sendJson(res, 409, { error: "Evento efectuado: solo se permite crear incidencias" });
     }
     const nextStatus = cleanAssignmentStatus(body.status, existing.status);
     const nextRole = body.role ?? existing.role;
-    const issues = nextStatus === "bloqueado" ? [] : validateAssignment(event, employee);
+    const issues = nextStatus === "bloqueado" ? [] : validateAssignment(event, employee, nextRole);
     if (issues.some((issue) => issue.severity === "block")) {
       return sendJson(res, 409, { error: "Cambio bloqueado", issues });
     }
@@ -6136,7 +6502,10 @@ async function handleApi(req, res, url) {
     requireAdmin(user);
     const existing = get("SELECT * FROM assignments WHERE id = ?", [assignmentMatch[1]]);
     if (!existing) return sendJson(res, 404, { error: "Asignacion no encontrada" });
-    const event = get("SELECT * FROM events WHERE id = ?", [existing.event_id]);
+    const event = eventWithDeliveryState(existing.event_id);
+    if (deliveryNoteLocked(event)) {
+      return sendJson(res, 409, { error: "Albaran firmado: no se pueden modificar asignaciones" });
+    }
     if (eventPerformed(event)) {
       return sendJson(res, 409, { error: "Evento efectuado: las asignaciones no se pueden eliminar" });
     }
@@ -6149,6 +6518,8 @@ async function handleApi(req, res, url) {
         error: "No se puede quitar una asignacion con fichajes. Cambiala a bloqueada para conservar trazabilidad."
       });
     }
+    const deletedAssignment =
+      assignmentRowsForEvent(event).find((assignment) => assignment.id === existing.id) || existing;
     transaction(() => {
       run("DELETE FROM assignments WHERE id = ?", [existing.id]);
       if (event?.team_leader_id === existing.employee_id) {
@@ -6157,11 +6528,13 @@ async function handleApi(req, res, url) {
       updateEventStatus(existing.event_id);
       audit(user, "assignment_deleted", "assignment", existing.id, {
         eventId: existing.event_id,
-        employeeId: existing.employee_id
+        employeeId: existing.employee_id,
+        deletedAssignment
       });
       createEventSnapshot(existing.event_id, "assignment_deleted", user, {
         assignmentId: existing.id,
-        employeeId: existing.employee_id
+        employeeId: existing.employee_id,
+        deletedAssignment
       });
     });
     const googleSync = await syncEventToGoogleCalendar(existing.event_id, user, "assignment_deleted", appOriginFromRequest(req));
@@ -6246,6 +6619,16 @@ async function handleApi(req, res, url) {
           userAgent
         ]
       );
+      const autoConfirmedAssignment = accepted && type === "entrada" && assignment.status === "pendiente";
+      if (autoConfirmedAssignment) {
+        run("UPDATE assignments SET status = 'confirmado' WHERE id = ?", [assignment.id]);
+        updateEventStatus(event.id);
+        audit(user, "assignment_auto_confirmed_by_clock", "assignment", assignment.id, {
+          eventId: event.id,
+          employeeId: employee.id,
+          timeEntryId: id
+        });
+      }
       if (leaderClockOut) {
         deliveryNote = signDeliveryNote(event, body);
         audit(user, "delivery_note_signed", "event", event.id, {
@@ -6264,7 +6647,8 @@ async function handleApi(req, res, url) {
           distance: geo.distance,
           accuracy: Number.isFinite(accuracy) ? accuracy : null,
           ipAddress,
-          deliveryNoteId: deliveryNote?.id || null
+          deliveryNoteId: deliveryNote?.id || null,
+          autoConfirmedAssignment
         });
       }
     });
@@ -6358,6 +6742,11 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const existing = get("SELECT * FROM time_entries WHERE id = ?", [timeEntryMatch[1]]);
     if (!existing) return sendJson(res, 404, { error: "Fichaje no encontrado" });
+    try {
+      ensureTimeEntryEventEditable(existing.event_id);
+    } catch (error) {
+      return sendJson(res, error.status || 400, { error: error.message });
+    }
     const cleanType = ["entrada", "salida", "entrada_bloqueada", "salida_bloqueada"].includes(body.type)
       ? body.type
       : existing.type;
@@ -6440,7 +6829,9 @@ async function handleApi(req, res, url) {
 
   if (pathname === "/api/incidents" && method === "GET") {
     requireAdmin(user);
+    const attendanceDetection = autoDetectAttendanceIncidents({ date: formatDate(), actor: user });
     return sendJson(res, 200, {
+      attendanceDetection,
       incidents: all(
         `SELECT incidents.*, events.name AS event_name, employees.name AS employee_name
          FROM incidents
@@ -6646,7 +7037,9 @@ async function handleApi(req, res, url) {
     return send(res, 200, fs.readFileSync(filePath), {
       "content-type": document.file_mime || "application/octet-stream",
       "content-disposition": `inline; filename="${safeFileName(document.file_name || document.name)}"`,
-      "cache-control": "private, max-age=60"
+      "cache-control": "private, no-store, max-age=0",
+      "pragma": "no-cache",
+      "expires": "0"
     });
   }
 
@@ -6828,6 +7221,7 @@ async function handleApi(req, res, url) {
           user.id
         ]
       );
+      if (password) run("DELETE FROM sessions WHERE user_id = ?", [user.id]);
       audit(user, "employee_profile_updated", "employee", employee.id, {
         emailChanged: email !== cleanContactEmail(employee.email),
         phoneChanged: phone !== cleanContactPhone(employee.phone),
@@ -7066,13 +7460,18 @@ async function handleApi(req, res, url) {
     const existing = get("SELECT * FROM allowances WHERE id = ?", [allowanceMatch[1]]);
     if (!existing) return sendJson(res, 404, { error: "Plus no encontrado" });
     const event = ensureAllowanceEventEditable(existing.event_id);
-    run("DELETE FROM allowances WHERE id = ?", [existing.id]);
-    audit(user, "allowance_deleted", "allowance", existing.id, {
-      eventId: event.id,
-      employeeId: existing.employee_id
-    });
-    createEventSnapshot(event.id, "allowance_deleted", user, {
-      employeeId: existing.employee_id
+    const deletedAllowance = allowanceById(existing.id) || existing;
+    transaction(() => {
+      run("DELETE FROM allowances WHERE id = ?", [existing.id]);
+      audit(user, "allowance_deleted", "allowance", existing.id, {
+        eventId: event.id,
+        employeeId: existing.employee_id,
+        deletedAllowance
+      });
+      createEventSnapshot(event.id, "allowance_deleted", user, {
+        employeeId: existing.employee_id,
+        deletedAllowance
+      });
     });
     return sendJson(res, 200, { ok: true });
   }
@@ -7329,13 +7728,15 @@ async function handleApi(req, res, url) {
         error: "Confirmacion obligatoria: escribe RESTAURAR para preparar la restauracion."
       });
     }
-    const backup = requestRestore(body.backupId);
-    audit(user, "backup_restore_requested", "backup", backup.id, {
-      type: backup.type,
-      createdAt: backup.created_at
+    const restoreRequest = requestRestore(body.backupId);
+    audit(user, "backup_restore_requested", "backup", restoreRequest.backup.id, {
+      type: restoreRequest.backup.type,
+      createdAt: restoreRequest.backup.created_at,
+      safetyBackupId: restoreRequest.safetyBackup.id
     });
     return sendJson(res, 202, {
-      backup,
+      backup: restoreRequest.backup,
+      safetyBackup: backupStatus(get("SELECT * FROM backups WHERE id = ?", [restoreRequest.safetyBackup.id])),
       message: "Restauracion preparada. Reinicia el servidor para aplicar la copia con seguridad."
     });
   }

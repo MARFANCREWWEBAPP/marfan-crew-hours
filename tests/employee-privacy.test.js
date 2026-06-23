@@ -119,6 +119,8 @@ test("employee portal API never exposes internal economic fields", async () => {
       headers: { authorization: `Bearer ${token}` }
     });
     assert.equal(employeeDocumentFile.status, 200);
+    assert.match(employeeDocumentFile.headers.get("cache-control") || "", /no-store/);
+    assert.equal(employeeDocumentFile.headers.get("x-content-type-options"), "nosniff");
     assert.equal(await employeeDocumentFile.text(), "DNI OK MARFAN");
 
     const invalidEmployeeDocument = await fetch(`${baseUrl}/api/employee/documents`, {
@@ -157,31 +159,10 @@ test("employee portal API never exposes internal economic fields", async () => {
     assert.equal(profilePayload.employee.phone, "+34600999999");
     assert.equal(profilePayload.employee.email, "empleado.actualizado@marfancrew.test");
 
-    const duplicatePhoneProfile = await fetch(`${baseUrl}/api/employee/profile`, {
-      method: "PATCH",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        phone: "910 000 002",
-        email: "empleado.actualizado@marfancrew.test"
-      })
+    const oldProfileSession = await fetch(`${baseUrl}/api/employee/home`, {
+      headers: { authorization: `Bearer ${token}` }
     });
-    assert.equal(duplicatePhoneProfile.status, 409);
-
-    const duplicateProfile = await fetch(`${baseUrl}/api/employee/profile`, {
-      method: "PATCH",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        phone: "+34600999999",
-        email: "admin@marfancrew.test"
-      })
-    });
-    assert.equal(duplicateProfile.status, 409);
+    assert.equal(oldProfileSession.status, 401);
 
     const loginUpdated = await fetch(`${baseUrl}/api/auth/login`, {
       method: "POST",
@@ -193,6 +174,7 @@ test("employee portal API never exposes internal economic fields", async () => {
       })
     });
     assert.equal(loginUpdated.status, 200);
+    const { token: profileToken } = await loginUpdated.json();
 
     const loginUpdatedPhone = await fetch(`${baseUrl}/api/auth/login`, {
       method: "POST",
@@ -205,11 +187,37 @@ test("employee portal API never exposes internal economic fields", async () => {
     });
     assert.equal(loginUpdatedPhone.status, 200);
 
+    const duplicatePhoneProfile = await fetch(`${baseUrl}/api/employee/profile`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${profileToken}`
+      },
+      body: JSON.stringify({
+        phone: "910 000 002",
+        email: "empleado.actualizado@marfancrew.test"
+      })
+    });
+    assert.equal(duplicatePhoneProfile.status, 409);
+
+    const duplicateProfile = await fetch(`${baseUrl}/api/employee/profile`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${profileToken}`
+      },
+      body: JSON.stringify({
+        phone: "+34600999999",
+        email: "admin@marfancrew.test"
+      })
+    });
+    assert.equal(duplicateProfile.status, 409);
+
     const employeeIncident = await fetch(`${baseUrl}/api/employee/incidents`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${token}`
+        authorization: `Bearer ${profileToken}`
       },
       body: JSON.stringify({
         eventId: "evt_live",
@@ -227,7 +235,7 @@ test("employee portal API never exposes internal economic fields", async () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${token}`
+        authorization: `Bearer ${profileToken}`
       },
       body: JSON.stringify({
         eventId: "evt_tech",
@@ -248,6 +256,31 @@ test("employee portal API never exposes internal economic fields", async () => {
     });
     assert.equal(adminLogin.status, 200);
     const { token: adminToken } = await adminLogin.json();
+
+    const coworkerDocument = await fetch(`${baseUrl}/api/documents`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${adminToken}`
+      },
+      body: JSON.stringify({
+        employeeId: "emp_lucia",
+        type: "Contrato",
+        name: "Contrato Lucia privado",
+        status: "vigente",
+        fileName: "contrato-lucia.txt",
+        fileMime: "text/plain",
+        fileDataBase64: Buffer.from("CONTRATO LUCIA CONFIDENCIAL").toString("base64")
+      })
+    });
+    assert.equal(coworkerDocument.status, 201);
+    const coworkerDocumentPayload = await coworkerDocument.json();
+
+    const forbiddenCoworkerDocument = await fetch(`${baseUrl}/api/documents/${coworkerDocumentPayload.document.id}/file`, {
+      headers: { authorization: `Bearer ${profileToken}` }
+    });
+    assert.equal(forbiddenCoworkerDocument.status, 403);
+
     const adminIncidents = await fetch(`${baseUrl}/api/incidents`, {
       headers: { authorization: `Bearer ${adminToken}` }
     });
@@ -290,7 +323,7 @@ test("employee portal API never exposes internal economic fields", async () => {
     assert.equal(reviewedDocumentPayload.document.name, "DNI validado oficina");
 
     const updatedHome = await fetch(`${baseUrl}/api/employee/home`, {
-      headers: { authorization: `Bearer ${token}` }
+      headers: { authorization: `Bearer ${profileToken}` }
     });
     assert.equal(updatedHome.status, 200);
     const updatedPayload = await updatedHome.json();
@@ -365,7 +398,7 @@ test("employee portal API never exposes internal economic fields", async () => {
     assert.equal(officeResetPayload.user.id, "usr_employee_alex");
 
     const oldEmployeeSession = await fetch(`${baseUrl}/api/employee/home`, {
-      headers: { authorization: `Bearer ${token}` }
+      headers: { authorization: `Bearer ${profileToken}` }
     });
     assert.equal(oldEmployeeSession.status, 401);
 

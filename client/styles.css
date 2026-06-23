@@ -1311,7 +1311,8 @@ button:disabled {
 }
 
 .snapshot-kpis div,
-.snapshot-delivery {
+.snapshot-delivery,
+.snapshot-integrity {
   border: 1px solid var(--line-soft);
   border-radius: 8px;
   padding: 9px;
@@ -1319,7 +1320,8 @@ button:disabled {
 }
 
 .snapshot-kpis span,
-.snapshot-delivery span {
+.snapshot-delivery span,
+.snapshot-integrity span {
   display: block;
   color: var(--muted);
   font-size: 11px;
@@ -1329,7 +1331,9 @@ button:disabled {
 
 .snapshot-kpis strong,
 .snapshot-delivery strong,
-.snapshot-delivery small {
+.snapshot-delivery small,
+.snapshot-integrity strong,
+.snapshot-integrity small {
   display: block;
 }
 
@@ -1374,9 +1378,19 @@ button:disabled {
 
 .snapshot-row strong,
 .snapshot-row small,
-.snapshot-delivery small {
+.snapshot-delivery small,
+.snapshot-integrity small {
   color: var(--muted);
   font-size: 12px;
+}
+
+.snapshot-integrity {
+  border-color: rgba(14, 165, 117, 0.22);
+}
+
+.snapshot-integrity.invalid {
+  border-color: rgba(185, 28, 28, 0.22);
+  background: #fff1f2;
 }
 
 .compact-empty {
@@ -1623,6 +1637,11 @@ button:disabled {
 
 .mini-card {
   padding: 14px;
+}
+
+.mini-card > input[readonly] {
+  margin-top: 10px;
+  width: 100%;
 }
 
 .role-config-list {
@@ -1971,6 +1990,45 @@ button:disabled {
 
 .signature-panel h3 {
   margin: 0;
+}
+
+.signature-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0 10px;
+}
+
+.signature-summary div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.signature-summary span,
+.signature-summary strong {
+  display: block;
+}
+
+.signature-summary span {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.signature-summary strong {
+  margin-top: 3px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.signature-role-strip {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
 }
 
 .signature-pad {

@@ -500,6 +500,31 @@ const migrations = [
       ALTER TABLE time_entries ADD COLUMN corrected_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL;
       ALTER TABLE time_entries ADD COLUMN correction_reason TEXT;
     `
+  },
+  {
+    version: 13,
+    name: "event-snapshot-integrity-hash",
+    sql: `
+      ALTER TABLE event_snapshots ADD COLUMN payload_hash TEXT;
+      CREATE INDEX IF NOT EXISTS idx_event_snapshots_payload_hash
+        ON event_snapshots(payload_hash);
+    `
+  },
+  {
+    version: 14,
+    name: "delivery-note-drafts-for-events",
+    sql: `
+      INSERT INTO delivery_notes (id, event_id, status, service_price, locked)
+      SELECT 'dn_' || events.id,
+             events.id,
+             'borrador',
+             COALESCE(events.service_price, events.budget, 0),
+             0
+      FROM events
+      WHERE NOT EXISTS (
+        SELECT 1 FROM delivery_notes WHERE delivery_notes.event_id = events.id
+      );
+    `
   }
 ];
 
@@ -650,7 +675,7 @@ const PRODUCTION_SEED_TABLES = [
     ]
   },
   { table: "data_imports", columns: ["id", "source", "rows_read", "inserted", "updated", "skipped", "metadata", "created_at"] },
-  { table: "event_snapshots", columns: ["id", "event_id", "action", "actor_user_id", "payload", "metadata", "created_at"] }
+  { table: "event_snapshots", columns: ["id", "event_id", "action", "actor_user_id", "payload", "metadata", "created_at", "payload_hash"] }
 ];
 
 function seedProductionInstall() {
@@ -694,6 +719,21 @@ function seedBundledProductionData() {
       upsertSeedRows(table, columns, seed[table] || [], conflictColumn);
     }
   });
+}
+
+function ensureEventDeliveryNoteDrafts() {
+  run(
+    `INSERT INTO delivery_notes (id, event_id, status, service_price, locked)
+     SELECT 'dn_' || events.id,
+            events.id,
+            'borrador',
+            COALESCE(events.service_price, events.budget, 0),
+            0
+     FROM events
+     WHERE NOT EXISTS (
+       SELECT 1 FROM delivery_notes WHERE delivery_notes.event_id = events.id
+     )`
+  );
 }
 
 function seedIfNewInstall() {
@@ -1012,16 +1052,23 @@ function requestRestore(backupId) {
     error.status = 409;
     throw error;
   }
-  createBackup("safety", "Backup de seguridad previo a restauracion");
+  const safetyBackup = createBackup("safety", "Backup de seguridad previo a restauracion");
   fs.writeFileSync(
     path.join(DATA_DIR, "restore-request.json"),
-    JSON.stringify({ backupId, backupPath: resolved, requestedAt: new Date().toISOString() }, null, 2)
+    JSON.stringify({
+      backupId,
+      backupPath: resolved,
+      safetyBackupId: safetyBackup.id,
+      safetyBackupPath: safetyBackup.file_path,
+      requestedAt: new Date().toISOString()
+    }, null, 2)
   );
-  return backup;
+  return { backup, safetyBackup };
 }
 
 applyMigrations();
 seedIfNewInstall();
+ensureEventDeliveryNoteDrafts();
 ensureDailyBackup();
 
 module.exports = {
