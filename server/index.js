@@ -8355,7 +8355,15 @@ function serveStatic(req, res, url) {
     ".svg": "image/svg+xml",
     ".png": "image/png"
   }[ext] || "application/octet-stream";
-  res.writeHead(200, secureHeaders({ "content-type": type }));
+  const cacheControl = [".html", ".css", ".js"].includes(ext)
+    ? "no-store, no-cache, must-revalidate, max-age=0"
+    : "public, max-age=3600";
+  res.writeHead(200, secureHeaders({
+    "content-type": type,
+    "cache-control": cacheControl,
+    "pragma": [".html", ".css", ".js"].includes(ext) ? "no-cache" : undefined,
+    "expires": [".html", ".css", ".js"].includes(ext) ? "0" : undefined
+  }));
   fs.createReadStream(finalPath).pipe(res);
 }
 

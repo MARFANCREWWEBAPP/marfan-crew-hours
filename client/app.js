@@ -234,10 +234,18 @@ function userCanAny(permissions) {
 }
 
 function visibleNavItems() {
-  return navItems.filter((item) => {
+  const visible = navItems.filter((item) => {
     const roleOk = !item[3] || item[3] === state.user?.role;
     return roleOk && userCan(item[4] || item[0]);
   });
+
+  // Fallback de seguridad visual: si por cualquier motivo las
+  // permissions llegan vacias/mal formadas, no dejamos el lateral negro.
+  if (!visible.length && ["admin", "super_admin"].includes(state.user?.role)) {
+    return navItems.filter((item) => !item[3] || item[3] === state.user?.role);
+  }
+
+  return visible;
 }
 
 function ensureVisibleAdminView() {
