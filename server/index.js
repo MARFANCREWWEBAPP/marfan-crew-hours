@@ -7789,19 +7789,10 @@ async function handleApi(req, res, url) {
     const upcomingServices = upcomingServicesRaw.map(addChecklist);
     const pastServices = pastServicesRaw.map(addChecklist);
     const nextAssignment = upcomingServices[0] || null;
-    const timeStats = get(
-      `SELECT COUNT(DISTINCT event_id) AS events_done, COUNT(*) AS entries
-       FROM time_entries
-       WHERE employee_id = ? AND accepted = 1`,
-      [employee.id]
-    );
-	    const allowances = get(
-	      `SELECT COALESCE(SUM(km), 0) AS km,
-	              COALESCE(SUM(diet), 0) AS dietas,
-	              COALESCE(SUM(night_hours), 0) AS night_hours
-	       FROM allowances
-	       WHERE employee_id = ?`,
-	      [employee.id]
+    const pastServicesForStats = all(
+      `${serviceSql} AND (events.date < ? OR events.status = 'finalizado')
+       ORDER BY events.date DESC, events.start_time DESC`,
+      [employee.id, today]
     );
     const incidentRows = all(
       `SELECT incidents.id, incidents.event_id, incidents.type, incidents.priority, incidents.status,
@@ -7814,7 +7805,7 @@ async function handleApi(req, res, url) {
        LIMIT 12`,
       [employee.id]
     );
-    const plannedHours = pastServices.reduce(
+    const plannedHours = pastServicesForStats.reduce(
       (sum, service) => sum + hoursBetween(service.start_time, service.end_time),
       0
     );
@@ -7837,14 +7828,9 @@ async function handleApi(req, res, url) {
       availability: availabilityRows,
       incidents: incidentRows,
       history: {
-        events_done: timeStats.events_done,
-	        entries: timeStats.entries,
-	        hours: Math.round(plannedHours * 10) / 10,
-	        km: Math.round(Number(allowances.km || 0) * 10) / 10,
-	        dietas: Math.round(Number(allowances.dietas || 0) * 100) / 100,
-	        night_hours: Number(allowances.night_hours || 0),
-	        incidents: incidentRows.length
-	      },
+        events_done: pastServicesForStats.length,
+        hours: Math.round(plannedHours * 10) / 10
+      },
       radius: policy.radiusM,
       clockPolicy: policy,
       office: {

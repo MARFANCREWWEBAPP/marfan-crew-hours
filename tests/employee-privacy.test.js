@@ -94,9 +94,12 @@ test("employee portal API never exposes internal economic fields", async () => {
 	    assert.ok(payload.nextService.checklist.total >= 5);
 	    assert.equal(payload.nextService.checklist.items.some((item) => item.key === "documents"), true);
 	    assert.equal(payload.nextService.checklist.items.some((item) => item.key === "location" && item.status === "done"), true);
-	    assert.equal(payload.history.km, 12);
-	    assert.equal(payload.history.dietas, 12);
-	    assert.equal(payload.history.night_hours, 1.5);
+	    assert.equal(Object.hasOwn(payload.history, "km"), false);
+	    assert.equal(Object.hasOwn(payload.history, "dietas"), false);
+	    assert.equal(Object.hasOwn(payload.history, "night_hours"), false);
+	    assert.equal(Object.hasOwn(payload.history, "entries"), false);
+	    assert.equal(typeof payload.history.hours, "number");
+	    assert.equal(typeof payload.history.events_done, "number");
 
 	    const employeeDocument = await fetch(`${baseUrl}/api/employee/documents`, {
       method: "POST",
