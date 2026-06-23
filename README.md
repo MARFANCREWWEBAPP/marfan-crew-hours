@@ -20,8 +20,9 @@ En Railway, con `NODE_ENV=production`, `MARFAN_SEED_DEMO_DATA=false` y `MARFAN_S
 
 - Super Admin: `info@marquee.es` / `Marquee2026!`
 - Datos iniciales recuperados: 27 operarios, 125 clientes, 22 eventos, 28 asignaciones y fichajes/incidencias existentes desde `seed/production-data.json`
-- Acceso inicial operarios: email o telefono importado / `Marfan2026!`
+- Acceso inicial operarios: telefono limpio como usuario y contrasena, sin espacios y omitiendo `+34`.
 - Operarios creados desde el menu: por defecto telefono como usuario y contrasena, sin espacios y omitiendo `+34`. Ejemplo `+34 600 111 000` entra con `600111000` / `600111000`.
+- Al arrancar con la base recuperada, la app crea una copia de seguridad y normaliza una sola vez los operarios existentes para dejarlos activos con ese mismo acceso por telefono.
 
 Si se pierde el acceso, deja `MARFAN_SUPERADMIN_PASSWORD=Marquee2026!` y activa `MARFAN_RECOVER_SUPERADMIN_ON_START=true` durante un solo despliegue. La app creara un backup y restaurara solo el acceso de German sin borrar clientes, operarios, eventos ni usuarios. Despues vuelve a dejar `MARFAN_RECOVER_SUPERADMIN_ON_START=false`.
 

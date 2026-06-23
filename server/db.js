@@ -834,6 +834,160 @@ function ensureEventDeliveryNoteDrafts() {
   );
 }
 
+const EMPLOYEE_PHONE_PORTAL_SYNC_KEY = "employee_phone_portal_sync_v1";
+
+function phoneDigits(value) {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
+function employeePhoneLoginKey(value) {
+  const digits = phoneDigits(value);
+  if (digits.length < 9) return "";
+  const withoutInternationalPrefix = digits.startsWith("0034")
+    ? digits.slice(4)
+    : digits.startsWith("34") && digits.length > 9
+      ? digits.slice(2)
+      : digits;
+  return withoutInternationalPrefix.length >= 9 ? withoutInternationalPrefix.slice(-9) : "";
+}
+
+function cleanEmployeeEmail(value) {
+  const email = String(value ?? "").trim().toLowerCase();
+  return email || "";
+}
+
+function findUserWithEmail(email, excludeUserId = "") {
+  if (!email) return null;
+  return get(
+    "SELECT * FROM users WHERE lower(email) = lower(?) AND id != ? LIMIT 1",
+    [email, excludeUserId]
+  );
+}
+
+function usersWithPhoneKey(phoneKey, excludeUserId = "") {
+  if (!phoneKey) return [];
+  return all(
+    "SELECT * FROM users WHERE id != ? AND phone IS NOT NULL AND trim(phone) != ''",
+    [excludeUserId]
+  ).filter((user) => employeePhoneLoginKey(user.phone) === phoneKey);
+}
+
+function findEmployeePortalUser(employee, phoneKey) {
+  if (employee.user_id) {
+    const linked = get("SELECT * FROM users WHERE id = ?", [employee.user_id]);
+    if (linked) return linked;
+  }
+  const email = cleanEmployeeEmail(employee.email);
+  if (email) {
+    const byEmail = get("SELECT * FROM users WHERE lower(email) = lower(?) LIMIT 1", [email]);
+    if (byEmail) return byEmail;
+  }
+  const matches = usersWithPhoneKey(phoneKey).filter((user) => user.role === "employee");
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function ensureEmployeePhonePortalAccess() {
+  if (get("SELECT value FROM company_settings WHERE key = ?", [EMPLOYEE_PHONE_PORTAL_SYNC_KEY])) {
+    return null;
+  }
+
+  const employeeCount = get("SELECT COUNT(*) AS count FROM employees").count;
+  if (!employeeCount || (SEED_DEMO_DATA && employeeCount < 20)) return null;
+
+  const employees = all("SELECT * FROM employees ORDER BY name");
+  const stats = {
+    employees: employees.length,
+    phonesNormalized: 0,
+    usersCreated: 0,
+    usersUpdated: 0,
+    skipped: []
+  };
+  const safetyBackup = wasNewDatabase ? null : createBackup("safety", "Backup previo a normalizacion accesos operarios");
+
+  transaction(() => {
+    for (const employee of employees) {
+      const phoneKey = employeePhoneLoginKey(employee.phone);
+      if (!phoneKey) {
+        stats.skipped.push({ employeeId: employee.id, name: employee.name, reason: "telefono no valido" });
+        continue;
+      }
+
+      const currentEmployeePhone = String(employee.phone || "");
+      const email = cleanEmployeeEmail(employee.email);
+      let portalUser = findEmployeePortalUser(employee, phoneKey);
+      if (portalUser && portalUser.role !== "employee") {
+        stats.skipped.push({
+          employeeId: employee.id,
+          name: employee.name,
+          reason: "telefono o email pertenece a administrador"
+        });
+        run("UPDATE employees SET phone = ?, status = 'activo' WHERE id = ?", [phoneKey, employee.id]);
+        if (currentEmployeePhone !== phoneKey) stats.phonesNormalized += 1;
+        continue;
+      }
+
+      const phoneConflicts = usersWithPhoneKey(phoneKey, portalUser?.id || "");
+      if (phoneConflicts.length) {
+        stats.skipped.push({
+          employeeId: employee.id,
+          name: employee.name,
+          reason: "telefono duplicado"
+        });
+        run("UPDATE employees SET phone = ?, status = 'activo' WHERE id = ?", [phoneKey, employee.id]);
+        if (currentEmployeePhone !== phoneKey) stats.phonesNormalized += 1;
+        continue;
+      }
+
+      const credentials = hashPassword(phoneKey);
+      const safeEmail = email && !findUserWithEmail(email, portalUser?.id || "") ? email : "";
+      if (portalUser) {
+        run(
+          `UPDATE users
+           SET role = 'employee',
+               name = ?,
+               email = COALESCE(NULLIF(?, ''), email),
+               phone = ?,
+               password_hash = ?,
+               salt = ?,
+               active = 1
+           WHERE id = ?`,
+          [employee.name, safeEmail, phoneKey, credentials.hash, credentials.salt, portalUser.id]
+        );
+        run("DELETE FROM sessions WHERE user_id = ?", [portalUser.id]);
+        run("UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND used_at IS NULL", [
+          portalUser.id
+        ]);
+        stats.usersUpdated += 1;
+      } else {
+        const userId = randomId("usr");
+        run(
+          `INSERT INTO users (id, role, name, email, phone, password_hash, salt, active)
+           VALUES (?, 'employee', ?, NULLIF(?, ''), ?, ?, ?, 1)`,
+          [userId, employee.name, safeEmail, phoneKey, credentials.hash, credentials.salt]
+        );
+        portalUser = { id: userId };
+        stats.usersCreated += 1;
+      }
+
+      run("UPDATE employees SET user_id = ?, phone = ?, status = 'activo' WHERE id = ?", [
+        portalUser.id,
+        phoneKey,
+        employee.id
+      ]);
+      if (currentEmployeePhone !== phoneKey) stats.phonesNormalized += 1;
+    }
+
+    run(
+      `INSERT INTO company_settings (key, value, updated_at)
+       VALUES (?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
+      [EMPLOYEE_PHONE_PORTAL_SYNC_KEY, JSON.stringify(stats)]
+    );
+  });
+
+  return { ...stats, safetyBackup };
+}
+
 function seedIfNewInstall() {
   if (!wasNewDatabase) return;
   if (!SEED_DEMO_DATA) {
@@ -1361,6 +1515,7 @@ function requestRestore(backupId) {
 applyMigrations();
 seedIfNewInstall();
 ensureEventDeliveryNoteDrafts();
+const employeePhonePortalSync = ensureEmployeePhonePortalAccess();
 const accessRecovery = recoverSuperAdminOnStartIfRequested();
 ensureDailyBackup();
 
@@ -1372,6 +1527,7 @@ module.exports = {
   all,
   createBackup,
   db,
+  employeePhonePortalSync,
   ensureProductionSuperAdminAccess,
   exec,
   get,

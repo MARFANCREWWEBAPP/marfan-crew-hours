@@ -160,7 +160,7 @@ test("employee portal API never exposes internal economic fields", async () => {
 	    });
 	    assert.equal(profileUpdate.status, 200);
 	    const profilePayload = await profileUpdate.json();
-	    assert.equal(profilePayload.employee.phone, "+34600999999");
+	    assert.equal(profilePayload.employee.phone, "600999999");
 	    assert.equal(profilePayload.employee.email, "empleado.actualizado@marfancrew.test");
 	    assert.match(profilePayload.employee.photo_url, /^data:image\/png;base64,/);
 

@@ -1105,7 +1105,8 @@ function cleanContactEmail(value) {
 
 function cleanContactPhone(value) {
   const phone = String(value ?? "").trim();
-  return phone || null;
+  if (!phone) return null;
+  return phoneLoginKey(phone) || phone;
 }
 
 function passwordPolicyMessage(password) {
@@ -1725,7 +1726,7 @@ function findImportedUser(email, phone) {
 
 function ensureEmployeePortalUser({ name, email, phone, defaultPassword }) {
   const cleanEmail = importClean(email).toLowerCase();
-  const cleanPhone = importClean(phone);
+  const cleanPhone = cleanContactPhone(phone) || "";
   if (!cleanEmail && !cleanPhone) return { userId: null, created: false };
   const user = findImportedUser(cleanEmail, cleanPhone);
   if (user) {
@@ -1743,7 +1744,8 @@ function ensureEmployeePortalUser({ name, email, phone, defaultPassword }) {
     );
     return { userId: user.id, created: false };
   }
-  const credentials = hashPassword(validateEmployeePortalPassword(defaultPassword || "Marfan2026!"));
+  const fallbackPassword = defaultPassword || cleanPhone || "Marfan2026!";
+  const credentials = hashPassword(validateEmployeePortalPassword(fallbackPassword));
   const userId = randomId("usr");
   run(
     `INSERT INTO users (id, role, name, email, phone, password_hash, salt, active)
@@ -1818,7 +1820,7 @@ function importEmployeesCsv({ text, source, fileMime, fileDataBase64, defaultPas
         skipped += 1;
         continue;
       }
-      const phone = importValue(row, ["TELEFONO", "TELÉFONO", "MOVIL", "MÓVIL", "phone"]);
+      const phone = cleanContactPhone(importValue(row, ["TELEFONO", "TELÉFONO", "MOVIL", "MÓVIL", "phone"])) || "";
       const email = importValue(row, ["CORREO ELECTRONICO", "CORREO ELECTRÓNICO", "EMAIL", "MAIL"]).toLowerCase();
       const dni = importValue(row, ["D.N.I.", "DNI", "NIF"]);
       const existing = findImportedEmployee({ dni, email, phone });
@@ -6337,7 +6339,7 @@ async function handleApi(req, res, url) {
       source: body.fileName || "operarios.csv",
       fileMime: body.fileMime,
       fileDataBase64: body.fileDataBase64,
-      defaultPassword: body.defaultPassword || "Marfan2026!",
+      defaultPassword: body.defaultPassword || "",
       actor: user
     });
     return sendJson(res, 201, result);

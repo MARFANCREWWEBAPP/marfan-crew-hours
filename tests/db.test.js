@@ -230,7 +230,17 @@ test("production installations seed German and restored operational data", () =>
         `
           const { get, db } = require("./server/db");
           const { verifyPassword } = require("./server/security");
-          const sampleEmployeeUser = get("SELECT salt, password_hash FROM users WHERE role = 'employee' ORDER BY name LIMIT 1");
+          function phoneLoginKey(value) {
+            const digits = String(value || "").replace(/\\D/g, "");
+            if (digits.length < 9) return "";
+            const withoutPrefix = digits.startsWith("0034")
+              ? digits.slice(4)
+              : digits.startsWith("34") && digits.length > 9
+                ? digits.slice(2)
+                : digits;
+            return withoutPrefix.length >= 9 ? withoutPrefix.slice(-9) : "";
+          }
+          const sampleEmployeeUser = get("SELECT phone, salt, password_hash FROM users WHERE role = 'employee' ORDER BY name LIMIT 1");
           console.log(JSON.stringify({
             german: get("SELECT role, name, email FROM users WHERE lower(email) = lower('info@marquee.es')"),
             users: get("SELECT COUNT(*) AS count FROM users").count,
@@ -239,7 +249,7 @@ test("production installations seed German and restored operational data", () =>
             events: get("SELECT COUNT(*) AS count FROM events").count,
             assignments: get("SELECT COUNT(*) AS count FROM assignments").count,
             timeEntries: get("SELECT COUNT(*) AS count FROM time_entries").count,
-            employeePasswordWorks: verifyPassword("Marfan2026!", sampleEmployeeUser.salt, sampleEmployeeUser.password_hash)
+            employeePasswordWorks: verifyPassword(phoneLoginKey(sampleEmployeeUser.phone), sampleEmployeeUser.salt, sampleEmployeeUser.password_hash)
           }));
           db.close();
         `

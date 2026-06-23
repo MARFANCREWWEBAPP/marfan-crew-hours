@@ -2083,7 +2083,7 @@ function employeeImportPanel() {
         </div>
         <div class="filters-row">
           <input name="file" type="file" accept=".xlsx,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/tab-separated-values" required />
-          <input name="defaultPassword" type="password" minlength="8" value="Marfan2026!" aria-label="Contrasena temporal" />
+          <input name="defaultPassword" type="password" minlength="8" placeholder="Telefono por defecto" aria-label="Contrasena temporal opcional" />
           <button class="btn" type="button" data-employee-template>${icon("download")} Plantilla</button>
           <button class="btn primary" type="submit">${icon("upload")} Importar</button>
         </div>
@@ -3894,7 +3894,7 @@ async function submitCsvImport(form, kind) {
       fileMime: file.type || (isExcel ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv"),
       fileText,
       fileDataBase64: filePayload.fileDataBase64 || "",
-      defaultPassword: data.get("defaultPassword") || "Marfan2026!"
+      defaultPassword: data.get("defaultPassword") || ""
     }
   });
 }
