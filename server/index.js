@@ -1127,6 +1127,45 @@ function validateNewPassword(password) {
   return String(password);
 }
 
+function validateEmployeePortalPassword(password) {
+  const value = String(password || "");
+  if (/^\d{9,}$/.test(value)) return value;
+  return validateNewPassword(value);
+}
+
+function employeePhonePassword(phone) {
+  const key = phoneLoginKey(phone);
+  if (!key) {
+    const error = new Error("Telefono obligatorio para usarlo como usuario y contrasena del portal");
+    error.status = 400;
+    throw error;
+  }
+  return key;
+}
+
+function employeePortalPasswordForCreate(body, phone) {
+  if (body.portalPasswordMode === "phone") {
+    return { password: employeePhonePassword(phone), mode: "phone" };
+  }
+  const password = String(body.portalPassword || "").trim();
+  if (body.portalPasswordMode === "manual" && !password) {
+    const error = new Error("Contrasena manual obligatoria");
+    error.status = 400;
+    throw error;
+  }
+  const finalPassword = password || "Marfan2026!";
+  return { password: validateEmployeePortalPassword(finalPassword), mode: password ? "manual" : "default" };
+}
+
+function employeePortalPasswordForUpdate(body, phone) {
+  if (body.portalPasswordMode === "phone") {
+    return { password: employeePhonePassword(phone), mode: "phone" };
+  }
+  const password = String(body.portalPassword || "").trim();
+  if (!password) return null;
+  return { password: validateEmployeePortalPassword(password), mode: "manual" };
+}
+
 function phoneDigits(value) {
   return String(value ?? "").replace(/\D/g, "");
 }
@@ -1690,7 +1729,7 @@ function ensureEmployeePortalUser({ name, email, phone, defaultPassword }) {
     );
     return { userId: user.id, created: false };
   }
-  const credentials = hashPassword(validateNewPassword(defaultPassword || "Marfan2026!"));
+  const credentials = hashPassword(validateEmployeePortalPassword(defaultPassword || "Marfan2026!"));
   const userId = randomId("usr");
   run(
     `INSERT INTO users (id, role, name, email, phone, password_hash, salt, active)
@@ -6741,13 +6780,14 @@ async function handleApi(req, res, url) {
     const wantsPortal = body.portalAccess !== false;
     validateAdminEmployeeContact({ employeeId: id, email, phone, requireContact: wantsPortal });
     let portal = { userId: null, created: false };
+    const portalPassword = wantsPortal ? employeePortalPasswordForCreate(body, phone) : null;
     transaction(() => {
       if (wantsPortal) {
         portal = ensureEmployeePortalUser({
           name: body.name,
           email,
           phone,
-          defaultPassword: body.portalPassword || "Marfan2026!"
+          defaultPassword: portalPassword.password
         });
       }
       run(
@@ -6792,7 +6832,8 @@ async function handleApi(req, res, url) {
         email: email || "",
         phone: phone || "",
         portalUserId: portal.userId,
-        portalUserCreated: portal.created
+        portalUserCreated: portal.created,
+        portalPasswordMode: portalPassword?.mode || ""
       });
     });
     return sendJson(res, 201, {
@@ -6822,20 +6863,42 @@ async function handleApi(req, res, url) {
       requireContact: Boolean(existing.user_id || wantsPortal)
     });
     let portal = { userId: existing.user_id || null, created: false };
+    const portalPassword = existing.user_id
+      ? employeePortalPasswordForUpdate(body, nextPhone)
+      : (wantsPortal ? employeePortalPasswordForCreate(body, nextPhone) : null);
+    const portalCredentials = existing.user_id && portalPassword
+      ? hashPassword(portalPassword.password)
+      : null;
     transaction(() => {
       if (existing.user_id) {
         run(
           `UPDATE users
-           SET name = ?, email = NULLIF(?, ''), phone = NULLIF(?, ''), active = ?
+           SET name = ?, email = NULLIF(?, ''), phone = NULLIF(?, ''), active = ?,
+               password_hash = COALESCE(?, password_hash),
+               salt = COALESCE(?, salt)
            WHERE id = ?`,
-          [nextName, nextEmail || "", nextPhone || "", nextStatus === "activo" ? 1 : 0, existing.user_id]
+          [
+            nextName,
+            nextEmail || "",
+            nextPhone || "",
+            nextStatus === "activo" ? 1 : 0,
+            portalCredentials?.hash || null,
+            portalCredentials?.salt || null,
+            existing.user_id
+          ]
         );
+        if (portalCredentials) {
+          run("DELETE FROM sessions WHERE user_id = ?", [existing.user_id]);
+          run("UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND used_at IS NULL", [
+            existing.user_id
+          ]);
+        }
       } else if (wantsPortal) {
         portal = ensureEmployeePortalUser({
           name: nextName,
           email: nextEmail,
           phone: nextPhone,
-          defaultPassword: body.portalPassword || "Marfan2026!"
+          defaultPassword: portalPassword.password
         });
       }
       run(
@@ -6884,7 +6947,9 @@ async function handleApi(req, res, url) {
         clothingChanged: body.shirtSize !== undefined || body.pantsSize !== undefined || body.shoeSize !== undefined,
         portalUserId: portal.userId,
         portalUserCreated: portal.created,
-        portalSynced: Boolean(existing.user_id || wantsPortal)
+        portalSynced: Boolean(existing.user_id || wantsPortal),
+        portalPasswordChanged: Boolean(portalPassword),
+        portalPasswordMode: portalPassword?.mode || ""
       });
     });
     return sendJson(res, 200, {

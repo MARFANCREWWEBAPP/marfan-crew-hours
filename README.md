@@ -132,7 +132,7 @@ Si Google muestra `redirect_uri_mismatch`, la URI autorizada en Google Cloud no 
 - Google Calendar con sincronización de horario, ubicación, descripción operativa y metadatos privados de equipo/requisitos
 - Eventos con duplicado operativo de servicio, requisitos y equipo asignado validado; los efectuados quedan en solo revision y el borrado queda reservado al Super Admin
 - Clientes
-- Operarios
+- Operarios con acceso al portal por email o telefono, contrasena manual desde oficina o telefono como usuario/contrasena
 - Asignaciones con recomendaciones y prevalidacion visible de bloqueos
 - Planificador con rol sugerido, distancia, carga reciente, disponibilidad, descanso y documentacion obligatoria por rol critico
 - Fichajes geolocalizados con secuencia entrada/salida, evidencia GPS/dispositivo, bloqueo si falta ubicacion real del recinto y trazabilidad de correcciones

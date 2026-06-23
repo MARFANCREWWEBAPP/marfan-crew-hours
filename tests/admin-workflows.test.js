@@ -457,6 +457,45 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(leaderPortalHome.status, 200);
     assert.equal(leaderPortalHome.json.employee.name, "Jefa Nueva");
 
+    const phonePasswordEmployee = await jsonRequest(baseUrl, "/api/employees", {
+      method: "POST",
+      token,
+      body: {
+        name: "Operaria Telefono Portal",
+        phone: "+34 600 111 001",
+        role: "Montaje",
+        portalAccess: true,
+        portalPasswordMode: "phone"
+      }
+    });
+    assert.equal(phonePasswordEmployee.status, 201);
+    const phonePasswordLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: { identifier: "600111001", password: "600111001", mode: "employee" }
+    });
+    assert.equal(phonePasswordLogin.status, 200);
+    assert.equal(phonePasswordLogin.json.user.role, "employee");
+
+    const manualLeaderPassword = await jsonRequest(baseUrl, `/api/employees/${leader.json.employee.id}`, {
+      method: "PATCH",
+      token,
+      body: {
+        portalPasswordMode: "manual",
+        portalPassword: "Manual2026"
+      }
+    });
+    assert.equal(manualLeaderPassword.status, 200);
+    const oldLeaderPasswordLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: { identifier: "600111000", password: "Marfan2026!", mode: "employee" }
+    });
+    assert.equal(oldLeaderPasswordLogin.status, 401);
+    const newLeaderPasswordLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: { identifier: "600111000", password: "Manual2026", mode: "employee" }
+    });
+    assert.equal(newLeaderPasswordLogin.status, 200);
+
     const duplicateLeaderPhone = await jsonRequest(baseUrl, "/api/employees", {
       method: "POST",
       token,

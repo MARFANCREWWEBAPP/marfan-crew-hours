@@ -1880,9 +1880,14 @@ function employeeForm() {
       <div class="field"><label>Email</label><input name="email" type="email" /></div>
       <div class="leader-toggle">
         <label class="toggle-row"><input name="portalAccess" type="checkbox" checked /> Crear acceso portal empleado</label>
-        <small>El operario podra entrar con su email o telefono y la contrasena temporal.</small>
+        <small>El operario podra entrar con su telefono o email.</small>
       </div>
-      <div class="field"><label>Contrasena portal</label><input name="portalPassword" type="password" minlength="8" value="Marfan2026!" /></div>
+      <div class="leader-toggle portal-password-box">
+        <label class="toggle-row"><input name="portalPasswordMode" type="radio" value="phone" checked /> Usar telefono como usuario y contrasena</label>
+        <small>Recomendado: el usuario entra con su telefono y la contrasena son sus ultimos 9 digitos.</small>
+        <label class="toggle-row"><input name="portalPasswordMode" type="radio" value="manual" /> Asignar contrasena manual</label>
+        <div class="field"><label>Contrasena manual</label><input name="portalPassword" type="password" minlength="8" autocomplete="new-password" placeholder="Minimo 8, letras y numeros" /></div>
+      </div>
       <div class="form-grid compact">
         <div class="field"><label>Tarifa hora</label><input name="hourlyRate" type="number" value="16" /></div>
         <div class="field"><label>Km</label><input name="kmRate" type="number" step="0.01" value="0.24" /></div>
@@ -1976,12 +1981,25 @@ function employeeEditForm(employee) {
         <div class="field"><label>Estado</label><select name="status"><option value="activo" ${employee.status === "activo" ? "selected" : ""}>Activo</option><option value="bloqueado" ${employee.status !== "activo" ? "selected" : ""}>Bloqueado</option></select></div>
         <div class="field"><label>Ciudad</label><input name="city" value="${esc(employee.city || "")}" /></div>
       </div>
-      ${employee.user_id ? `<div class="leader-toggle"><span class="tag green">Portal empleado activo</span><small>El acceso se sincroniza con nombre, email, telefono y estado.</small></div>` : `
+      ${employee.user_id ? `
+        <div class="leader-toggle"><span class="tag green">Portal empleado activo</span><small>El acceso se sincroniza con nombre, email, telefono y estado.</small></div>
+        <div class="leader-toggle portal-password-box">
+          <label class="toggle-row"><input name="portalPasswordMode" type="radio" value="manual" checked /> Mantener contrasena o asignar manual</label>
+          <div class="field"><label>Nueva contrasena manual</label><input name="portalPassword" type="password" minlength="8" autocomplete="new-password" placeholder="Dejar vacio para no cambiar" /></div>
+          <label class="toggle-row"><input name="portalPasswordMode" type="radio" value="phone" /> Cambiar contrasena al telefono</label>
+          <small>Si eliges telefono, la contrasena pasara a ser sus ultimos 9 digitos.</small>
+        </div>
+      ` : `
         <div class="leader-toggle">
           <label class="toggle-row"><input name="portalAccess" type="checkbox" /> Activar acceso portal empleado</label>
-          <small>Necesita email o telefono para iniciar sesion.</small>
+          <small>Necesita telefono o email para iniciar sesion.</small>
         </div>
-        <div class="field"><label>Contrasena portal</label><input name="portalPassword" type="password" minlength="8" value="Marfan2026!" /></div>
+        <div class="leader-toggle portal-password-box">
+          <label class="toggle-row"><input name="portalPasswordMode" type="radio" value="phone" checked /> Usar telefono como usuario y contrasena</label>
+          <small>El usuario entra con su telefono y la contrasena son sus ultimos 9 digitos.</small>
+          <label class="toggle-row"><input name="portalPasswordMode" type="radio" value="manual" /> Asignar contrasena manual</label>
+          <div class="field"><label>Contrasena manual</label><input name="portalPassword" type="password" minlength="8" autocomplete="new-password" placeholder="Minimo 8, letras y numeros" /></div>
+        </div>
       `}
       <div class="form-grid compact">
         <div class="field"><label>Tarifa hora</label><input name="hourlyRate" type="number" step="0.01" value="${esc(employee.hourly_rate || 0)}" /></div>
