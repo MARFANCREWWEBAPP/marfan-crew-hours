@@ -4,8 +4,12 @@ const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
 const { hashPassword, randomId } = require("./security");
 
-const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), "data"));
-const BACKUP_DIR = path.resolve(process.env.BACKUP_DIR || path.join(process.cwd(), "backups"));
+const DEFAULT_DATA_DIR = process.env.NODE_ENV === "production" && fs.existsSync("/data")
+  ? "/data"
+  : path.join(process.cwd(), "data");
+const DATA_DIR = path.resolve(process.env.DATA_DIR || DEFAULT_DATA_DIR);
+const DEFAULT_BACKUP_DIR = process.env.NODE_ENV === "production" ? path.join(DATA_DIR, "backups") : path.join(process.cwd(), "backups");
+const BACKUP_DIR = path.resolve(process.env.BACKUP_DIR || DEFAULT_BACKUP_DIR);
 const DB_PATH = path.resolve(process.env.SQLITE_PATH || path.join(DATA_DIR, "marfan.sqlite"));
 const DOCUMENT_UPLOAD_DIR = path.join(DATA_DIR, "uploads", "documents");
 const AUTO_BACKUP_ON_START = process.env.AUTO_BACKUP_ON_START !== "false";
@@ -726,6 +730,65 @@ function seedProductionInstall() {
   });
 }
 
+function ensureProductionSuperAdminAccess({ resetPassword = false, clearSessions = false } = {}) {
+  return transaction(() => {
+    const existing =
+      get("SELECT * FROM users WHERE lower(email) = lower(?)", [PRODUCTION_SUPERADMIN_EMAIL])
+      || get("SELECT * FROM users WHERE id = ?", [PRODUCTION_SUPERADMIN_ID])
+      || get("SELECT * FROM users WHERE id = 'usr_super'");
+    const userId = existing?.id || PRODUCTION_SUPERADMIN_ID;
+    const credentials = resetPassword || !existing ? hashPassword(PRODUCTION_SUPERADMIN_PASSWORD) : null;
+
+    if (existing) {
+      run(
+        `UPDATE users
+         SET role = 'super_admin',
+             name = ?,
+             email = ?,
+             phone = ?,
+             password_hash = COALESCE(?, password_hash),
+             salt = COALESCE(?, salt),
+             permissions_json = NULL,
+             active = 1
+         WHERE id = ?`,
+        [
+          PRODUCTION_SUPERADMIN_NAME,
+          PRODUCTION_SUPERADMIN_EMAIL,
+          PRODUCTION_SUPERADMIN_PHONE,
+          credentials?.hash || null,
+          credentials?.salt || null,
+          userId
+        ]
+      );
+    } else {
+      run(
+        `INSERT INTO users (id, role, name, email, phone, password_hash, salt, permissions_json, active)
+         VALUES (?, 'super_admin', ?, ?, ?, ?, ?, NULL, 1)`,
+        [
+          userId,
+          PRODUCTION_SUPERADMIN_NAME,
+          PRODUCTION_SUPERADMIN_EMAIL,
+          PRODUCTION_SUPERADMIN_PHONE,
+          credentials.hash,
+          credentials.salt
+        ]
+      );
+    }
+
+    if (clearSessions) {
+      run("DELETE FROM sessions WHERE user_id = ?", [userId]);
+      run("UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND used_at IS NULL", [userId]);
+    }
+
+    return {
+      id: userId,
+      name: PRODUCTION_SUPERADMIN_NAME,
+      email: PRODUCTION_SUPERADMIN_EMAIL,
+      passwordReset: Boolean(credentials)
+    };
+  });
+}
+
 function rowValues(row, columns) {
   return columns.map((column) => Object.prototype.hasOwnProperty.call(row, column) ? row[column] : null);
 }
@@ -776,6 +839,7 @@ function seedIfNewInstall() {
   if (!SEED_DEMO_DATA) {
     seedProductionInstall();
     seedBundledProductionData();
+    ensureProductionSuperAdminAccess({ resetPassword: true, clearSessions: true });
     return;
   }
 
@@ -993,6 +1057,15 @@ function seedIfNewInstall() {
       );
     }
   });
+}
+
+function recoverSuperAdminOnStartIfRequested() {
+  if (!envFlag("MARFAN_RECOVER_SUPERADMIN_ON_START", false)) return null;
+  const safetyBackup = wasNewDatabase ? null : createBackup("safety", "Backup previo a recuperacion de superadmin");
+  return {
+    safetyBackup,
+    superAdmin: ensureProductionSuperAdminAccess({ resetPassword: true, clearSessions: true })
+  };
 }
 
 function escapeSqlLiteral(value) {
@@ -1288,15 +1361,18 @@ function requestRestore(backupId) {
 applyMigrations();
 seedIfNewInstall();
 ensureEventDeliveryNoteDrafts();
+const accessRecovery = recoverSuperAdminOnStartIfRequested();
 ensureDailyBackup();
 
 module.exports = {
   BACKUP_DIR,
   DATA_DIR,
   DB_PATH,
+  accessRecovery,
   all,
   createBackup,
   db,
+  ensureProductionSuperAdminAccess,
   exec,
   get,
   requestRestore,

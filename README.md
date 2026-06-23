@@ -22,7 +22,7 @@ En Railway, con `NODE_ENV=production`, `MARFAN_SEED_DEMO_DATA=false` y `MARFAN_S
 - Datos iniciales recuperados: 27 operarios, 125 clientes, 22 eventos, 28 asignaciones y fichajes/incidencias existentes desde `seed/production-data.json`
 - Acceso inicial operarios: email o telefono importado / `Marfan2026!`
 
-Cambia `MARFAN_SUPERADMIN_PASSWORD` en Railway antes de abrir la app a mas usuarios. Para operarios, cambia las contrasenas desde `Administradores` o pide que las actualicen en su perfil.
+Si se pierde el acceso, deja `MARFAN_SUPERADMIN_PASSWORD=Marquee2026!` y activa `MARFAN_RECOVER_SUPERADMIN_ON_START=true` durante un solo despliegue. La app creara un backup y restaurara solo el acceso de German sin borrar clientes, operarios, eventos ni usuarios. Despues vuelve a dejar `MARFAN_RECOVER_SUPERADMIN_ON_START=false`.
 
 ## Demo desechable
 
@@ -76,11 +76,14 @@ La base SQLite vive por defecto en:
 data/marfan.sqlite
 ```
 
+En produccion la app usa `/data/marfan.sqlite` por defecto para que Railway pueda conservar la base en un volumen persistente.
+
 Regla importante:
 
 - Si la base ya existe, no se sobrescribe.
 - Las migraciones se aplican de forma incremental.
 - Las semillas solo se crean en una instalación nueva.
+- Las actualizaciones de codigo no deben subir ni reemplazar `data/`, `backups/`, `tmp/`, `outputs/` ni `node_modules/`.
 - Los backups se guardan en `backups/` o en `BACKUP_DIR`, con verificacion de integridad, descarga protegida y restauracion solo para super admin. Cada copia SQLite incluye tambien los archivos subidos de documentacion RRHH para poder restaurarlos junto a la base.
 - Para preparar una restauracion hay que escribir `RESTAURAR`; antes de aplicarla se genera siempre un backup de seguridad.
 
@@ -100,11 +103,22 @@ MARFAN_SEED_REAL_DATA=true
 MARFAN_SUPERADMIN_NAME=German
 MARFAN_SUPERADMIN_EMAIL=info@marquee.es
 MARFAN_SUPERADMIN_PASSWORD=Marquee2026!
+MARFAN_RECOVER_SUPERADMIN_ON_START=false
 GOOGLE_CALENDAR_ID=21102c189e2a9f5fb7072b9475554e93ae0b5124176fdfaa3da9470149b39e37@group.calendar.google.com
 ```
 
-En Railway, montar un volumen persistente en `/data`. Sin volumen, cualquier servicio con SQLite acabará dependiendo del disco efímero del despliegue.
+En Railway, montar un volumen persistente en `/data`. Sin volumen, cualquier servicio con SQLite acabara dependiendo del disco efimero del despliegue y los datos podrian desaparecer al redeplegar.
 El ZIP no debe subir `data/` ni `backups/`; en una base nueva Railway carga la semilla real incluida en `seed/production-data.json`.
+
+Para recuperar el acceso sin borrar datos:
+
+```text
+MARFAN_RECOVER_SUPERADMIN_ON_START=true
+MARFAN_SUPERADMIN_EMAIL=info@marquee.es
+MARFAN_SUPERADMIN_PASSWORD=Marquee2026!
+```
+
+Despues de entrar, volver a dejar `MARFAN_RECOVER_SUPERADMIN_ON_START=false`.
 
 Para conectar Google Calendar con OAuth, usa un cliente OAuth de Google de tipo `Web application` y anade la URI exacta que muestra MARFAN en `Configuracion > Google Calendar`.
 No uses un cliente `Desktop app`/`Installed`; Google lo rechazara con `redirect_uri_mismatch` en esta aplicacion.
