@@ -1405,6 +1405,7 @@ function eventInspector(event) {
       ${locked ? "" : `<button class="btn" data-edit-event="${event.id}">${icon("pen")} Editar evento</button>`}
       ${locked ? "" : `<button class="btn" data-close-event="${event.id}">${icon("check")} Cerrar evento</button>`}
       ${locked ? "" : `<button class="btn" data-duplicate="${event.id}">${icon("briefcase")} Duplicar evento</button>`}
+      ${state.user?.role === "super_admin" ? `<button class="btn red-outline" data-delete-event="${event.id}">${icon("trash")} Eliminar evento</button>` : ""}
       <button class="btn" data-client-dossier="${event.id}">${icon("file")} Dossier cliente</button>
       <button class="btn" data-client-dossier-pdf="${event.id}">${icon("download")} PDF dossier</button>
       <button class="btn" data-albaran="${event.id}">${icon("file")} Albaran</button>
@@ -1736,7 +1737,8 @@ function clientDetail(client) {
       <div class="inspector-section">
         <h3>Observaciones</h3>
         <p class="muted">${esc(client.notes || "Sin observaciones")}</p>
-        <button class="btn red-outline full" data-delete-client="${client.id}" ${metrics.events.length ? "disabled" : ""}>Eliminar cliente</button>
+        <button class="btn red-outline full" data-delete-client="${client.id}" ${(metrics.events.length && state.user?.role !== "super_admin") ? "disabled" : ""}>Eliminar cliente</button>
+        ${metrics.events.length && state.user?.role === "super_admin" ? `<small class="muted">Como super admin tambien se eliminaran sus eventos.</small>` : ""}
       </div>
     </aside>
   `;
@@ -1911,7 +1913,10 @@ function employeeDetail(employee) {
     <aside class="panel inspector">
       <div class="row-between">
         ${statusTag(employee.status === "activo" ? "confirmado" : "pendiente")}
-        <button class="btn" data-edit-employee="${employee.id}">${icon("pen")} Editar</button>
+        <div class="filters-row">
+          <button class="btn" data-edit-employee="${employee.id}">${icon("pen")} Editar</button>
+          ${state.user?.role === "super_admin" ? `<button class="btn red-outline" data-delete-employee="${employee.id}">${icon("trash")} Eliminar</button>` : ""}
+        </div>
       </div>
       <h2>${esc(employee.name)}</h2>
       <div class="muted">${esc(employee.role)} · ${esc(employee.city || employee.province || "Sin ciudad")}</div>
@@ -4316,10 +4321,20 @@ async function handleClick(event) {
   }
 
   if (target.dataset.deleteClient) {
+    if (!confirm("¿Eliminar este cliente? Si eres super admin y tiene eventos, tambien se eliminaran sus eventos.")) return;
     await api(`/api/clients/${target.dataset.deleteClient}`, { method: "DELETE" });
     state.selectedClientId = null;
     state.editClientId = null;
     toast("Cliente eliminado");
+    return renderAdmin(true);
+  }
+
+  if (target.dataset.deleteEvent) {
+    if (!confirm("¿Eliminar este evento definitivamente? Esta accion solo puede hacerla un super admin.")) return;
+    await api(`/api/events/${target.dataset.deleteEvent}`, { method: "DELETE" });
+    state.selectedEventId = null;
+    state.editEventId = null;
+    toast("Evento eliminado");
     return renderAdmin(true);
   }
 
@@ -4333,6 +4348,15 @@ async function handleClick(event) {
     state.selectedEmployeeId = target.dataset.editEmployee;
     state.editEmployeeId = target.dataset.editEmployee;
     return renderAdmin();
+  }
+
+  if (target.dataset.deleteEmployee) {
+    if (!confirm("¿Eliminar este operario y su acceso al portal? Sus fichajes/incidencias quedaran en el historico cuando corresponda.")) return;
+    await api(`/api/employees/${target.dataset.deleteEmployee}`, { method: "DELETE" });
+    state.selectedEmployeeId = null;
+    state.editEmployeeId = null;
+    toast("Operario eliminado");
+    return renderAdmin(true);
   }
 
   if (target.dataset.cancelEditEmployee !== undefined) {

@@ -6461,6 +6461,24 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { event: eventDetail(eventId), googleSync });
   }
 
+  if (eventMatch && method === "DELETE") {
+    requireSuperAdmin(user);
+    const eventId = eventMatch[1];
+    const existing = eventDetail(eventId);
+    if (!existing) return sendJson(res, 404, { error: "Evento no encontrado" });
+    transaction(() => {
+      run("UPDATE incidents SET event_id = NULL WHERE event_id = ?", [eventId]);
+      run("DELETE FROM events WHERE id = ?", [eventId]);
+      audit(user, "event_deleted", "event", eventId, {
+        name: existing.name,
+        clientId: existing.client_id,
+        date: existing.date,
+        assignments: existing.assignments?.length || 0
+      });
+    });
+    return sendJson(res, 200, { ok: true });
+  }
+
   const eventSnapshotsMatch = pathname.match(/^\/api\/events\/([^/]+)\/snapshots$/);
   if (eventSnapshotsMatch && method === "GET") {
     requireAdmin(user);
@@ -6675,12 +6693,31 @@ async function handleApi(req, res, url) {
     const existing = get("SELECT * FROM clients WHERE id = ?", [clientMatch[1]]);
     if (!existing) return sendJson(res, 404, { error: "Cliente no encontrado" });
     const events = get("SELECT COUNT(*) AS count FROM events WHERE client_id = ?", [existing.id]).count;
-    if (events > 0) {
+    if (events > 0 && user.role !== "super_admin") {
       return sendJson(res, 409, { error: "No se puede eliminar un cliente con historico de eventos" });
     }
-    run("DELETE FROM clients WHERE id = ?", [existing.id]);
-    audit(user, "client_deleted", "client", existing.id);
-    return sendJson(res, 200, { ok: true });
+    if (events > 0) requireSuperAdmin(user);
+    transaction(() => {
+      if (events > 0) {
+        const clientEvents = all("SELECT id, name, date FROM events WHERE client_id = ?", [existing.id]);
+        for (const event of clientEvents) {
+          run("UPDATE incidents SET event_id = NULL WHERE event_id = ?", [event.id]);
+          run("DELETE FROM events WHERE id = ?", [event.id]);
+          audit(user, "event_deleted", "event", event.id, {
+            name: event.name,
+            clientId: existing.id,
+            date: event.date,
+            reason: "client_deleted"
+          });
+        }
+      }
+      run("DELETE FROM clients WHERE id = ?", [existing.id]);
+      audit(user, "client_deleted", "client", existing.id, {
+        name: existing.name,
+        deletedEvents: events
+      });
+    });
+    return sendJson(res, 200, { ok: true, deletedEvents: events });
   }
 
   if (pathname === "/api/employees" && method === "GET") {
@@ -6850,6 +6887,27 @@ async function handleApi(req, res, url) {
       employee: parseEmployee(get("SELECT * FROM employees WHERE id = ?", [employeeMatch[1]])),
       portalAccess: portal
     });
+  }
+
+  if (employeeMatch && method === "DELETE") {
+    requireSuperAdmin(user);
+    const existing = get("SELECT * FROM employees WHERE id = ?", [employeeMatch[1]]);
+    if (!existing) return sendJson(res, 404, { error: "Operario no encontrado" });
+    const assigned = get("SELECT COUNT(*) AS count FROM assignments WHERE employee_id = ?", [existing.id]).count;
+    const entries = get("SELECT COUNT(*) AS count FROM time_entries WHERE employee_id = ?", [existing.id]).count;
+    transaction(() => {
+      run("UPDATE events SET team_leader_id = NULL WHERE team_leader_id = ?", [existing.id]);
+      run("UPDATE incidents SET employee_id = NULL WHERE employee_id = ?", [existing.id]);
+      run("DELETE FROM employees WHERE id = ?", [existing.id]);
+      if (existing.user_id) run("DELETE FROM users WHERE id = ?", [existing.user_id]);
+      audit(user, "employee_deleted", "employee", existing.id, {
+        name: existing.name,
+        portalUserId: existing.user_id || null,
+        assignments: assigned,
+        timeEntries: entries
+      });
+    });
+    return sendJson(res, 200, { ok: true });
   }
 
   if (pathname === "/api/assignments" && method === "POST") {
