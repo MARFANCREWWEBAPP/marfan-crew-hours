@@ -8,7 +8,7 @@
     "start": "node server/index.js",
     "dev": "node server/index.js",
     "prepare:production": "NODE_ENV=production MARFAN_SEED_DEMO_DATA=false node scripts/prepare_production.js",
-    "recover:access": "NODE_ENV=production MARFAN_SEED_DEMO_DATA=false node scripts/prepare_production.js",
+    "recover:access": "NODE_ENV=production MARFAN_SEED_DEMO_DATA=false MARFAN_RESET_SUPERADMIN_PASSWORD=true node scripts/prepare_production.js",
     "test": "node --test tests/*.test.js"
   },
   "engines": {

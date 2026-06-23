@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
-const { hashPassword, randomId } = require("./security");
+const { hashPassword, randomId, verifyPassword } = require("./security");
 
 const DEFAULT_DATA_DIR = process.env.NODE_ENV === "production" && fs.existsSync("/data")
   ? "/data"
@@ -730,12 +730,15 @@ function seedProductionInstall() {
   });
 }
 
+function productionSuperAdminCandidate() {
+  return get("SELECT * FROM users WHERE lower(email) = lower(?)", [PRODUCTION_SUPERADMIN_EMAIL])
+    || get("SELECT * FROM users WHERE id = ?", [PRODUCTION_SUPERADMIN_ID])
+    || get("SELECT * FROM users WHERE id = 'usr_super'");
+}
+
 function ensureProductionSuperAdminAccess({ resetPassword = false, clearSessions = false } = {}) {
   return transaction(() => {
-    const existing =
-      get("SELECT * FROM users WHERE lower(email) = lower(?)", [PRODUCTION_SUPERADMIN_EMAIL])
-      || get("SELECT * FROM users WHERE id = ?", [PRODUCTION_SUPERADMIN_ID])
-      || get("SELECT * FROM users WHERE id = 'usr_super'");
+    const existing = productionSuperAdminCandidate();
     const userId = existing?.id || PRODUCTION_SUPERADMIN_ID;
     const credentials = resetPassword || !existing ? hashPassword(PRODUCTION_SUPERADMIN_PASSWORD) : null;
 
@@ -1215,10 +1218,44 @@ function seedIfNewInstall() {
 
 function recoverSuperAdminOnStartIfRequested() {
   if (!envFlag("MARFAN_RECOVER_SUPERADMIN_ON_START", false)) return null;
+  const existing = productionSuperAdminCandidate();
+  const forceReset = envFlag("MARFAN_FORCE_SUPERADMIN_RECOVERY", false);
+  const configuredPasswordWorks = existing
+    ? verifyPassword(PRODUCTION_SUPERADMIN_PASSWORD, existing.salt, existing.password_hash)
+    : false;
+  if (existing && !configuredPasswordWorks && !forceReset) {
+    return {
+      skippedPasswordReset: true,
+      reason: "custom_password_preserved",
+      superAdmin: ensureProductionSuperAdminAccess({ resetPassword: false, clearSessions: false })
+    };
+  }
+
+  const recoverySignature = crypto
+    .createHash("sha256")
+    .update(`${PRODUCTION_SUPERADMIN_EMAIL}\n${PRODUCTION_SUPERADMIN_PASSWORD}`)
+    .digest("hex");
+  const markerKey = "superadmin_recovery_signature_v1";
+  const previousRecovery = get("SELECT value FROM company_settings WHERE key = ?", [markerKey]);
+  if (previousRecovery?.value === recoverySignature && !forceReset) {
+    return {
+      skippedPasswordReset: true,
+      reason: "recovery_already_applied",
+      superAdmin: ensureProductionSuperAdminAccess({ resetPassword: false, clearSessions: false })
+    };
+  }
+
   const safetyBackup = wasNewDatabase ? null : createBackup("safety", "Backup previo a recuperacion de superadmin");
+  const superAdmin = ensureProductionSuperAdminAccess({ resetPassword: true, clearSessions: true });
+  run(
+    `INSERT INTO company_settings (key, value, updated_at)
+     VALUES (?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
+    [markerKey, recoverySignature]
+  );
   return {
     safetyBackup,
-    superAdmin: ensureProductionSuperAdminAccess({ resetPassword: true, clearSessions: true })
+    superAdmin
   };
 }
 

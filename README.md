@@ -24,7 +24,7 @@ En Railway, con `NODE_ENV=production`, `MARFAN_SEED_DEMO_DATA=false` y `MARFAN_S
 - Operarios creados desde el menu: por defecto telefono como usuario y contrasena, sin espacios y omitiendo `+34`. Ejemplo `+34 600 111 000` entra con `600111000` / `600111000`.
 - Al arrancar con la base recuperada, la app crea una copia de seguridad y normaliza una sola vez los operarios existentes para dejarlos activos con ese mismo acceso por telefono.
 
-Si se pierde el acceso, deja `MARFAN_SUPERADMIN_PASSWORD=Marquee2026!` y activa `MARFAN_RECOVER_SUPERADMIN_ON_START=true` durante un solo despliegue. La app creara un backup y restaurara solo el acceso de German sin borrar clientes, operarios, eventos ni usuarios. Despues vuelve a dejar `MARFAN_RECOVER_SUPERADMIN_ON_START=false`.
+Si German ya tiene una contrasena personalizada, una actualizacion normal no la pisa. La recuperacion automatica tampoco la resetea si detecta una contrasena distinta a la temporal configurada, salvo que se active expresamente `MARFAN_FORCE_SUPERADMIN_RECOVERY=true`.
 
 ## Demo desechable
 
@@ -34,7 +34,7 @@ La pantalla de acceso no muestra ni rellena estas credenciales en un entorno rea
 
 ## Preparar base real
 
-Este comando deja la base local lista para pruebas reales: crea/actualiza a German como superadministrador, crea un backup de seguridad y cierra sesiones antiguas. No borra eventos, clientes ni operarios; si detecta que baja algun conteo de negocio, falla.
+Este comando deja la base local lista para pruebas reales: crea/actualiza a German como superadministrador y crea un backup de seguridad. No cambia la contrasena que ya tenga German, no borra eventos, clientes ni operarios; si detecta que baja algun conteo de negocio, falla.
 
 ```bash
 npm run prepare:production
@@ -113,7 +113,7 @@ GOOGLE_CALENDAR_ID=21102c189e2a9f5fb7072b9475554e93ae0b5124176fdfaa3da9470149b39
 En Railway, montar un volumen persistente en `/data`. Sin volumen, cualquier servicio con SQLite acabara dependiendo del disco efimero del despliegue y los datos podrian desaparecer al redeplegar.
 El ZIP no debe subir `data/` ni `backups/`; en una base nueva Railway carga la semilla real incluida en `seed/production-data.json`.
 
-Para recuperar el acceso sin borrar datos:
+Para recuperar el acceso sin borrar datos, solo cuando realmente no puedas entrar:
 
 ```text
 MARFAN_RECOVER_SUPERADMIN_ON_START=true
@@ -121,7 +121,7 @@ MARFAN_SUPERADMIN_EMAIL=info@marquee.es
 MARFAN_SUPERADMIN_PASSWORD=Marquee2026!
 ```
 
-Despues de entrar, volver a dejar `MARFAN_RECOVER_SUPERADMIN_ON_START=false`.
+La app hara un backup antes de tocar el acceso. Si German tiene una contrasena personalizada, no la cambia salvo que tambien pongas `MARFAN_FORCE_SUPERADMIN_RECOVERY=true`. Despues de entrar, volver a dejar `MARFAN_RECOVER_SUPERADMIN_ON_START=false`.
 
 Para conectar Google Calendar con OAuth, usa un cliente OAuth de Google de tipo `Web application` y anade la URI exacta que muestra MARFAN en `Configuracion > Google Calendar`.
 No uses un cliente `Desktop app`/`Installed`; Google lo rechazara con `redirect_uri_mismatch` en esta aplicacion.

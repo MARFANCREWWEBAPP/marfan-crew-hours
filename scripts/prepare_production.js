@@ -8,6 +8,12 @@ const { DB_PATH, createBackup, ensureProductionSuperAdminAccess, get } = require
 const SUPERADMIN_NAME = process.env.MARFAN_SUPERADMIN_NAME || "German";
 const SUPERADMIN_EMAIL = (process.env.MARFAN_SUPERADMIN_EMAIL || "info@marquee.es").toLowerCase();
 
+function envFlag(name, fallback = false) {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  return !["false", "0", "no", "off"].includes(String(raw).trim().toLowerCase());
+}
+
 function count(table) {
   return get(`SELECT COUNT(*) AS count FROM ${table}`).count;
 }
@@ -22,7 +28,11 @@ const before = {
 
 const safetyBackup = createBackup("safety", "Backup previo a preparacion de produccion");
 
-const summary = ensureProductionSuperAdminAccess({ resetPassword: true, clearSessions: true });
+const resetPassword = envFlag("MARFAN_RESET_SUPERADMIN_PASSWORD", false);
+const summary = ensureProductionSuperAdminAccess({
+  resetPassword,
+  clearSessions: resetPassword
+});
 
 const after = {
   users: count("users"),
@@ -51,8 +61,11 @@ console.log(JSON.stringify({
     name: SUPERADMIN_NAME,
     email: SUPERADMIN_EMAIL
   },
-  sessionsCleared: true,
-  action: "superadmin_prepared_without_deleting_business_data",
+  passwordReset: resetPassword,
+  sessionsCleared: resetPassword,
+  action: resetPassword
+    ? "superadmin_access_recovered_without_deleting_business_data"
+    : "production_prepared_without_password_reset",
   before,
   after
 }, null, 2));

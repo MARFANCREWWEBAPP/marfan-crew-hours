@@ -292,14 +292,22 @@ test("prepare:production keeps business data and writes a safety backup", () => 
   const prodTmp = fs.mkdtempSync(path.join(os.tmpdir(), "marfan-prepare-production-"));
   try {
     const script = `
-      const { get, db } = require("./server/db");
+      const { get, run, db } = require("./server/db");
+      const { hashPassword, verifyPassword } = require("./server/security");
+      const credentials = hashPassword("ClavePropia2026");
+      run("UPDATE users SET password_hash = ?, salt = ? WHERE lower(email) = lower('info@marquee.es')", [
+        credentials.hash,
+        credentials.salt
+      ]);
+      const german = get("SELECT salt, password_hash FROM users WHERE lower(email) = lower('info@marquee.es')");
       console.log(JSON.stringify({
         before: {
           employees: get("SELECT COUNT(*) AS count FROM employees").count,
           clients: get("SELECT COUNT(*) AS count FROM clients").count,
           events: get("SELECT COUNT(*) AS count FROM events").count,
           assignments: get("SELECT COUNT(*) AS count FROM assignments").count
-        }
+        },
+        customPasswordWorks: verifyPassword("ClavePropia2026", german.salt, german.password_hash)
       }));
       db.close();
     `;
@@ -319,7 +327,9 @@ test("prepare:production keeps business data and writes a safety backup", () => 
       encoding: "utf8"
     });
     assert.equal(beforeResult.status, 0, beforeResult.stderr);
-    const before = JSON.parse(beforeResult.stdout.trim()).before;
+    const beforePayload = JSON.parse(beforeResult.stdout.trim());
+    const before = beforePayload.before;
+    assert.equal(beforePayload.customPasswordWorks, true);
 
     const prepare = spawnSync(process.execPath, ["scripts/prepare_production.js"], {
       cwd: path.resolve(__dirname, ".."),
@@ -329,6 +339,8 @@ test("prepare:production keeps business data and writes a safety backup", () => 
     assert.equal(prepare.status, 0, prepare.stderr);
     const payload = JSON.parse(prepare.stdout.trim());
     assert.equal(payload.ok, true);
+    assert.equal(payload.passwordReset, false);
+    assert.equal(payload.sessionsCleared, false);
     assert.equal(fs.existsSync(payload.safetyBackup.filePath), true);
     assert.deepEqual(
       {
@@ -339,6 +351,92 @@ test("prepare:production keeps business data and writes a safety backup", () => 
       },
       before
     );
+    const afterPasswordResult = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `
+          const { get, db } = require("./server/db");
+          const { verifyPassword } = require("./server/security");
+          const german = get("SELECT salt, password_hash FROM users WHERE lower(email) = lower('info@marquee.es')");
+          console.log(JSON.stringify({
+            customPasswordWorks: verifyPassword("ClavePropia2026", german.salt, german.password_hash),
+            defaultPasswordWorks: verifyPassword("Marquee2026!", german.salt, german.password_hash)
+          }));
+          db.close();
+        `
+      ],
+      { cwd: path.resolve(__dirname, ".."), env, encoding: "utf8" }
+    );
+    assert.equal(afterPasswordResult.status, 0, afterPasswordResult.stderr);
+    const afterPassword = JSON.parse(afterPasswordResult.stdout.trim());
+    assert.equal(afterPassword.customPasswordWorks, true);
+    assert.equal(afterPassword.defaultPasswordWorks, false);
+  } finally {
+    fs.rmSync(prodTmp, { recursive: true, force: true });
+  }
+});
+
+test("startup recovery preserves an existing custom German password unless forced", () => {
+  const prodTmp = fs.mkdtempSync(path.join(os.tmpdir(), "marfan-recovery-preserve-"));
+  const env = {
+    ...process.env,
+    NODE_ENV: "production",
+    DATA_DIR: prodTmp,
+    BACKUP_DIR: path.join(prodTmp, "backups"),
+    SQLITE_PATH: path.join(prodTmp, "marfan.sqlite"),
+    AUTO_BACKUP_ON_START: "false",
+    MARFAN_SEED_DEMO_DATA: "false",
+    MARFAN_SEED_REAL_DATA: "true"
+  };
+  try {
+    const setCustom = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `
+          const { run, db } = require("./server/db");
+          const { hashPassword } = require("./server/security");
+          const credentials = hashPassword("ClaveGermanPersonal2026");
+          run("UPDATE users SET password_hash = ?, salt = ? WHERE lower(email) = lower('info@marquee.es')", [
+            credentials.hash,
+            credentials.salt
+          ]);
+          db.close();
+        `
+      ],
+      { cwd: path.resolve(__dirname, ".."), env, encoding: "utf8" }
+    );
+    assert.equal(setCustom.status, 0, setCustom.stderr);
+
+    const recoveryRun = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `
+          const { accessRecovery, get, db } = require("./server/db");
+          const { verifyPassword } = require("./server/security");
+          const german = get("SELECT salt, password_hash FROM users WHERE lower(email) = lower('info@marquee.es')");
+          console.log(JSON.stringify({
+            accessRecovery,
+            customPasswordWorks: verifyPassword("ClaveGermanPersonal2026", german.salt, german.password_hash),
+            defaultPasswordWorks: verifyPassword("Marquee2026!", german.salt, german.password_hash)
+          }));
+          db.close();
+        `
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        env: { ...env, MARFAN_RECOVER_SUPERADMIN_ON_START: "true" },
+        encoding: "utf8"
+      }
+    );
+    assert.equal(recoveryRun.status, 0, recoveryRun.stderr);
+    const payload = JSON.parse(recoveryRun.stdout.trim());
+    assert.equal(payload.accessRecovery.skippedPasswordReset, true);
+    assert.equal(payload.accessRecovery.reason, "custom_password_preserved");
+    assert.equal(payload.customPasswordWorks, true);
+    assert.equal(payload.defaultPasswordWorks, false);
   } finally {
     fs.rmSync(prodTmp, { recursive: true, force: true });
   }
