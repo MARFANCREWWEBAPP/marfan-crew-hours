@@ -5049,6 +5049,14 @@ function documentFilePath(document) {
   return fs.existsSync(resolved) ? resolved : null;
 }
 
+function removeDocumentStorageFile(filePath) {
+  const resolved = path.resolve(filePath || "");
+  const base = path.resolve(DOCUMENT_UPLOAD_DIR);
+  if (!resolved.startsWith(`${base}${path.sep}`)) return false;
+  if (fs.existsSync(resolved)) fs.rmSync(resolved, { force: true });
+  return true;
+}
+
 function canAccessDocument(user, document) {
   if (!user || !document) return false;
   if (["admin", "super_admin"].includes(user.role)) return true;
@@ -6463,20 +6471,35 @@ async function handleApi(req, res, url) {
 
   if (eventMatch && method === "DELETE") {
     requireSuperAdmin(user);
-    const eventId = eventMatch[1];
-    const existing = eventDetail(eventId);
-    if (!existing) return sendJson(res, 404, { error: "Evento no encontrado" });
+    const event = eventDetail(eventMatch[1]);
+    if (!event) return sendJson(res, 404, { error: "Evento no encontrado" });
+    const documentFiles = listEventDocuments({ eventId: event.id })
+      .map((document) => documentFilePath(document))
+      .filter(Boolean);
+    const counts = {
+      assignments: get("SELECT COUNT(*) AS count FROM assignments WHERE event_id = ?", [event.id]).count,
+      timeEntries: get("SELECT COUNT(*) AS count FROM time_entries WHERE event_id = ?", [event.id]).count,
+      incidents: get("SELECT COUNT(*) AS count FROM incidents WHERE event_id = ?", [event.id]).count,
+      documents: get("SELECT COUNT(*) AS count FROM event_documents WHERE event_id = ?", [event.id]).count,
+      snapshots: get("SELECT COUNT(*) AS count FROM event_snapshots WHERE event_id = ?", [event.id]).count,
+      deliveryNotes: get("SELECT COUNT(*) AS count FROM delivery_notes WHERE event_id = ?", [event.id]).count
+    };
     transaction(() => {
-      run("UPDATE incidents SET event_id = NULL WHERE event_id = ?", [eventId]);
-      run("DELETE FROM events WHERE id = ?", [eventId]);
-      audit(user, "event_deleted", "event", eventId, {
-        name: existing.name,
-        clientId: existing.client_id,
-        date: existing.date,
-        assignments: existing.assignments?.length || 0
+      audit(user, "event_deleted", "event", event.id, {
+        name: event.name,
+        clientId: event.client_id,
+        clientName: event.client_name,
+        date: event.date,
+        startTime: event.start_time,
+        endTime: event.end_time,
+        googleCalendarEventId: event.google_calendar_event_id || "",
+        googleCalendarUid: event.google_calendar_uid || "",
+        counts
       });
+      run("DELETE FROM events WHERE id = ?", [event.id]);
     });
-    return sendJson(res, 200, { ok: true });
+    for (const filePath of documentFiles) removeDocumentStorageFile(filePath);
+    return sendJson(res, 200, { ok: true, deletedEventId: event.id, counts });
   }
 
   const eventSnapshotsMatch = pathname.match(/^\/api\/events\/([^/]+)\/snapshots$/);
@@ -6693,31 +6716,12 @@ async function handleApi(req, res, url) {
     const existing = get("SELECT * FROM clients WHERE id = ?", [clientMatch[1]]);
     if (!existing) return sendJson(res, 404, { error: "Cliente no encontrado" });
     const events = get("SELECT COUNT(*) AS count FROM events WHERE client_id = ?", [existing.id]).count;
-    if (events > 0 && user.role !== "super_admin") {
+    if (events > 0) {
       return sendJson(res, 409, { error: "No se puede eliminar un cliente con historico de eventos" });
     }
-    if (events > 0) requireSuperAdmin(user);
-    transaction(() => {
-      if (events > 0) {
-        const clientEvents = all("SELECT id, name, date FROM events WHERE client_id = ?", [existing.id]);
-        for (const event of clientEvents) {
-          run("UPDATE incidents SET event_id = NULL WHERE event_id = ?", [event.id]);
-          run("DELETE FROM events WHERE id = ?", [event.id]);
-          audit(user, "event_deleted", "event", event.id, {
-            name: event.name,
-            clientId: existing.id,
-            date: event.date,
-            reason: "client_deleted"
-          });
-        }
-      }
-      run("DELETE FROM clients WHERE id = ?", [existing.id]);
-      audit(user, "client_deleted", "client", existing.id, {
-        name: existing.name,
-        deletedEvents: events
-      });
-    });
-    return sendJson(res, 200, { ok: true, deletedEvents: events });
+    run("DELETE FROM clients WHERE id = ?", [existing.id]);
+    audit(user, "client_deleted", "client", existing.id);
+    return sendJson(res, 200, { ok: true });
   }
 
   if (pathname === "/api/employees" && method === "GET") {
@@ -6887,27 +6891,6 @@ async function handleApi(req, res, url) {
       employee: parseEmployee(get("SELECT * FROM employees WHERE id = ?", [employeeMatch[1]])),
       portalAccess: portal
     });
-  }
-
-  if (employeeMatch && method === "DELETE") {
-    requireSuperAdmin(user);
-    const existing = get("SELECT * FROM employees WHERE id = ?", [employeeMatch[1]]);
-    if (!existing) return sendJson(res, 404, { error: "Operario no encontrado" });
-    const assigned = get("SELECT COUNT(*) AS count FROM assignments WHERE employee_id = ?", [existing.id]).count;
-    const entries = get("SELECT COUNT(*) AS count FROM time_entries WHERE employee_id = ?", [existing.id]).count;
-    transaction(() => {
-      run("UPDATE events SET team_leader_id = NULL WHERE team_leader_id = ?", [existing.id]);
-      run("UPDATE incidents SET employee_id = NULL WHERE employee_id = ?", [existing.id]);
-      run("DELETE FROM employees WHERE id = ?", [existing.id]);
-      if (existing.user_id) run("DELETE FROM users WHERE id = ?", [existing.user_id]);
-      audit(user, "employee_deleted", "employee", existing.id, {
-        name: existing.name,
-        portalUserId: existing.user_id || null,
-        assignments: assigned,
-        timeEntries: entries
-      });
-    });
-    return sendJson(res, 200, { ok: true });
   }
 
   if (pathname === "/api/assignments" && method === "POST") {
@@ -8355,15 +8338,7 @@ function serveStatic(req, res, url) {
     ".svg": "image/svg+xml",
     ".png": "image/png"
   }[ext] || "application/octet-stream";
-  const cacheControl = [".html", ".css", ".js"].includes(ext)
-    ? "no-store, no-cache, must-revalidate, max-age=0"
-    : "public, max-age=3600";
-  res.writeHead(200, secureHeaders({
-    "content-type": type,
-    "cache-control": cacheControl,
-    "pragma": [".html", ".css", ".js"].includes(ext) ? "no-cache" : undefined,
-    "expires": [".html", ".css", ".js"].includes(ext) ? "0" : undefined
-  }));
+  res.writeHead(200, secureHeaders({ "content-type": type }));
   fs.createReadStream(finalPath).pipe(res);
 }
 

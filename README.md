@@ -130,7 +130,7 @@ Si Google muestra `redirect_uri_mismatch`, la URI autorizada en Google Cloud no 
 - Centro Live
 - Calendario Pro
 - Google Calendar con sincronización de horario, ubicación, descripción operativa y metadatos privados de equipo/requisitos
-- Eventos con duplicado operativo de servicio, requisitos y equipo asignado validado; los efectuados quedan en solo revision
+- Eventos con duplicado operativo de servicio, requisitos y equipo asignado validado; los efectuados quedan en solo revision y el borrado queda reservado al Super Admin
 - Clientes
 - Operarios
 - Asignaciones con recomendaciones y prevalidacion visible de bloqueos
