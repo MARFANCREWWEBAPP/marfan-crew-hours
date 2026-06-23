@@ -1180,6 +1180,134 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(deleteAudit.status, 200);
     assert.equal(deleteAudit.json.logs.some((log) => log.entity_id === eventForDeletion.json.event.id), true);
 
+    const throwawayClient = await jsonRequest(baseUrl, "/api/clients", {
+      method: "POST",
+      token,
+      body: {
+        name: "Cliente sin historico borrar",
+        taxId: "BDELETE001",
+        contactName: "Contacto borrar",
+        email: "delete-client@marfancrew.test"
+      }
+    });
+    assert.equal(throwawayClient.status, 201);
+    const hardDeleteClient = await jsonRequest(baseUrl, `/api/clients/${throwawayClient.json.client.id}`, {
+      method: "DELETE",
+      token
+    });
+    assert.equal(hardDeleteClient.status, 200);
+    assert.equal(hardDeleteClient.json.archived, false);
+
+    const historyClient = await jsonRequest(baseUrl, "/api/clients", {
+      method: "POST",
+      token,
+      body: {
+        name: "Cliente con historico borrar",
+        taxId: "BDELETE002",
+        contactName: "Contacto historico"
+      }
+    });
+    assert.equal(historyClient.status, 201);
+    const historyClientEvent = await jsonRequest(baseUrl, "/api/events", {
+      method: "POST",
+      token,
+      body: {
+        name: "Evento conserva cliente eliminado",
+        clientId: historyClient.json.client.id,
+        date: planningDate,
+        startTime: "18:00",
+        endTime: "20:00",
+        location: "Recinto historico",
+        address: "Recinto historico",
+        lat: 36.72,
+        lng: -4.42,
+        requiredTotal: 1,
+        requirements: [{ role: "Montaje", count: 1 }]
+      }
+    });
+    assert.equal(historyClientEvent.status, 201);
+    const archiveClient = await jsonRequest(baseUrl, `/api/clients/${historyClient.json.client.id}`, {
+      method: "DELETE",
+      token
+    });
+    assert.equal(archiveClient.status, 200);
+    assert.equal(archiveClient.json.archived, true);
+    const clientsAfterDelete = await jsonRequest(baseUrl, "/api/clients", { token });
+    assert.equal(clientsAfterDelete.status, 200);
+    assert.equal(clientsAfterDelete.json.clients.some((client) => client.id === historyClient.json.client.id), false);
+    const eventKeepsClient = await jsonRequest(baseUrl, `/api/events/${historyClientEvent.json.event.id}`, { token });
+    assert.equal(eventKeepsClient.status, 200);
+    assert.equal(eventKeepsClient.json.event.client_name, "Cliente con historico borrar");
+
+    const throwawayEmployee = await jsonRequest(baseUrl, "/api/employees", {
+      method: "POST",
+      token,
+      body: {
+        name: "Operario Sin Historico Borrar",
+        role: "Montaje",
+        phone: "600333444",
+        email: "delete-employee@marfancrew.test",
+        portalAccess: true
+      }
+    });
+    assert.equal(throwawayEmployee.status, 201);
+    const hardDeleteEmployee = await jsonRequest(baseUrl, `/api/employees/${throwawayEmployee.json.employee.id}`, {
+      method: "DELETE",
+      token
+    });
+    assert.equal(hardDeleteEmployee.status, 200);
+    assert.equal(hardDeleteEmployee.json.archived, false);
+    const deletedEmployeeLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: { identifier: "600333444", password: "600333444", mode: "employee" }
+    });
+    assert.equal(deletedEmployeeLogin.status, 401);
+
+    const historyEmployee = await jsonRequest(baseUrl, "/api/employees", {
+      method: "POST",
+      token,
+      body: {
+        name: "Operario Con Historico Borrar",
+        role: "Montaje",
+        phone: "600333445",
+        email: "archive-employee@marfancrew.test",
+        portalAccess: true
+      }
+    });
+    assert.equal(historyEmployee.status, 201);
+    const historyEmployeeAssignment = await jsonRequest(baseUrl, "/api/assignments", {
+      method: "POST",
+      token,
+      body: {
+        eventId: historyClientEvent.json.event.id,
+        employeeId: historyEmployee.json.employee.id,
+        role: "Montaje"
+      }
+    });
+    assert.equal(historyEmployeeAssignment.status, 201);
+    const closeHistoryEmployeeEvent = await jsonRequest(baseUrl, `/api/events/${historyClientEvent.json.event.id}/close`, {
+      method: "POST",
+      token
+    });
+    assert.equal(closeHistoryEmployeeEvent.status, 200);
+    const archiveEmployee = await jsonRequest(baseUrl, `/api/employees/${historyEmployee.json.employee.id}`, {
+      method: "DELETE",
+      token
+    });
+    assert.equal(archiveEmployee.status, 200);
+    assert.equal(archiveEmployee.json.archived, true);
+    const employeesAfterDelete = await jsonRequest(baseUrl, "/api/employees", { token });
+    assert.equal(employeesAfterDelete.status, 200);
+    assert.equal(employeesAfterDelete.json.employees.some((employee) => employee.id === historyEmployee.json.employee.id), false);
+    const archivedEmployeeLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: { identifier: "600333445", password: "600333445", mode: "employee" }
+    });
+    assert.equal(archivedEmployeeLogin.status, 401);
+    const employeeDeleteAudit = await jsonRequest(baseUrl, `/api/audit-logs?action=employee_archived&entity=employee`, { token: superToken });
+    assert.equal(employeeDeleteAudit.status, 200);
+    assert.equal(employeeDeleteAudit.json.logs.some((log) => log.entity_id === historyEmployee.json.employee.id), true);
+
     const eventRecommendations = await jsonRequest(
       baseUrl,
       `/api/planner/recommendations?eventId=${encodeURIComponent(createdEvent.json.event.id)}`,

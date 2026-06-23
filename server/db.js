@@ -563,6 +563,17 @@ const migrations = [
 
       CREATE INDEX IF NOT EXISTS idx_event_documents_event ON event_documents(event_id);
     `
+  },
+  {
+    version: 17,
+    name: "soft-delete-clients-employees",
+    sql: `
+      ALTER TABLE clients ADD COLUMN archived_at TEXT;
+      ALTER TABLE employees ADD COLUMN archived_at TEXT;
+
+      CREATE INDEX IF NOT EXISTS idx_clients_archived_at ON clients(archived_at);
+      CREATE INDEX IF NOT EXISTS idx_employees_archived_at ON employees(archived_at);
+    `
   }
 ];
 

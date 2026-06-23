@@ -1249,7 +1249,7 @@ function findDuplicateEmployeeContact({ email, phone, excludeEmployeeId = "" }) 
   const cleanEmail = cleanContactEmail(email);
   if (cleanEmail) {
     const duplicateByEmail = get(
-      "SELECT * FROM employees WHERE lower(email) = ? AND id != ? LIMIT 1",
+      "SELECT * FROM employees WHERE lower(email) = ? AND id != ? AND archived_at IS NULL LIMIT 1",
       [cleanEmail, excludeEmployeeId]
     );
     if (duplicateByEmail) return duplicateByEmail;
@@ -1257,7 +1257,7 @@ function findDuplicateEmployeeContact({ email, phone, excludeEmployeeId = "" }) 
   const phoneKey = phoneLoginKey(phone);
   if (!phoneKey) return null;
   return all(
-    "SELECT * FROM employees WHERE id != ? AND phone IS NOT NULL AND trim(phone) != ''",
+    "SELECT * FROM employees WHERE id != ? AND phone IS NOT NULL AND trim(phone) != '' AND archived_at IS NULL",
     [excludeEmployeeId]
   ).find((employee) => phonesMatchForLogin(employee.phone, phone)) || null;
 }
@@ -6712,7 +6712,7 @@ async function handleApi(req, res, url) {
 
   if (pathname === "/api/clients" && method === "GET") {
     requireAdmin(user);
-    return sendJson(res, 200, { clients: all("SELECT * FROM clients ORDER BY name") });
+    return sendJson(res, 200, { clients: all("SELECT * FROM clients WHERE archived_at IS NULL ORDER BY name") });
   }
 
   if (pathname === "/api/clients" && method === "POST") {
@@ -6776,16 +6776,18 @@ async function handleApi(req, res, url) {
     if (!existing) return sendJson(res, 404, { error: "Cliente no encontrado" });
     const events = get("SELECT COUNT(*) AS count FROM events WHERE client_id = ?", [existing.id]).count;
     if (events > 0) {
-      return sendJson(res, 409, { error: "No se puede eliminar un cliente con historico de eventos" });
+      run("UPDATE clients SET archived_at = CURRENT_TIMESTAMP WHERE id = ?", [existing.id]);
+      audit(user, "client_archived", "client", existing.id, { name: existing.name, events });
+      return sendJson(res, 200, { ok: true, archived: true, deletedClientId: existing.id, events });
     }
     run("DELETE FROM clients WHERE id = ?", [existing.id]);
     audit(user, "client_deleted", "client", existing.id);
-    return sendJson(res, 200, { ok: true });
+    return sendJson(res, 200, { ok: true, archived: false, deletedClientId: existing.id, events });
   }
 
   if (pathname === "/api/employees" && method === "GET") {
     requireAdmin(user);
-    const employees = all("SELECT * FROM employees ORDER BY name").map(parseEmployee);
+    const employees = all("SELECT * FROM employees WHERE archived_at IS NULL ORDER BY name").map(parseEmployee);
     return sendJson(res, 200, { employees });
   }
 
@@ -6984,6 +6986,117 @@ async function handleApi(req, res, url) {
       employee: parseEmployee(get("SELECT * FROM employees WHERE id = ?", [employeeMatch[1]])),
       portalAccess: portal
     });
+  }
+
+  if (employeeMatch && method === "DELETE") {
+    requireAdmin(user);
+    const existing = get("SELECT * FROM employees WHERE id = ?", [employeeMatch[1]]);
+    if (!existing) return sendJson(res, 404, { error: "Operario no encontrado" });
+    const today = formatDate();
+    const futureAssignments = all(
+      `SELECT assignments.id, assignments.event_id
+       FROM assignments
+       JOIN events ON events.id = assignments.event_id
+       WHERE assignments.employee_id = ?
+         AND events.status != 'finalizado'
+         AND events.date >= ?`,
+      [existing.id, today]
+    );
+    const futureLeaderEvents = all(
+      `SELECT id FROM events
+       WHERE team_leader_id = ?
+         AND status != 'finalizado'
+         AND date >= ?`,
+      [existing.id, today]
+    );
+    const affectedEventIds = Array.from(new Set([
+      ...futureAssignments.map((assignment) => assignment.event_id),
+      ...futureLeaderEvents.map((event) => event.id)
+    ]));
+    const historyCounts = {
+      assignments: get(
+        `SELECT COUNT(*) AS count
+         FROM assignments
+         JOIN events ON events.id = assignments.event_id
+         WHERE assignments.employee_id = ?
+           AND (events.status = 'finalizado' OR events.date < ?)`,
+        [existing.id, today]
+      ).count,
+      timeEntries: get("SELECT COUNT(*) AS count FROM time_entries WHERE employee_id = ?", [existing.id]).count,
+      allowances: get("SELECT COUNT(*) AS count FROM allowances WHERE employee_id = ?", [existing.id]).count,
+      incidents: get("SELECT COUNT(*) AS count FROM incidents WHERE employee_id = ?", [existing.id]).count,
+      leaderEvents: get(
+        `SELECT COUNT(*) AS count
+         FROM events
+         WHERE team_leader_id = ?
+           AND (status = 'finalizado' OR date < ?)`,
+        [existing.id, today]
+      ).count
+    };
+    const hasHistory = Object.values(historyCounts).some((count) => Number(count || 0) > 0);
+    const documentFiles = all("SELECT * FROM documents WHERE employee_id = ?", [existing.id])
+      .map((document) => documentFilePath(document))
+      .filter(Boolean);
+    const result = {
+      deletedEmployeeId: existing.id,
+      archived: hasHistory,
+      futureAssignmentsRemoved: futureAssignments.length,
+      futureLeaderEventsCleared: futureLeaderEvents.length,
+      historyCounts
+    };
+    transaction(() => {
+      for (const assignment of futureAssignments) {
+        run("DELETE FROM assignments WHERE id = ?", [assignment.id]);
+      }
+      if (affectedEventIds.length) {
+        run(
+          `DELETE FROM allowances
+           WHERE employee_id = ?
+             AND event_id IN (${affectedEventIds.map(() => "?").join(",")})`,
+          [existing.id, ...affectedEventIds]
+        );
+      }
+      run(
+        `UPDATE events
+         SET team_leader_id = NULL
+         WHERE team_leader_id = ?
+           AND status != 'finalizado'
+           AND date >= ?`,
+        [existing.id, today]
+      );
+
+      if (existing.user_id) {
+        run("DELETE FROM sessions WHERE user_id = ?", [existing.user_id]);
+        run("UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND used_at IS NULL", [
+          existing.user_id
+        ]);
+      }
+
+      if (hasHistory) {
+        if (existing.user_id) {
+          run("UPDATE users SET email = NULL, phone = NULL, active = 0 WHERE id = ?", [existing.user_id]);
+        }
+        run("UPDATE employees SET status = 'eliminado', archived_at = CURRENT_TIMESTAMP WHERE id = ?", [existing.id]);
+        audit(user, "employee_archived", "employee", existing.id, {
+          name: existing.name,
+          ...result
+        });
+      } else {
+        audit(user, "employee_deleted", "employee", existing.id, {
+          name: existing.name,
+          userId: existing.user_id || "",
+          documents: documentFiles.length,
+          ...result
+        });
+        run("DELETE FROM employees WHERE id = ?", [existing.id]);
+        if (existing.user_id) run("DELETE FROM users WHERE id = ?", [existing.user_id]);
+      }
+    });
+    for (const eventId of affectedEventIds) updateEventStatus(eventId);
+    if (!hasHistory) {
+      for (const filePath of documentFiles) removeDocumentStorageFile(filePath);
+    }
+    return sendJson(res, 200, { ok: true, ...result });
   }
 
   if (pathname === "/api/assignments" && method === "POST") {

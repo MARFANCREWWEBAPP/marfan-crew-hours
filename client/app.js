@@ -900,9 +900,12 @@ function auditActionLabel(action) {
     event_deleted: "Evento eliminado",
     client_created: "Cliente creado",
     client_updated: "Cliente actualizado",
+    client_archived: "Cliente eliminado con historico",
     client_deleted: "Cliente eliminado",
     employee_created: "Operario creado",
     employee_updated: "Operario actualizado",
+    employee_archived: "Operario eliminado con historico",
+    employee_deleted: "Operario eliminado",
     assignment_created: "Asignacion creada",
     assignment_updated: "Asignacion actualizada",
     assignment_deleted: "Asignacion eliminada",
@@ -1745,7 +1748,7 @@ function clientDetail(client) {
       <div class="inspector-section">
         <h3>Observaciones</h3>
         <p class="muted">${esc(client.notes || "Sin observaciones")}</p>
-        <button class="btn red-outline full" data-delete-client="${client.id}" ${metrics.events.length ? "disabled" : ""}>Eliminar cliente</button>
+        <button class="btn red-outline full" data-delete-client="${client.id}">${icon("trash")} Eliminar cliente</button>
       </div>
     </aside>
   `;
@@ -1768,6 +1771,7 @@ function clientEditForm(client) {
       <div class="field"><label>Provincia</label><input name="province" value="${esc(client.province || "")}" /></div>
       <div class="field"><label>Observaciones</label><textarea name="notes">${esc(client.notes || "")}</textarea></div>
       <button class="btn primary full" type="submit">${icon("check")} Guardar cliente</button>
+      <button class="btn red-outline full" type="button" data-delete-client="${client.id}">${icon("trash")} Eliminar cliente</button>
     </form>
   `;
 }
@@ -1971,6 +1975,9 @@ function employeeDetail(employee) {
       <div class="inspector-section">
         ${employee.role === "Jefe de equipo" ? `<span class="tag green">Jefe de equipo</span>` : `<button class="btn full" data-promote-leader="${employee.id}">${icon("hardhat")} Asignar jefe de equipo</button>`}
       </div>
+      <div class="inspector-section">
+        <button class="btn red-outline full" data-delete-employee="${employee.id}">${icon("trash")} Eliminar operario</button>
+      </div>
     </aside>
   `;
 }
@@ -2049,6 +2056,7 @@ function employeeEditForm(employee) {
       <div class="field"><label>Contacto emergencia</label><input name="emergencyContact" value="${esc(employee.emergency_contact || "")}" /></div>
       <div class="field"><label>Notas</label><textarea name="notes">${esc(employee.notes || "")}</textarea></div>
       <button class="btn primary full" type="submit">${icon("check")} Guardar operario</button>
+      <button class="btn red-outline full" type="button" data-delete-employee="${employee.id}">${icon("trash")} Eliminar operario</button>
     </form>
   `;
 }
@@ -4364,10 +4372,15 @@ async function handleClick(event) {
   }
 
   if (target.dataset.deleteClient) {
-    await api(`/api/clients/${target.dataset.deleteClient}`, { method: "DELETE" });
+    const client = (state.data.clients || []).find((item) => item.id === target.dataset.deleteClient);
+    const confirmation = window.prompt(`Para eliminar "${client?.name || "este cliente"}", escribe ELIMINAR`);
+    if (confirmation !== "ELIMINAR") {
+      return toast("Eliminacion cancelada");
+    }
+    const result = await api(`/api/clients/${target.dataset.deleteClient}`, { method: "DELETE" });
     state.selectedClientId = null;
     state.editClientId = null;
-    toast("Cliente eliminado");
+    toast(result.archived ? "Cliente eliminado del menu. Historico conservado." : "Cliente eliminado");
     return renderAdmin(true);
   }
 
@@ -4386,6 +4399,19 @@ async function handleClick(event) {
   if (target.dataset.cancelEditEmployee !== undefined) {
     state.editEmployeeId = null;
     return renderAdmin();
+  }
+
+  if (target.dataset.deleteEmployee) {
+    const employee = (state.data.employees || []).find((item) => item.id === target.dataset.deleteEmployee);
+    const confirmation = window.prompt(`Para eliminar "${employee?.name || "este operario"}", escribe ELIMINAR`);
+    if (confirmation !== "ELIMINAR") {
+      return toast("Eliminacion cancelada");
+    }
+    const result = await api(`/api/employees/${target.dataset.deleteEmployee}`, { method: "DELETE" });
+    state.selectedEmployeeId = null;
+    state.editEmployeeId = null;
+    toast(result.archived ? "Operario eliminado del menu. Historico conservado." : "Operario eliminado");
+    return renderAdmin(true);
   }
 
   if (target.dataset.editEvent) {
