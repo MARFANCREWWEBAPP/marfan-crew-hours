@@ -293,16 +293,7 @@ function renderLogin() {
   root.innerHTML = `
     <main class="login-page">
       <section class="login-brand">
-        <div>
-          ${brand()}
-          <h1>Controla toda la operacion en menos de 30 segundos</h1>
-          <p>Eventos, operarios, fichajes, documentacion, rentabilidad y backups en una sola plataforma creada para personal auxiliar de eventos.</p>
-        </div>
-        <div class="login-proof">
-          <div class="proof-item"><strong>Live</strong><span>Centro operativo</span></div>
-          <div class="proof-item"><strong>GPS</strong><span>Fichaje seguro</span></div>
-          <div class="proof-item"><strong>A4</strong><span>Albaran por evento</span></div>
-        </div>
+        ${loginIdentity()}
       </section>
       <section class="login-panel">
         <form class="login-card" data-form="login">
@@ -335,6 +326,21 @@ function renderLogin() {
     </main>
   `;
   queueMicrotask(() => window.scrollTo(0, 0));
+}
+
+function loginIdentity() {
+  return `
+    <div class="login-identity">
+      <div class="login-logo-shell">
+        <img src="/assets/logo.png" alt="MARFAN CREW" />
+      </div>
+      <div>
+        <span class="login-kicker">Enterprise Crew Operations</span>
+        <h1>MARFAN CREW ERP</h1>
+        <p>Control Center</p>
+      </div>
+    </div>
+  `;
 }
 
 function recoveryPanel() {
