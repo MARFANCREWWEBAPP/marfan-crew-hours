@@ -465,10 +465,12 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
         phone: "+34 600 111 001",
         role: "Montaje",
         portalAccess: true,
-        portalPasswordMode: "phone"
+        portalPasswordMode: "phone",
+        photoDataBase64: testSignaturePngDataUrl()
       }
     });
     assert.equal(phonePasswordEmployee.status, 201);
+    assert.match(phonePasswordEmployee.json.employee.photo_url, /^data:image\/png;base64,/);
     const phonePasswordLogin = await jsonRequest(baseUrl, "/api/auth/login", {
       method: "POST",
       body: { identifier: "600111001", password: "600111001", mode: "employee" }
@@ -481,10 +483,12 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
       token,
       body: {
         portalPasswordMode: "manual",
-        portalPassword: "Manual2026"
+        portalPassword: "Manual2026",
+        photoDataBase64: testSignaturePngDataUrl()
       }
     });
     assert.equal(manualLeaderPassword.status, 200);
+    assert.match(manualLeaderPassword.json.employee.photo_url, /^data:image\/png;base64,/);
     const oldLeaderPasswordLogin = await jsonRequest(baseUrl, "/api/auth/login", {
       method: "POST",
       body: { identifier: "600111000", password: "600111000", mode: "employee" }

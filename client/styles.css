@@ -578,6 +578,40 @@ button:disabled {
   display: block;
 }
 
+.employee-name-cell,
+.employee-detail-head,
+.employee-photo-editor {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.employee-name-cell > div,
+.employee-detail-head > div {
+  min-width: 0;
+}
+
+.employee-detail-head h2 {
+  margin: 0;
+}
+
+.employee-detail-head .avatar {
+  width: 56px;
+  height: 56px;
+  font-size: 18px;
+}
+
+.employee-photo-editor {
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.employee-photo-editor .avatar {
+  width: 54px;
+  height: 54px;
+}
+
 .workspace {
   padding: 24px 28px 40px;
 }

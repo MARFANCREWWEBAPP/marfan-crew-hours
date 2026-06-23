@@ -84,6 +84,7 @@ Regla importante:
 - Si la base ya existe, no se sobrescribe.
 - Las migraciones se aplican de forma incremental.
 - Las semillas solo se crean en una instalación nueva.
+- Usuarios, contrasenas de operarios, fotos, documentos y asignaciones viven en la base persistente; actualizar el ZIP no los reemplaza.
 - Las actualizaciones de codigo no deben subir ni reemplazar `data/`, `backups/`, `tmp/`, `outputs/` ni `node_modules/`.
 - Los backups se guardan en `backups/` o en `BACKUP_DIR`, con verificacion de integridad, descarga protegida y restauracion solo para super admin. Cada copia SQLite incluye tambien los archivos subidos de documentacion RRHH para poder restaurarlos junto a la base.
 - Para preparar una restauracion hay que escribir `RESTAURAR`; antes de aplicarla se genera siempre un backup de seguridad.
@@ -148,6 +149,7 @@ Si Google muestra `redirect_uri_mismatch`, la URI autorizada en Google Cloud no 
 - Eventos con duplicado operativo de servicio, requisitos y equipo asignado validado; los efectuados quedan en solo revision y el borrado queda reservado al Super Admin
 - Clientes
 - Operarios con acceso al portal por email o telefono, contrasena manual desde oficina o telefono como usuario/contrasena sin espacios y sin `+34`
+- Fotos identificativas de operarios subidas desde admin/superadmin y visibles junto al nombre en listados y ficha
 - Asignaciones con recomendaciones y prevalidacion visible de bloqueos
 - Planificador con rol sugerido, distancia, carga reciente, disponibilidad, descanso y documentacion obligatoria por rol critico
 - Fichajes geolocalizados con secuencia entrada/salida, evidencia GPS/dispositivo, bloqueo si falta ubicacion real del recinto y trazabilidad de correcciones

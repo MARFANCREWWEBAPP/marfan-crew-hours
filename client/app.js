@@ -1878,6 +1878,8 @@ function employeeForm() {
       </div>
       <div class="field"><label>Telefono</label><input name="phone" /></div>
       <div class="field"><label>Email</label><input name="email" type="email" /></div>
+      <div class="field"><label>Foto / URL</label><input name="photoUrl" placeholder="https://..." /></div>
+      <div class="field"><label>Subir foto identificativa</label><input name="photoFile" type="file" accept="image/jpeg,image/png,image/webp" /></div>
       <div class="leader-toggle">
         <label class="toggle-row"><input name="portalAccess" type="checkbox" checked /> Crear acceso portal empleado</label>
         <small>El operario podra entrar con su telefono o email.</small>
@@ -1921,8 +1923,13 @@ function employeeDetail(employee) {
         ${statusTag(employee.status === "activo" ? "confirmado" : "pendiente")}
         <button class="btn" data-edit-employee="${employee.id}">${icon("pen")} Editar</button>
       </div>
-      <h2>${esc(employee.name)}</h2>
-      <div class="muted">${esc(employee.role)} · ${esc(employee.city || employee.province || "Sin ciudad")}</div>
+      <div class="employee-detail-head">
+        ${employeeAvatar(employee)}
+        <div>
+          <h2>${esc(employee.name)}</h2>
+          <div class="muted">${esc(employee.role)} · ${esc(employee.city || employee.province || "Sin ciudad")}</div>
+        </div>
+      </div>
       <div class="inspector-section">
         <div class="role-row"><span>Telefono</span><strong>${esc(employee.phone || "-")}</strong></div>
         <div class="role-row"><span>Email</span><strong>${esc(employee.email || "-")}</strong></div>
@@ -1963,6 +1970,7 @@ function employeeDetail(employee) {
 }
 
 function employeeEditForm(employee) {
+  const photoInputValue = /^https?:\/\//i.test(String(employee.photo_url || "")) ? employee.photo_url : "";
   return `
     <form class="panel inspector" data-form="employee-edit" data-employee-id="${employee.id}">
       <div class="row-between">
@@ -1980,6 +1988,12 @@ function employeeEditForm(employee) {
         <div class="field"><label>Email</label><input name="email" type="email" value="${esc(employee.email || "")}" /></div>
         <div class="field"><label>Estado</label><select name="status"><option value="activo" ${employee.status === "activo" ? "selected" : ""}>Activo</option><option value="bloqueado" ${employee.status !== "activo" ? "selected" : ""}>Bloqueado</option></select></div>
         <div class="field"><label>Ciudad</label><input name="city" value="${esc(employee.city || "")}" /></div>
+      </div>
+      <div class="leader-toggle employee-photo-editor">
+        ${employeeAvatar(employee)}
+        <div class="field"><label>Foto / URL</label><input name="photoUrl" value="${esc(photoInputValue)}" placeholder="https://..." /></div>
+        <div class="field"><label>Subir nueva foto</label><input name="photoFile" type="file" accept="image/jpeg,image/png,image/webp" /></div>
+        <small>La foto subida queda guardada con la ficha del operario y aparece en listados.</small>
       </div>
       ${employee.user_id ? `
         <div class="leader-toggle"><span class="tag green">Portal empleado activo</span><small>El acceso se sincroniza con nombre, email, telefono y estado.</small></div>
@@ -2048,7 +2062,7 @@ function employeesView() {
           <table class="data-table">
             <thead><tr><th>Operario</th><th>Rol</th><th>Telefono</th><th>Tarifa</th><th>Tallaje</th><th>Skills</th><th>Portal</th><th>Estado</th><th></th></tr></thead>
             <tbody>
-              ${state.data.employees.map((employee) => `<tr><td><strong>${esc(employee.name)}</strong><br /><small class="muted">${esc(employee.email || employee.dni || "")}</small></td><td>${esc(employee.role)}</td><td>${esc(employee.phone)}</td><td>${money(employee.hourly_rate)}/h</td><td><small>Camiseta ${esc(employee.shirt_size || "-")} · Pantalon ${esc(employee.pants_size || "-")} · Zapato ${esc(employee.shoe_size || "-")}</small></td><td>${employee.skills.slice(0, 3).map((skill) => `<span class="tag blue">${esc(skill)}</span>`).join(" ")}</td><td>${employee.user_id ? `<span class="tag green">Activo</span>` : `<span class="tag amber">Pendiente</span>`}</td><td>${statusTag(employee.status === "activo" ? "confirmado" : "pendiente")}</td><td><button class="btn" data-select-employee="${employee.id}">${icon("search")} Ver</button></td></tr>`).join("")}
+              ${state.data.employees.map((employee) => `<tr><td><div class="employee-name-cell">${employeeAvatar(employee)}<div><strong>${esc(employee.name)}</strong><br /><small class="muted">${esc(employee.email || employee.dni || "")}</small></div></div></td><td>${esc(employee.role)}</td><td>${esc(employee.phone)}</td><td>${money(employee.hourly_rate)}/h</td><td><small>Camiseta ${esc(employee.shirt_size || "-")} · Pantalon ${esc(employee.pants_size || "-")} · Zapato ${esc(employee.shoe_size || "-")}</small></td><td>${employee.skills.slice(0, 3).map((skill) => `<span class="tag blue">${esc(skill)}</span>`).join(" ")}</td><td>${employee.user_id ? `<span class="tag green">Activo</span>` : `<span class="tag amber">Pendiente</span>`}</td><td>${statusTag(employee.status === "activo" ? "confirmado" : "pendiente")}</td><td><button class="btn" data-select-employee="${employee.id}">${icon("search")} Ver</button></td></tr>`).join("")}
             </tbody>
           </table>
         </div>
@@ -3789,6 +3803,20 @@ function readFileText(file) {
   });
 }
 
+async function employeeAdminPayload(form) {
+  const data = new FormData(form);
+  const body = formData(form);
+  const photoPayload = await readFilePayload(data.get("photoFile"));
+  delete body.photoFile;
+  if (!body.photoUrl) delete body.photoUrl;
+  if (photoPayload.fileDataBase64) {
+    body.photoDataBase64 = photoPayload.fileDataBase64;
+    body.photoMime = photoPayload.fileMime;
+    body.photoSize = photoPayload.fileSize;
+  }
+  return body;
+}
+
 async function submitDocument(form) {
   const data = new FormData(form);
   const filePayload = await readFilePayload(data.get("file"));
@@ -3947,7 +3975,7 @@ async function handleSubmit(event) {
       await renderAdmin(true);
     }
     if (type === "employee") {
-      const body = formData(form);
+      const body = await employeeAdminPayload(form);
       body.skills = String(body.skills || "").split(",").map((item) => item.trim()).filter(Boolean);
       body.teamLeader = Boolean(form.querySelector("[name=teamLeader]")?.checked);
       body.portalAccess = Boolean(form.querySelector("[name=portalAccess]")?.checked);
@@ -3960,7 +3988,7 @@ async function handleSubmit(event) {
       await renderAdmin(true);
     }
     if (type === "employee-edit") {
-      const body = formData(form);
+      const body = await employeeAdminPayload(form);
       body.skills = String(body.skills || "").split(",").map((item) => item.trim()).filter(Boolean);
       body.teamLeader = Boolean(form.querySelector("[name=teamLeader]")?.checked);
       body.portalAccess = Boolean(form.querySelector("[name=portalAccess]")?.checked);

@@ -6788,6 +6788,7 @@ async function handleApi(req, res, url) {
     validateAdminEmployeeContact({ employeeId: id, email, phone, requireContact: wantsPortal });
     let portal = { userId: null, created: false };
     const portalPassword = wantsPortal ? employeePortalPasswordForCreate(body, phone) : null;
+    const photoUrl = normalizeProfilePhoto(body, "");
     transaction(() => {
       if (wantsPortal) {
         portal = ensureEmployeePortalUser({
@@ -6799,10 +6800,10 @@ async function handleApi(req, res, url) {
       }
       run(
         `INSERT INTO employees
-          (id, user_id, name, role, phone, email, city, lat, lng, hourly_rate, km_rate, diet_rate, skills, notes,
+          (id, user_id, name, role, phone, email, city, lat, lng, hourly_rate, km_rate, diet_rate, skills, photo_url, notes,
            dni, social_security_number, bank_account, address, province, postal_code, birth_date,
            shirt_size, pants_size, shoe_size, jacket_size, epi_size, emergency_contact)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           portal.userId,
@@ -6817,6 +6818,7 @@ async function handleApi(req, res, url) {
           Number(body.kmRate || 0.24),
           Number(body.dietRate || 0),
           JSON.stringify(skills),
+          photoUrl,
           body.notes || "",
           body.dni || null,
           body.socialSecurityNumber || null,
@@ -6840,7 +6842,8 @@ async function handleApi(req, res, url) {
         phone: phone || "",
         portalUserId: portal.userId,
         portalUserCreated: portal.created,
-        portalPasswordMode: portalPassword?.mode || ""
+        portalPasswordMode: portalPassword?.mode || "",
+        photoChanged: Boolean(photoUrl)
       });
     });
     return sendJson(res, 201, {
@@ -6876,6 +6879,9 @@ async function handleApi(req, res, url) {
     const portalCredentials = existing.user_id && portalPassword
       ? hashPassword(portalPassword.password)
       : null;
+    const photoUrl = body.photoDataBase64 || body.photoUrl !== undefined
+      ? normalizeProfilePhoto(body, existing.photo_url)
+      : existing.photo_url;
     transaction(() => {
       if (existing.user_id) {
         run(
@@ -6911,7 +6917,7 @@ async function handleApi(req, res, url) {
       run(
         `UPDATE employees
        SET user_id = ?, name = ?, role = ?, phone = ?, email = ?, status = ?, city = ?, lat = ?, lng = ?,
-           hourly_rate = ?, km_rate = ?, diet_rate = ?, skills = ?, notes = ?, dni = ?,
+           hourly_rate = ?, km_rate = ?, diet_rate = ?, skills = ?, photo_url = ?, notes = ?, dni = ?,
            social_security_number = ?, bank_account = ?, address = ?, province = ?, postal_code = ?,
            birth_date = ?, shirt_size = ?, pants_size = ?, shoe_size = ?, jacket_size = ?,
            epi_size = ?, emergency_contact = ?
@@ -6930,6 +6936,7 @@ async function handleApi(req, res, url) {
           Number(body.kmRate ?? existing.km_rate),
           Number(body.dietRate ?? existing.diet_rate),
           JSON.stringify(skills),
+          photoUrl,
           body.notes ?? existing.notes,
           body.dni ?? existing.dni,
           body.socialSecurityNumber ?? existing.social_security_number,
@@ -6952,6 +6959,7 @@ async function handleApi(req, res, url) {
         status: nextStatus,
         rateChanged: body.hourlyRate !== undefined || body.kmRate !== undefined || body.dietRate !== undefined,
         clothingChanged: body.shirtSize !== undefined || body.pantsSize !== undefined || body.shoeSize !== undefined,
+        photoChanged: photoUrl !== (existing.photo_url || ""),
         portalUserId: portal.userId,
         portalUserCreated: portal.created,
         portalSynced: Boolean(existing.user_id || wantsPortal),
