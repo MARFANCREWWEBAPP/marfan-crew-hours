@@ -362,6 +362,12 @@ function brand() {
   `;
 }
 
+function employeeAvatar(employee) {
+  const photo = String(employee?.photo_url || "").trim();
+  if (photo) return `<div class="avatar"><img src="${esc(photo)}" alt="${esc(employee.name || "Operario")}" /></div>`;
+  return `<div class="avatar">${initials(employee?.name || "")}</div>`;
+}
+
 async function init() {
   await loadPublicConfig();
   if (!state.token) return renderLogin();
@@ -503,7 +509,8 @@ function adminView() {
     finances: financesView,
     reports: reportsView,
     settings: settingsView,
-    backups: backupsView
+    backups: backupsView,
+    imports: importsView
   };
   return (views[state.view] || dashboardView)();
 }
@@ -774,12 +781,20 @@ function permissionSummary(user) {
   return `<span class="tag blue">${active.length}/${adminPermissionDefs.length} modulos</span>`;
 }
 
+function userRecoveryStatus(user) {
+  if (!user.recoveryPending) return "";
+  const detail = user.recoveryExpiresAt ? `<small class="muted">Caduca ${esc(shortDateTime(user.recoveryExpiresAt))}</small>` : "";
+  const count = Number(user.recoveryPendingCount || 0);
+  return `<span class="tag amber">Recuperacion pendiente${count > 1 ? ` x${count}` : ""}</span>${detail ? `<br />${detail}` : ""}`;
+}
+
 function usersView() {
   const users = state.data.users || [];
   const isSuper = state.user?.role === "super_admin";
   const activeUsers = users.filter((user) => user.active).length;
   const admins = users.filter((user) => user.role !== "employee" && user.active).length;
   const employees = users.filter((user) => user.role === "employee" && user.active).length;
+  const recoveries = users.filter((user) => user.recoveryPending).length;
   return `
     <div class="page-head">
       <div>
@@ -795,6 +810,7 @@ function usersView() {
       ${cardTemplate({ label: "Usuarios activos", value: activeUsers, hint: "Con acceso habilitado", tone: "green" })}
       ${cardTemplate({ label: "Administradores", value: admins, hint: "Gestionan la empresa", tone: "blue" })}
       ${isSuper ? cardTemplate({ label: "Empleados", value: employees, hint: "Portal operario", tone: "ink" }) : ""}
+      ${isSuper ? cardTemplate({ label: "Recuperaciones", value: recoveries, hint: "Solicitudes pendientes", tone: recoveries ? "amber" : "green" }) : ""}
       ${cardTemplate({ label: "Bloqueados", value: users.length - activeUsers, hint: "Sin acceso", tone: "red" })}
     </section>
     <section class="split-grid users-view" style="margin-top:16px">
@@ -824,12 +840,12 @@ function usersView() {
                         </form>
                       ` : permissionSummary(user)}
                     </td>
-                    <td>${user.active ? statusTag("confirmado") : `<span class="tag red">Bloqueado</span>`}</td>
+                    <td>${user.active ? statusTag("confirmado") : `<span class="tag red">Bloqueado</span>`}${userRecoveryStatus(user)}</td>
                     <td>
                       <div class="table-actions">
                         ${isSuper && user.role === "employee" ? `<button class="btn compact" data-user-role="${user.id}" data-next-role="admin">Admin</button>` : ""}
                         ${isSuper && user.role === "admin" ? `<button class="btn compact" data-user-role="${user.id}" data-next-role="employee">Empleado</button>` : ""}
-                        ${isSuper ? `<button class="btn compact" data-reset-user="${user.id}">Clave</button>` : ""}
+                        ${isSuper ? `<button class="btn compact ${user.recoveryPending ? "primary" : ""}" data-reset-user="${user.id}">${user.recoveryPending ? "Nueva clave" : "Clave"}</button>` : ""}
                         ${isSuper && !isSelf ? `<button class="btn compact ${user.active ? "red" : ""}" data-user-active="${user.id}" data-next-active="${user.active ? "false" : "true"}">${user.active ? "Bloq." : "Act."}</button>` : `<span class="muted">${isSelf ? "Tu usuario" : "Solo lectura"}</span>`}
                       </div>
                     </td>
@@ -1373,6 +1389,7 @@ function eventInspector(event) {
       ${eventStaffWarnings(event)}
     </div>
     ${eventHistoryPanel(event)}
+    ${eventDocumentsPanel(event)}
     <div class="inspector-section">
       <div class="role-row"><span>Presupuesto</span><strong>${money(event.budget)}</strong></div>
       <div class="role-row"><span>Precio servicio</span><strong>${money(event.service_price || event.budget)}</strong></div>
@@ -1395,6 +1412,33 @@ function eventInspector(event) {
       ${locked ? "" : `<button class="btn" data-google-sync-event="${event.id}">${icon("refresh")} Sincronizar Google</button>`}
       ${event.google_calendar_html_link ? `<a class="btn" href="${esc(event.google_calendar_html_link)}" target="_blank" rel="noopener">${icon("calendar")} Abrir Google</a>` : ""}
       <button class="btn">${icon("chart")} Rentabilidad</button>
+    </div>
+  `;
+}
+
+function eventDocumentsPanel(event) {
+  const docs = event.documents || [];
+  return `
+    <div class="inspector-section">
+      <div class="row-between"><h3>Documentos del evento</h3><span class="tag blue">${docs.length}</span></div>
+      <div class="event-doc-list">
+        ${docs.map((doc) => `
+          <div class="event-doc-row">
+            <div>
+              <strong>${esc(doc.type || "Documento")}</strong>
+              <small class="muted">${esc(doc.name || doc.file_name || "")}${doc.visible_to_employee ? " · visible operario" : " · interno"}</small>
+            </div>
+            ${doc.has_file ? `<button class="btn compact" type="button" data-event-document-file="${esc(doc.id)}" data-file-name="${esc(doc.file_name || doc.name || "documento")}">${icon("download")} Abrir</button>` : `<span class="muted">Sin archivo</span>`}
+          </div>
+        `).join("") || `<div class="empty compact-empty">Sin documentos de evento.</div>`}
+      </div>
+      <form class="inline-edit-form event-document-form" data-form="event-document" data-event-id="${esc(event.id)}">
+        <select name="type"><option>Operativo</option><option>Recinto</option><option>Produccion</option><option>Cliente</option><option>PRL evento</option><option>Otro</option></select>
+        <input name="name" placeholder="Nombre visible" required />
+        <input name="file" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.txt,.csv,.doc,.docx,.xls,.xlsx,application/pdf,image/jpeg,image/png,image/webp,text/plain,text/csv" />
+        <label class="toggle-row compact-toggle"><input name="visibleToEmployee" type="checkbox" checked /> Operario</label>
+        <button class="btn compact" type="submit">${icon("upload")} Subir</button>
+      </form>
     </div>
   `;
 }
@@ -1754,16 +1798,68 @@ function clientImportPanel() {
       <div class="row-between">
         <div>
           <h2>Importar clientes</h2>
-          <p class="muted">Sube CSV/TSV exportado desde Excel. Actualiza por CIF o nombre y no duplica fichas.</p>
+          <p class="muted">Sube Excel, CSV o TSV. Actualiza por CIF o nombre y no duplica fichas.</p>
         </div>
         <div class="filters-row">
-          <input name="file" type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" required />
+          <input name="file" type="file" accept=".xlsx,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/tab-separated-values" required />
           <button class="btn" type="button" data-client-template>${icon("download")} Plantilla</button>
           <button class="btn primary" type="submit">${icon("upload")} Importar</button>
         </div>
       </div>
       ${last ? `<small class="muted">Ultima carga: ${esc(last.source)} · ${esc(last.inserted)} nuevos · ${esc(last.updated)} actualizados · ${esc(last.skipped)} omitidos</small>` : ""}
     </form>
+  `;
+}
+
+function importsView() {
+  const imports = state.data.imports || [];
+  const inserted = imports.reduce((sum, item) => sum + Number(item.inserted || 0), 0);
+  const updated = imports.reduce((sum, item) => sum + Number(item.updated || 0), 0);
+  const skipped = imports.reduce((sum, item) => sum + Number(item.skipped || 0), 0);
+  const rowsRead = imports.reduce((sum, item) => sum + Number(item.rows_read || item.rowsRead || 0), 0);
+  const cards = [
+    { label: "Cargas", value: imports.length, hint: "Ultimas importaciones", tone: "blue" },
+    { label: "Filas leidas", value: rowsRead, hint: "Registros procesados", tone: "blue" },
+    { label: "Nuevos", value: inserted, hint: "Fichas creadas", tone: "green" },
+    { label: "Actualizados", value: updated, hint: `${skipped} omitidos`, tone: "amber" }
+  ];
+  return `
+    <div class="page-head">
+      <div><h1>Importaciones</h1><p>Carga datos reales de operarios y clientes desde Excel, CSV o TSV sin duplicar fichas.</p></div>
+    </div>
+    <section class="cards-grid">
+      ${cards.map(cardTemplate).join("")}
+    </section>
+    <section class="split-grid">
+      ${employeeImportPanel()}
+      ${clientImportPanel()}
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>Historial de importaciones</h2><span class="muted">${imports.length} cargas</span></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Fecha</th><th>Tipo</th><th>Archivo</th><th>Filas</th><th>Nuevos</th><th>Actualizados</th><th>Omitidos</th><th>Usuarios</th></tr></thead>
+          <tbody>
+            ${imports.map((item) => {
+              const metadata = item.metadata || {};
+              const kind = metadata.kind === "employees" ? "Operarios" : metadata.kind === "clients" ? "Clientes" : "Datos";
+              return `
+                <tr>
+                  <td>${esc(shortDateTime(item.created_at))}</td>
+                  <td>${statusTag(metadata.kind === "employees" ? "confirmado" : metadata.kind === "clients" ? "pendiente" : "finalizado")}<br /><small>${esc(kind)}</small></td>
+                  <td><strong>${esc(item.source || "-")}</strong></td>
+                  <td>${esc(item.rows_read || 0)}</td>
+                  <td>${esc(item.inserted || 0)}</td>
+                  <td>${esc(item.updated || 0)}</td>
+                  <td>${esc(item.skipped || 0)}</td>
+                  <td>${metadata.usersCreated === undefined ? "-" : esc(metadata.usersCreated)}</td>
+                </tr>
+              `;
+            }).join("") || `<tr><td colspan="8"><div class="empty">Todavia no hay importaciones registradas.</div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>
   `;
 }
 
@@ -1948,10 +2044,10 @@ function employeeImportPanel() {
       <div class="row-between">
         <div>
           <h2>Importar operarios</h2>
-          <p class="muted">Sube CSV/TSV exportado desde Excel. Actualiza por DNI, email o telefono y conserva el historico.</p>
+          <p class="muted">Sube Excel, CSV o TSV. Actualiza por DNI, email o telefono y conserva el historico.</p>
         </div>
         <div class="filters-row">
-          <input name="file" type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" required />
+          <input name="file" type="file" accept=".xlsx,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/tab-separated-values" required />
           <input name="defaultPassword" type="password" minlength="8" value="Marfan2026!" aria-label="Contrasena temporal" />
           <button class="btn" type="button" data-employee-template>${icon("download")} Plantilla</button>
           <button class="btn primary" type="submit">${icon("upload")} Importar</button>
@@ -2972,7 +3068,7 @@ function backupsView() {
             <tr>
               <td>${statusTag(backup.type === "auto" ? "confirmado" : backup.type === "safety" ? "finalizado" : "pendiente")}</td>
               <td><strong>${esc(backup.label)}</strong></td>
-              <td>${formatBytes(backup.actual_size_bytes || backup.size_bytes)}</td>
+	              <td>${formatBytes(backup.actual_size_bytes || backup.size_bytes)}<br /><small class="muted">${esc(backup.attachment_count || 0)} adjuntos · ${formatBytes(backup.attachment_bytes || 0)}</small></td>
               <td>${backupIntegrityTag(backup)}<br /><small class="muted">${esc(backup.sqlite_quick_check || backup.integrity_error || "-")}</small></td>
               <td>${esc(backup.created_at)}</td>
               <td><small class="muted">${esc(backup.sha256 ? backup.sha256.slice(0, 12) : "-")}</small></td>
@@ -3006,11 +3102,11 @@ async function renderEmployee(force = false) {
       <section class="phone-app">
         <div class="employee-hero">
           <div class="row-between">
-            ${brand()}
-            <div class="employee-actions">
-              <button class="btn ghost employee-logout" data-logout title="Cerrar sesion">${icon("logout")}</button>
-              <div class="avatar">${initials(data.employee.name)}</div>
-            </div>
+	            ${brand()}
+	            <div class="employee-actions">
+	              <button class="btn ghost employee-logout" data-logout title="Cerrar sesion">${icon("logout")}</button>
+	              ${employeeAvatar(data.employee)}
+	            </div>
           </div>
           <h1>Hola, ${esc(data.employee.name.split(" ")[0])}</h1>
           <p>${esc(data.employee.role)} · ${esc(data.employee.city || "Operaciones")}</p>
@@ -3039,6 +3135,7 @@ function employeeHomeView(data) {
   if (!service) return `<div class="mobile-card"><h2>Sin servicios proximos</h2><p class="muted">Tu calendario esta libre.</p></div>`;
   const docAlerts = data.documents.filter((doc) => doc.status !== "vigente");
   const clockMeta = employeeClockMeta(service);
+  const gpsReady = employeeServiceHasGps(service);
   return `
     <article class="service-card">
       <div class="row-between"><strong class="muted">MI PROXIMO SERVICIO</strong>${employeeServiceStatusTag(service)}</div>
@@ -3066,7 +3163,9 @@ function employeeHomeView(data) {
     <div class="quick-actions">
       ${employeeClockActionButton(service, "entrada", true)}
       ${employeeClockActionButton(service, "salida")}
-      <button data-open-maps="${service.lat},${service.lng}">${icon("map")} Abrir Maps</button>
+      ${gpsReady
+        ? `<button data-open-maps="${service.lat},${service.lng}">${icon("map")} Abrir Maps</button>`
+        : `<button disabled>${icon("map")} Maps pendiente</button>`}
       ${service.google_maps_url ? `<button data-open-url="${esc(service.google_maps_url)}">${icon("map")} Recinto</button>` : ""}
       <button data-call-office="${esc(data.office?.phone || "")}">${icon("phone")} Llamar oficina</button>
       <button data-whatsapp="${esc(data.office?.whatsapp || data.office?.phone || "")}">${icon("message")} WhatsApp</button>
@@ -3093,6 +3192,18 @@ function employeeHomeView(data) {
 	    </form>
 	  `;
 	}
+
+function employeeServiceHasGps(service) {
+  const lat = Number(service?.lat);
+  const lng = Number(service?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  if (Math.abs(lat) < 0.000001 && Math.abs(lng) < 0.000001) return false;
+  const source = String(service?.location_source || "").toLowerCase();
+  if (source === "base_fallback") return false;
+  const locationText = `${service?.location || ""} ${service?.address || ""}`.toLowerCase();
+  if (!source && locationText.includes("ubicacion pendiente")) return false;
+  return true;
+}
 
 function employeeChecklistCard(service) {
   const checklist = service.checklist || { completed: 0, total: 0, percent: 0, items: [] };
@@ -3208,11 +3319,12 @@ function employeeTabView(data) {
       <div class="mobile-card">
         <h2>Mi historico</h2>
         <div class="history-grid">
-          <div><span>Horas</span><strong>${esc(history.hours || 0)}</strong></div>
-          <div><span>Eventos</span><strong>${esc(history.events_done || 0)}</strong></div>
-          <div><span>Kilometros</span><strong>${esc(history.km || 0)} km</strong></div>
-          <div><span>Nocturnidad</span><strong>${esc(history.night_hours || 0)} h</strong></div>
-        </div>
+	          <div><span>Horas</span><strong>${esc(history.hours || 0)}</strong></div>
+	          <div><span>Eventos</span><strong>${esc(history.events_done || 0)}</strong></div>
+	          <div><span>Kilometros</span><strong>${esc(history.km || 0)} km</strong></div>
+	          <div><span>Dietas</span><strong>${money(history.dietas || 0)}</strong></div>
+	          <div><span>Nocturnidad</span><strong>${esc(history.night_hours || 0)} h</strong></div>
+	        </div>
         <div class="inspector-section">
           <div class="role-row"><span>Fichajes aceptados</span><strong>${esc(history.entries || 0)}</strong></div>
           <div class="role-row"><span>Incidencias</span><strong>${esc(history.incidents || 0)}</strong></div>
@@ -3257,12 +3369,13 @@ function employeeTabView(data) {
     <form class="mobile-card" data-form="profile">
       <h2>Perfil</h2>
       <div class="role-row"><span>Rol</span><strong>${esc(data.employee.role)}</strong></div>
-      <div class="role-row"><span>Tallaje</span><strong>${esc(data.employee.shirt_size || "-")} / ${esc(data.employee.pants_size || "-")} / ${esc(data.employee.shoe_size || "-")}</strong></div>
-      <div class="field"><label>Telefono</label><input name="phone" value="${esc(data.employee.phone || "")}" /></div>
-      <div class="field"><label>Email</label><input name="email" type="email" value="${esc(data.employee.email || "")}" /></div>
-      <div class="field"><label>Foto / URL</label><input name="photoUrl" value="${esc(data.employee.photo_url || "")}" /></div>
-      <div class="field"><label>Nueva contrasena</label><input name="password" type="password" placeholder="Dejar vacio para no cambiar" /></div>
-      <button class="btn primary full" type="submit">${icon("user")} Guardar perfil</button>
+	      <div class="role-row"><span>Tallaje</span><strong>${esc(data.employee.shirt_size || "-")} / ${esc(data.employee.pants_size || "-")} / ${esc(data.employee.shoe_size || "-")}</strong></div>
+	      <div class="field"><label>Telefono</label><input name="phone" value="${esc(data.employee.phone || "")}" /></div>
+	      <div class="field"><label>Email</label><input name="email" type="email" value="${esc(data.employee.email || "")}" /></div>
+	      <div class="field"><label>Foto / URL</label><input name="photoUrl" value="${esc(data.employee.photo_url || "")}" placeholder="https://..." /></div>
+	      <div class="field"><label>Subir foto</label><input name="photoFile" type="file" accept="image/jpeg,image/png,image/webp" /></div>
+	      <div class="field"><label>Nueva contrasena</label><input name="password" type="password" placeholder="Dejar vacio para no cambiar" /></div>
+	      <button class="btn primary full" type="submit">${icon("user")} Guardar perfil</button>
     </form>
   `;
 }
@@ -3410,6 +3523,7 @@ function moveEmployeeServiceCalendar(direction) {
 
 function employeeDocumentsView(data) {
   const docs = data.documents || [];
+  const eventDocs = data.eventDocuments || [];
   const blockers = docs.filter((doc) => ["caducado", "pendiente"].includes(doc.status)).length;
   const soon = docs.filter((doc) => doc.status === "proximo").length;
   const files = docs.filter((doc) => doc.has_file).length;
@@ -3443,6 +3557,22 @@ function employeeDocumentsView(data) {
           </div>
         `).join("") || `<div class="empty">Sin documentos registrados.</div>`}
       </div>
+      ${eventDocs.length ? `
+        <h3>Documentos del servicio</h3>
+        <div class="mobile-list">
+          ${eventDocs.map((doc) => `
+            <div class="mobile-list-item document-list-item">
+              <div>
+                <strong>${esc(doc.type || "Documento")}</strong>
+                <small class="muted">${esc(doc.name || doc.file_name || "")} · ${esc(doc.event_name || "Servicio")}</small>
+              </div>
+              <div class="doc-actions">
+                ${doc.has_file ? `<button class="btn compact" type="button" data-event-document-file="${esc(doc.id)}" data-file-name="${esc(doc.file_name || doc.name || "documento")}">${icon("download")} Abrir</button>` : `<span class="muted">Sin archivo</span>`}
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
       <form class="inspector-section" data-form="employee-document">
         <h3>Subir documento</h3>
         <div class="field"><label>Tipo</label><select name="type"><option>DNI</option><option>PRL</option><option>Contrato</option><option>Certificado</option><option>EPI</option><option>Otro</option></select></div>
@@ -3630,7 +3760,7 @@ function readFilePayload(file) {
 
 function readFileText(file) {
   return new Promise((resolve, reject) => {
-    if (!file || !file.size) return reject(new Error("Selecciona un archivo CSV"));
+    if (!file || !file.size) return reject(new Error("Selecciona un archivo CSV, TSV o Excel"));
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ""));
     reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
@@ -3654,6 +3784,21 @@ async function submitDocument(form) {
   });
 }
 
+async function submitEventDocument(form) {
+  const data = new FormData(form);
+  const filePayload = await readFilePayload(data.get("file"));
+  await api(`/api/events/${encodeURIComponent(form.dataset.eventId)}/documents`, {
+    method: "POST",
+    body: {
+      type: data.get("type"),
+      name: data.get("name"),
+      notes: data.get("notes"),
+      visibleToEmployee: Boolean(form.querySelector("[name=visibleToEmployee]")?.checked),
+      ...filePayload
+    }
+  });
+}
+
 async function submitEmployeeDocument(form) {
   const data = new FormData(form);
   const filePayload = await readFilePayload(data.get("file"));
@@ -3665,18 +3810,41 @@ async function submitEmployeeDocument(form) {
       expiresAt: data.get("expiresAt"),
       ...filePayload
     }
-  });
+	  });
+}
+
+async function submitEmployeeProfile(form) {
+  const data = new FormData(form);
+  const body = {
+    phone: data.get("phone"),
+    email: data.get("email"),
+    photoUrl: data.get("photoUrl"),
+    password: data.get("password")
+  };
+  if (!body.password) delete body.password;
+  const photoPayload = await readFilePayload(data.get("photoFile"));
+  if (photoPayload.fileDataBase64) {
+    body.photoDataBase64 = photoPayload.fileDataBase64;
+    body.photoMime = photoPayload.fileMime;
+    body.photoSize = photoPayload.fileSize;
+  }
+  await api("/api/employee/profile", { method: "PATCH", body });
 }
 
 async function submitCsvImport(form, kind) {
   const data = new FormData(form);
   const file = data.get("file");
-  const fileText = await readFileText(file);
+  if (!file || !file.size) throw new Error("Selecciona un archivo CSV, TSV o Excel");
+  const isExcel = /\.xlsx$/i.test(file.name || "") || file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  const filePayload = isExcel ? await readFilePayload(file) : {};
+  const fileText = isExcel ? "" : await readFileText(file);
   return api(`/api/imports/${kind}`, {
     method: "POST",
     body: {
       fileName: file.name,
+      fileMime: file.type || (isExcel ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv"),
       fileText,
+      fileDataBase64: filePayload.fileDataBase64 || "",
       defaultPassword: data.get("defaultPassword") || "Marfan2026!"
     }
   });
@@ -3842,6 +4010,11 @@ async function handleSubmit(event) {
       toast("Documento guardado");
       await renderAdmin(true);
     }
+    if (type === "event-document") {
+      await submitEventDocument(form);
+      toast("Documento de evento guardado");
+      await openEvent(form.dataset.eventId);
+    }
     if (type === "document-review") {
       await api(`/api/documents/${encodeURIComponent(form.dataset.documentId)}`, {
         method: "PATCH",
@@ -3906,14 +4079,12 @@ async function handleSubmit(event) {
       state.employeeHome = null;
       toast("Incidencia enviada a oficina");
       await renderEmployee(true);
-    }
-    if (type === "profile") {
-      const body = formData(form);
-      if (!body.password) delete body.password;
-      await api("/api/employee/profile", { method: "PATCH", body });
-      toast("Perfil actualizado");
-      state.employeeHome = null;
-      await renderEmployee(true);
+	    }
+	    if (type === "profile") {
+	      await submitEmployeeProfile(form);
+	      toast("Perfil actualizado");
+	      state.employeeHome = null;
+	      await renderEmployee(true);
     }
   } catch (error) {
     const firstIssue = error.payload?.issues?.[0]?.message;
@@ -3939,7 +4110,12 @@ async function handleClick(event) {
 
   if (target.dataset.recover !== undefined) {
     const form = target.closest("form");
-    const identifier = form?.querySelector("[name=identifier]")?.value || "";
+    const input = form?.querySelector("[name=identifier]");
+    const identifier = input?.value.trim() || "";
+    if (!identifier) {
+      input?.focus();
+      return toast("Escribe tu email o telefono para recuperar la contrasena", "error");
+    }
     const result = await api("/api/auth/recover", { method: "POST", body: { identifier } });
     state.recoveryCode = result.recoveryCode || "";
     state.showReset = Boolean(result.recoveryCode);
@@ -4409,6 +4585,10 @@ async function handleClick(event) {
     return openDocumentFile(target.dataset.documentFile, target.dataset.fileName || "documento");
   }
 
+  if (target.dataset.eventDocumentFile) {
+    return openEventDocumentFile(target.dataset.eventDocumentFile, target.dataset.fileName || "documento");
+  }
+
   if (target.dataset.employeeTemplate !== undefined) {
     const csv = await api("/api/imports/templates/employees");
     return download("plantilla-operarios-marfan.csv", csv, "text/csv");
@@ -4755,6 +4935,21 @@ function downloadBlob(filename, blob) {
 
 async function openDocumentFile(documentId, fileName) {
   const response = await fetch(`/api/documents/${encodeURIComponent(documentId)}/file`, {
+    headers: { authorization: `Bearer ${state.token}` }
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || "Archivo no disponible");
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank", "noopener");
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  if (blob.type === "application/octet-stream") downloadBlob(fileName, blob);
+}
+
+async function openEventDocumentFile(documentId, fileName) {
+  const response = await fetch(`/api/event-documents/${encodeURIComponent(documentId)}/file`, {
     headers: { authorization: `Bearer ${state.token}` }
   });
   if (!response.ok) {

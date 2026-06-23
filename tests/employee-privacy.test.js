@@ -89,12 +89,16 @@ test("employee portal API never exposes internal economic fields", async () => {
     });
     assert.equal(home.status, 200);
     const payload = await home.json();
-    assert.equal(payload.office.phone, "+34910000000");
-    assert.ok(payload.nextService.checklist.total >= 5);
-    assert.equal(payload.nextService.checklist.items.some((item) => item.key === "documents"), true);
-    assert.equal(payload.nextService.checklist.items.some((item) => item.key === "location" && item.status === "done"), true);
+	    assert.equal(payload.office.phone, "+34910000000");
+	    const nextServiceId = payload.nextService.id;
+	    assert.ok(payload.nextService.checklist.total >= 5);
+	    assert.equal(payload.nextService.checklist.items.some((item) => item.key === "documents"), true);
+	    assert.equal(payload.nextService.checklist.items.some((item) => item.key === "location" && item.status === "done"), true);
+	    assert.equal(payload.history.km, 12);
+	    assert.equal(payload.history.dietas, 12);
+	    assert.equal(payload.history.night_hours, 1.5);
 
-    const employeeDocument = await fetch(`${baseUrl}/api/employee/documents`, {
+	    const employeeDocument = await fetch(`${baseUrl}/api/employee/documents`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -141,23 +145,24 @@ test("employee portal API never exposes internal economic fields", async () => {
     const invalidEmployeeDocumentPayload = await invalidEmployeeDocument.json();
     assert.match(invalidEmployeeDocumentPayload.error, /Archivo no valido/);
 
-    const profileUpdate = await fetch(`${baseUrl}/api/employee/profile`, {
-      method: "PATCH",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        phone: "+34600999999",
-        email: "empleado.actualizado@marfancrew.test",
-        photoUrl: "https://marfancrew.test/avatar.png",
-        password: "empleado456"
-      })
-    });
-    assert.equal(profileUpdate.status, 200);
-    const profilePayload = await profileUpdate.json();
-    assert.equal(profilePayload.employee.phone, "+34600999999");
-    assert.equal(profilePayload.employee.email, "empleado.actualizado@marfancrew.test");
+	    const profileUpdate = await fetch(`${baseUrl}/api/employee/profile`, {
+	      method: "PATCH",
+	      headers: {
+	        "content-type": "application/json",
+	        authorization: `Bearer ${token}`
+	      },
+	      body: JSON.stringify({
+	        phone: "+34600999999",
+	        email: "empleado.actualizado@marfancrew.test",
+	        photoDataBase64: `data:image/png;base64,${Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64")}`,
+	        password: "empleado456"
+	      })
+	    });
+	    assert.equal(profileUpdate.status, 200);
+	    const profilePayload = await profileUpdate.json();
+	    assert.equal(profilePayload.employee.phone, "+34600999999");
+	    assert.equal(profilePayload.employee.email, "empleado.actualizado@marfancrew.test");
+	    assert.match(profilePayload.employee.photo_url, /^data:image\/png;base64,/);
 
     const oldProfileSession = await fetch(`${baseUrl}/api/employee/home`, {
       headers: { authorization: `Bearer ${token}` }
@@ -256,6 +261,69 @@ test("employee portal API never exposes internal economic fields", async () => {
     });
     assert.equal(adminLogin.status, 200);
     const { token: adminToken } = await adminLogin.json();
+
+    const visibleEventDocument = await fetch(`${baseUrl}/api/events/${nextServiceId}/documents`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${adminToken}`
+      },
+      body: JSON.stringify({
+        type: "Recinto",
+        name: "Plano acceso operarios",
+        visibleToEmployee: true,
+        fileName: "plano-acceso.txt",
+        fileMime: "text/plain",
+        fileDataBase64: Buffer.from("PLANO ACCESO OK").toString("base64")
+      })
+    });
+    assert.equal(visibleEventDocument.status, 201);
+    const visibleEventDocumentPayload = await visibleEventDocument.json();
+    assert.equal(visibleEventDocumentPayload.document.event_id, nextServiceId);
+    assert.equal(visibleEventDocumentPayload.document.has_file, 1);
+
+    const internalEventDocument = await fetch(`${baseUrl}/api/events/${nextServiceId}/documents`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${adminToken}`
+      },
+      body: JSON.stringify({
+        type: "Cliente",
+        name: "Brief interno cliente",
+        visibleToEmployee: false,
+        fileName: "brief-interno.txt",
+        fileMime: "text/plain",
+        fileDataBase64: Buffer.from("BRIEF INTERNO").toString("base64")
+      })
+    });
+    assert.equal(internalEventDocument.status, 201);
+    const internalEventDocumentPayload = await internalEventDocument.json();
+
+    const assignedEventDocumentFile = await fetch(`${baseUrl}/api/event-documents/${visibleEventDocumentPayload.document.id}/file`, {
+      headers: { authorization: `Bearer ${profileToken}` }
+    });
+    assert.equal(assignedEventDocumentFile.status, 200);
+    assert.equal(await assignedEventDocumentFile.text(), "PLANO ACCESO OK");
+
+    const forbiddenInternalEventDocument = await fetch(`${baseUrl}/api/event-documents/${internalEventDocumentPayload.document.id}/file`, {
+      headers: { authorization: `Bearer ${profileToken}` }
+    });
+    assert.equal(forbiddenInternalEventDocument.status, 403);
+
+    const homeWithEventDocuments = await fetch(`${baseUrl}/api/employee/home`, {
+      headers: { authorization: `Bearer ${profileToken}` }
+    });
+    assert.equal(homeWithEventDocuments.status, 200);
+    const homeWithEventDocumentsPayload = await homeWithEventDocuments.json();
+    assert.equal(homeWithEventDocumentsPayload.eventDocuments.some((document) =>
+      document.id === visibleEventDocumentPayload.document.id &&
+      document.name === "Plano acceso operarios" &&
+      document.has_file === 1
+    ), true);
+    assert.equal(homeWithEventDocumentsPayload.eventDocuments.some((document) =>
+      document.id === internalEventDocumentPayload.document.id
+    ), false);
 
     const coworkerDocument = await fetch(`${baseUrl}/api/documents`, {
       method: "POST",

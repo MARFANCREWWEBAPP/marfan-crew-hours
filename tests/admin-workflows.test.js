@@ -105,6 +105,77 @@ function testSignaturePngDataUrl() {
   return `data:image/png;base64,${png.toString("base64")}`;
 }
 
+function xmlEscape(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function xlsxColumnName(index) {
+  let value = "";
+  let current = index + 1;
+  while (current > 0) {
+    const remainder = (current - 1) % 26;
+    value = String.fromCharCode(65 + remainder) + value;
+    current = Math.floor((current - 1) / 26);
+  }
+  return value;
+}
+
+function minimalXlsxBuffer(rows) {
+  const sheetRows = rows.map((row, rowIndex) => {
+    const cells = row.map((cell, columnIndex) => {
+      const ref = `${xlsxColumnName(columnIndex)}${rowIndex + 1}`;
+      return `<c r="${ref}" t="inlineStr"><is><t>${xmlEscape(cell)}</t></is></c>`;
+    }).join("");
+    return `<row r="${rowIndex + 1}">${cells}</row>`;
+  }).join("");
+  const files = {
+    "[Content_Types].xml": `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`,
+    "_rels/.rels": `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+    "xl/workbook.xml": `<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Datos" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+    "xl/_rels/workbook.xml.rels": `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+    "xl/worksheets/sheet1.xml": `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRows}</sheetData></worksheet>`
+  };
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+  for (const [name, xml] of Object.entries(files)) {
+    const nameBuffer = Buffer.from(name);
+    const data = Buffer.from(xml);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(nameBuffer.length, 26);
+    localParts.push(local, nameBuffer, data);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(nameBuffer.length, 28);
+    central.writeUInt32LE(offset, 42);
+    centralParts.push(central, nameBuffer);
+    offset += local.length + nameBuffer.length + data.length;
+  }
+  const centralDirectory = Buffer.concat(centralParts);
+  const end = Buffer.alloc(22);
+  const fileCount = Object.keys(files).length;
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(fileCount, 8);
+  end.writeUInt16LE(fileCount, 10);
+  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...localParts, centralDirectory, end]);
+}
+
 test("admin users, team leaders and performed-event assignment locks work", async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "marfan-admin-workflows-"));
   const port = await freePort();
@@ -191,12 +262,41 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     const superLogin = await jsonRequest(baseUrl, "/api/auth/login", {
       method: "POST",
       body: { identifier: "super@marfancrew.test", password: "super123", mode: "admin" }
-    });
-    assert.equal(superLogin.status, 200);
-    const superToken = superLogin.json.token;
+	    });
+	    assert.equal(superLogin.status, 200);
+	    const superToken = superLogin.json.token;
 
-    const restrictedAdmin = await jsonRequest(baseUrl, "/api/users", {
-      method: "POST",
+	    const recoveryRequest = await jsonRequest(baseUrl, "/api/auth/recover", {
+	      method: "POST",
+	      body: { identifier: "coordinador@marfancrew.test" }
+	    });
+	    assert.equal(recoveryRequest.status, 200);
+	    assert.equal(recoveryRequest.json.recoveryCode, undefined);
+
+	    const usersWithRecovery = await jsonRequest(baseUrl, "/api/users", { token: superToken });
+	    assert.equal(usersWithRecovery.status, 200);
+	    const coordinatorRecovery = usersWithRecovery.json.users.find((item) => item.id === createdAdmin.json.user.id);
+	    assert.equal(coordinatorRecovery.recoveryPending, true);
+	    assert.equal(coordinatorRecovery.recoveryPendingCount, 1);
+	    assert.ok(coordinatorRecovery.recoveryRequestedAt);
+	    assert.ok(coordinatorRecovery.recoveryExpiresAt);
+
+	    const coordinatorPasswordReset = await jsonRequest(baseUrl, `/api/users/${createdAdmin.json.user.id}`, {
+	      method: "PATCH",
+	      token: superToken,
+	      body: { password: "coordina123" }
+	    });
+	    assert.equal(coordinatorPasswordReset.status, 200);
+	    assert.equal(coordinatorPasswordReset.json.user.recoveryPending, false);
+
+	    const coordinatorLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+	      method: "POST",
+	      body: { identifier: "coordinador@marfancrew.test", password: "coordina123", mode: "admin" }
+	    });
+	    assert.equal(coordinatorLogin.status, 200);
+
+	    const restrictedAdmin = await jsonRequest(baseUrl, "/api/users", {
+	      method: "POST",
       token: superToken,
       body: {
         role: "admin",
@@ -226,6 +326,94 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
       body: { name: "Cliente bloqueado permisos", legalName: "Cliente bloqueado permisos SL" }
     });
     assert.equal(restrictedClientCreate.status, 403);
+
+    const employeesNoImportsAdmin = await jsonRequest(baseUrl, "/api/users", {
+      method: "POST",
+      token: superToken,
+      body: {
+        role: "admin",
+        name: "Admin Operarios Sin Importar",
+        email: "operarios.sin.importar@marfancrew.test",
+        password: "admin123",
+        permissions: { employees: true, imports: false }
+      }
+    });
+    assert.equal(employeesNoImportsAdmin.status, 201);
+    const employeesNoImportsLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: { identifier: "operarios.sin.importar@marfancrew.test", password: "admin123", mode: "admin" }
+    });
+    assert.equal(employeesNoImportsLogin.status, 200);
+    const deniedEmployeeImportTemplate = await fetch(`${baseUrl}/api/imports/templates/employees`, {
+      headers: { authorization: `Bearer ${employeesNoImportsLogin.json.token}` }
+    });
+    assert.equal(deniedEmployeeImportTemplate.status, 403);
+    const deniedEmployeeImport = await jsonRequest(baseUrl, "/api/imports/employees", {
+      method: "POST",
+      token: employeesNoImportsLogin.json.token,
+      body: {
+        fileName: "no-import.csv",
+        fileText: "NOMBRE;TELEFONO\nSin;600000001"
+      }
+    });
+    assert.equal(deniedEmployeeImport.status, 403);
+
+    const importsNoEmployeesAdmin = await jsonRequest(baseUrl, "/api/users", {
+      method: "POST",
+      token: superToken,
+      body: {
+        role: "admin",
+        name: "Admin Importa Sin Operarios",
+        email: "importa.sin.operarios@marfancrew.test",
+        password: "admin123",
+        permissions: { imports: true, employees: false }
+      }
+    });
+    assert.equal(importsNoEmployeesAdmin.status, 201);
+    const importsNoEmployeesLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: { identifier: "importa.sin.operarios@marfancrew.test", password: "admin123", mode: "admin" }
+    });
+    assert.equal(importsNoEmployeesLogin.status, 200);
+    const deniedEmployeeImportWithoutEmployees = await jsonRequest(baseUrl, "/api/imports/employees", {
+      method: "POST",
+      token: importsNoEmployeesLogin.json.token,
+      body: {
+        fileName: "no-employees.csv",
+        fileText: "NOMBRE;TELEFONO\nSin;600000002"
+      }
+    });
+    assert.equal(deniedEmployeeImportWithoutEmployees.status, 403);
+
+    const calendarNoEventsAdmin = await jsonRequest(baseUrl, "/api/users", {
+      method: "POST",
+      token: superToken,
+      body: {
+        role: "admin",
+        name: "Admin Calendario Sin Eventos",
+        email: "calendario.sin.eventos@marfancrew.test",
+        password: "admin123",
+        permissions: { calendar: true, events: false }
+      }
+    });
+    assert.equal(calendarNoEventsAdmin.status, 201);
+    const calendarNoEventsLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: { identifier: "calendario.sin.eventos@marfancrew.test", password: "admin123", mode: "admin" }
+    });
+    assert.equal(calendarNoEventsLogin.status, 200);
+    const deniedGoogleImport = await jsonRequest(baseUrl, "/api/calendar/import-google-event", {
+      method: "POST",
+      token: calendarNoEventsLogin.json.token,
+      body: {
+        googleUid: "denied-google-import@example.com",
+        name: "Google sin permiso eventos",
+        date: "2026-07-10",
+        startTime: "10:00",
+        endTime: "11:00"
+      }
+    });
+    assert.equal(deniedGoogleImport.status, 403);
 
     const unrestrictedAdmin = await jsonRequest(baseUrl, `/api/users/${restrictedAdmin.json.user.id}`, {
       method: "PATCH",
@@ -676,6 +864,57 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(importedEmployeeReport.json.rows.length, 1);
     assert.equal(importedEmployeeReport.json.rows[0].camiseta, "L");
 
+    const employeeXlsx = minimalXlsxBuffer([
+      ["NOMBRE", "APELLIDOS", "TELEFONO", "CORREO ELECTRONICO", "D.N.I.", "CAMISETA", "PANTALON", "CALZADO", "SKILLS"],
+      ["Importada", "Excel", "+34600900122", "importada.xlsx@marfancrew.test", "XLSX12345", "XL", "44", "45", "montaje|jefe"]
+    ]);
+    const employeeExcelImport = await jsonRequest(baseUrl, "/api/imports/employees", {
+      method: "POST",
+      token,
+      body: {
+        fileName: "operarios-test.xlsx",
+        fileMime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        fileDataBase64: employeeXlsx.toString("base64"),
+        defaultPassword: "Marfan2026!"
+      }
+    });
+    assert.equal(employeeExcelImport.status, 201);
+    assert.equal(employeeExcelImport.json.inserted, 1);
+    assert.equal(employeeExcelImport.json.usersCreated, 1);
+    const importedEmployeeExcelReport = await jsonRequest(baseUrl, "/api/reports/employees?search=XLSX12345", { token });
+    assert.equal(importedEmployeeExcelReport.status, 200);
+    assert.equal(importedEmployeeExcelReport.json.rows.length, 1);
+    assert.equal(importedEmployeeExcelReport.json.rows[0].camiseta, "XL");
+
+    const protectedEmployeeBeforeImport = await jsonRequest(baseUrl, "/api/employees/emp_alejandro", {
+      method: "PATCH",
+      token,
+      body: { kmRate: 7.7 }
+    });
+    assert.equal(protectedEmployeeBeforeImport.status, 200);
+    assert.equal(protectedEmployeeBeforeImport.json.employee.km_rate, 7.7);
+
+    const partialEmployeeImport = await jsonRequest(baseUrl, "/api/imports/employees", {
+      method: "POST",
+      token,
+      body: {
+        fileName: "operarios-parcial-test.csv",
+        fileText: [
+          "NOMBRE;APELLIDOS;TELEFONO;CORREO ELECTRONICO;ROL;KM;SKILLS;CAMISETA",
+          "Alejandro;Perez;+34600777888;empleado@marfancrew.test;;;;"
+        ].join("\n"),
+        defaultPassword: "Marfan2026!"
+      }
+    });
+    assert.equal(partialEmployeeImport.status, 201);
+    assert.equal(partialEmployeeImport.json.updated, 1);
+    const employeesAfterPartialImport = await jsonRequest(baseUrl, "/api/employees", { token });
+    assert.equal(employeesAfterPartialImport.status, 200);
+    const alejandroAfterPartialImport = employeesAfterPartialImport.json.employees.find((employee) => employee.id === "emp_alejandro");
+    assert.equal(alejandroAfterPartialImport.role, "Montaje");
+    assert.equal(alejandroAfterPartialImport.km_rate, 7.7);
+    assert.equal(alejandroAfterPartialImport.skills.includes("carga"), true);
+
     const clientCsv = [
       "CLIENTE;RAZON SOCIAL;CIF;PERSONA CONTACTO;MAIL;TELEFONO;PROVINCIA",
       "Cliente CSV;Cliente CSV SL;B123CSV;Responsable CSV;csv@cliente.test;+34959900111;Malaga"
@@ -696,6 +935,55 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(clientImportAgain.status, 201);
     assert.equal(clientImportAgain.json.inserted, 0);
     assert.equal(clientImportAgain.json.updated, 1);
+
+    const partialClientImport = await jsonRequest(baseUrl, "/api/imports/clients", {
+      method: "POST",
+      token,
+      body: {
+        fileName: "clientes-parcial-test.csv",
+        fileText: [
+          "CLIENTE;RAZON SOCIAL;CIF;PERSONA CONTACTO;MAIL;TELEFONO;PROVINCIA",
+          "Cliente CSV;;B123CSV;;;;"
+        ].join("\n")
+      }
+    });
+    assert.equal(partialClientImport.status, 201);
+    assert.equal(partialClientImport.json.updated, 1);
+    const clientsAfterPartialImport = await jsonRequest(baseUrl, "/api/clients", { token });
+    assert.equal(clientsAfterPartialImport.status, 200);
+    const clientAfterPartialImport = clientsAfterPartialImport.json.clients.find((client) => client.tax_id === "B123CSV");
+    assert.equal(clientAfterPartialImport.legal_name, "Cliente CSV SL");
+    assert.equal(clientAfterPartialImport.contact_name, "Responsable CSV");
+    assert.equal(clientAfterPartialImport.email, "csv@cliente.test");
+    assert.equal(clientAfterPartialImport.phone, "+34959900111");
+
+    const clientXlsx = minimalXlsxBuffer([
+      ["CLIENTE", "RAZON SOCIAL", "CIF", "PERSONA CONTACTO", "MAIL", "TELEFONO", "PROVINCIA"],
+      ["Cliente Excel", "Cliente Excel SL", "B123XLSX", "Responsable Excel", "xlsx@cliente.test", "+34959900122", "Malaga"]
+    ]);
+    const clientExcelImport = await jsonRequest(baseUrl, "/api/imports/clients", {
+      method: "POST",
+      token,
+      body: {
+        fileName: "clientes-test.xlsx",
+        fileMime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        fileDataBase64: clientXlsx.toString("base64")
+      }
+    });
+    assert.equal(clientExcelImport.status, 201);
+    assert.equal(clientExcelImport.json.inserted, 1);
+    const clientExcelImportAgain = await jsonRequest(baseUrl, "/api/imports/clients", {
+      method: "POST",
+      token,
+      body: {
+        fileName: "clientes-test.xlsx",
+        fileMime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        fileDataBase64: clientXlsx.toString("base64")
+      }
+    });
+    assert.equal(clientExcelImportAgain.status, 201);
+    assert.equal(clientExcelImportAgain.json.inserted, 0);
+    assert.equal(clientExcelImportAgain.json.updated, 1);
 
     const employeeTemplate = await fetch(`${baseUrl}/api/imports/templates/employees`, {
       headers: { authorization: `Bearer ${token}` }
@@ -962,32 +1250,66 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
         requiredTotal: 1,
         requirements: [{ role: "Limpieza", count: 1 }]
       }
-	    });
-	    assert.equal(morningRestEvent.status, 201);
-	    const pendingAvailability = await jsonRequest(baseUrl, "/api/availability", {
-	      method: "POST",
-	      token,
-	      body: {
-	        employeeId: "emp_nerea",
-	        startDate: "2026-07-05",
-	        endDate: "2026-07-05",
-	        type: "no_disponible",
-	        status: "solicitado",
-	        reason: "Solicitud pendiente del operario"
-	      }
-	    });
-	    assert.equal(pendingAvailability.status, 201);
-	    const restRecommendations = await jsonRequest(
-	      baseUrl,
-	      `/api/planner/recommendations?eventId=${encodeURIComponent(morningRestEvent.json.event.id)}`,
-	      { token }
-	    );
-	    assert.equal(restRecommendations.status, 200);
-	    const nereaRest = restRecommendations.json.recommendations.find((item) => item.employee.id === "emp_nerea");
-	    assert.equal(nereaRest.suggestedRole, "Limpieza");
-	    assert.equal(nereaRest.roleFit, "rol exacto");
-	    assert.equal(nereaRest.issues.some((issue) => issue.type === "descanso" && issue.severity === "warning"), true);
-	    assert.equal(nereaRest.issues.some((issue) => issue.type === "disponibilidad" && issue.severity === "warning"), true);
+    });
+    assert.equal(morningRestEvent.status, 201);
+    const pendingAvailability = await jsonRequest(baseUrl, "/api/availability", {
+      method: "POST",
+      token,
+      body: {
+        employeeId: "emp_nerea",
+        startDate: "2026-07-05",
+        endDate: "2026-07-05",
+        type: "no_disponible",
+        status: "solicitado",
+        reason: "Solicitud pendiente del operario"
+      }
+    });
+    assert.equal(pendingAvailability.status, 201);
+    const restRecommendations = await jsonRequest(
+      baseUrl,
+      `/api/planner/recommendations?eventId=${encodeURIComponent(morningRestEvent.json.event.id)}`,
+      { token }
+    );
+    assert.equal(restRecommendations.status, 200);
+    const nereaRest = restRecommendations.json.recommendations.find((item) => item.employee.id === "emp_nerea");
+    assert.equal(nereaRest.suggestedRole, "Limpieza");
+    assert.equal(nereaRest.roleFit, "rol exacto");
+    assert.equal(nereaRest.issues.some((issue) => issue.type === "descanso" && issue.severity === "warning"), true);
+    assert.equal(nereaRest.issues.some((issue) => issue.type === "disponibilidad" && issue.severity === "warning"), true);
+
+    const approvedAvailability = await jsonRequest(
+      baseUrl,
+      `/api/availability/${pendingAvailability.json.availability.id}`,
+      {
+        method: "PATCH",
+        token,
+        body: { status: "aprobado", reason: "Solicitud aprobada por administracion" }
+      }
+    );
+    assert.equal(approvedAvailability.status, 200);
+    assert.equal(approvedAvailability.json.availability.status, "aprobado");
+
+    const approvedAvailabilityRecommendations = await jsonRequest(
+      baseUrl,
+      `/api/planner/recommendations?eventId=${encodeURIComponent(morningRestEvent.json.event.id)}`,
+      { token }
+    );
+    assert.equal(approvedAvailabilityRecommendations.status, 200);
+    const nereaUnavailable = approvedAvailabilityRecommendations.json.recommendations.find((item) =>
+      item.employee.id === "emp_nerea"
+    );
+    assert.equal(nereaUnavailable.issues.some((issue) => issue.type === "disponibilidad" && issue.severity === "block"), true);
+
+    const blockedUnavailableAssignment = await jsonRequest(baseUrl, "/api/assignments", {
+      method: "POST",
+      token,
+      body: { eventId: morningRestEvent.json.event.id, employeeId: "emp_nerea", role: "Limpieza" }
+    });
+    assert.equal(blockedUnavailableAssignment.status, 409);
+    assert.equal(blockedUnavailableAssignment.json.issues.some((issue) =>
+      issue.type === "disponibilidad" &&
+      issue.severity === "block"
+    ), true);
 
     const filteredEventsReport = await jsonRequest(
       baseUrl,
@@ -1112,6 +1434,82 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     const autoConfirmSnapshot = autoConfirmSnapshots.json.snapshots.find((snapshot) => snapshot.action === "time_entry_created");
     assert.equal(autoConfirmSnapshot.metadata.autoConfirmedAssignment, true);
     assert.equal(autoConfirmSnapshot.payload_hash_valid, true);
+
+    const noGpsEmployee = await jsonRequest(baseUrl, "/api/employees", {
+      method: "POST",
+      token,
+      body: {
+        name: "Operario Servicio Sin GPS",
+        phone: "+34600111888",
+        email: "singps@marfancrew.test",
+        role: "Montaje",
+        portalAccess: true
+      }
+    });
+    assert.equal(noGpsEmployee.status, 201);
+
+    const noGpsEvent = await jsonRequest(baseUrl, "/api/events", {
+      method: "POST",
+      token,
+      body: {
+        name: "Servicio sin coordenadas reales",
+        clientId: "cli_tech",
+        date: todayLocal(),
+        startTime: "00:00",
+        endTime: "23:59",
+        location: "Recinto sin coordenadas",
+        address: "Recinto sin coordenadas",
+        requiredTotal: 1,
+        requirements: [{ role: "Montaje", count: 1 }]
+      }
+    });
+    assert.equal(noGpsEvent.status, 201);
+    assert.equal(noGpsEvent.json.event.location_source, "base_fallback");
+
+    const noGpsAssignment = await jsonRequest(baseUrl, "/api/assignments", {
+      method: "POST",
+      token,
+      body: {
+        eventId: noGpsEvent.json.event.id,
+        employeeId: noGpsEmployee.json.employee.id,
+        role: "Montaje",
+        status: "confirmado"
+      }
+    });
+    assert.equal(noGpsAssignment.status, 201);
+
+    const noGpsLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: { identifier: "600111888", password: "Marfan2026!", mode: "employee" }
+    });
+    assert.equal(noGpsLogin.status, 200);
+
+    const noGpsHome = await jsonRequest(baseUrl, "/api/employee/home", { token: noGpsLogin.json.token });
+    assert.equal(noGpsHome.status, 200);
+    assert.equal(noGpsHome.json.nextService.can_clock_in, 0);
+    assert.match(noGpsHome.json.nextService.clock_block_reason, /ubicacion GPS real/i);
+    assert.equal(noGpsHome.json.nextService.checklist.items.some((item) =>
+      item.key === "location" &&
+      item.status === "pending" &&
+      /GPS real/.test(item.detail)
+    ), true);
+
+    const noGpsClock = await jsonRequest(baseUrl, "/api/time-entries/clock", {
+      method: "POST",
+      token: noGpsLogin.json.token,
+      body: {
+        eventId: noGpsEvent.json.event.id,
+        type: "entrada",
+        lat: 36.7213,
+        lng: -4.42164,
+        accuracy: 5
+      }
+    });
+    assert.equal(noGpsClock.status, 409);
+    assert.match(noGpsClock.json.error, /ubicacion GPS real/i);
+    assert.equal(noGpsClock.json.distance, null);
+    assert.equal(noGpsClock.json.entry.type, "entrada_bloqueada");
+    assert.match(noGpsClock.json.entry.notes, /ubicacion GPS real/i);
 
     const missingGpsClock = await jsonRequest(baseUrl, "/api/time-entries/clock", {
       method: "POST",
@@ -1241,10 +1639,22 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(blockedSnapshot.payload.event.timeEntries.some((entry) => entry.type === "entrada_bloqueada"), true);
     assert.equal(blockedSnapshot.payload.event.incidents.some((incident) => incident.type === "fichaje"), true);
 
-    const today = todayLocal();
-    const deliveryEvent = await jsonRequest(baseUrl, "/api/events", {
-      method: "POST",
-      token,
+	    const today = todayLocal();
+	    const deliverySettings = await jsonRequest(baseUrl, "/api/settings", {
+	      method: "PATCH",
+	      token,
+	      body: {
+	        base_address: "Base Operativa Test Malaga",
+	        included_km: "12",
+	        vehicle_km_price: "0.44"
+	      }
+	    });
+	    assert.equal(deliverySettings.status, 200);
+	    assert.equal(deliverySettings.json.settings.base_address, "Base Operativa Test Malaga");
+
+	    const deliveryEvent = await jsonRequest(baseUrl, "/api/events", {
+	      method: "POST",
+	      token,
       body: {
         name: "Servicio con albaran firmado",
         clientId: "cli_tech",
@@ -1375,11 +1785,22 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     const deliveryPdfBuffer = Buffer.from(await deliveryPdf.arrayBuffer());
     assert.equal(deliveryPdf.status, 200);
     assert.match(deliveryPdf.headers.get("content-type"), /application\/pdf/);
-    assert.equal(deliveryPdfBuffer.subarray(0, 4).toString(), "%PDF");
-    assert.ok(deliveryPdfBuffer.length > 2500);
-    assert.match(deliveryPdfBuffer.toString("latin1"), /\/Subtype \/Image/);
+	    assert.equal(deliveryPdfBuffer.subarray(0, 4).toString(), "%PDF");
+	    assert.ok(deliveryPdfBuffer.length > 2500);
+	    assert.match(deliveryPdfBuffer.toString("latin1"), /\/Subtype \/Image/);
+	    assert.match(deliveryPdfBuffer.toString("latin1"), /Base Operativa Test Malaga/);
+	    assert.match(deliveryPdfBuffer.toString("latin1"), /Km incluidos 12\.0/);
 
-    const lockedAllowance = await jsonRequest(baseUrl, "/api/allowances", {
+	    const deliveryHtml = await fetch(`${baseUrl}/api/delivery-notes/${deliveryEvent.json.event.id}`, {
+	      headers: { authorization: `Bearer ${token}` }
+	    });
+	    const deliveryHtmlText = await deliveryHtml.text();
+	    assert.equal(deliveryHtml.status, 200);
+	    assert.match(deliveryHtmlText, /Base Operativa Test Malaga/);
+	    assert.match(deliveryHtmlText, /12\.0 km/);
+	    assert.match(deliveryHtmlText, /0\.44 EUR\/km/);
+
+	    const lockedAllowance = await jsonRequest(baseUrl, "/api/allowances", {
       method: "POST",
       token,
       body: {
@@ -1547,11 +1968,36 @@ test("Google Calendar sync writes imported and new events with OAuth credentials
       }
     });
     assert.equal(createdEvent.status, 201);
-    assert.equal(createdEvent.json.googleSync.status, "synced");
-    assert.equal(createdEvent.json.event.google_sync_status, "synced");
-    assert.match(createdEvent.json.event.google_calendar_event_id, /^mock_evt_/);
+	    assert.equal(createdEvent.json.googleSync.status, "synced");
+	    assert.equal(createdEvent.json.event.google_sync_status, "synced");
+	    assert.match(createdEvent.json.event.google_calendar_event_id, /^mock_evt_/);
 
-    const importedGoogle = await jsonRequest(baseUrl, "/api/calendar/import-google-event", {
+	    const googleSyncedEmployee = await jsonRequest(baseUrl, "/api/employees", {
+	      method: "POST",
+	      token,
+	      body: {
+	        name: "Operario Google Sync",
+	        phone: "+34600999001",
+	        email: "google.sync@marfancrew.test",
+	        role: "Montaje",
+	        skills: ["montaje"]
+	      }
+	    });
+	    assert.equal(googleSyncedEmployee.status, 201);
+
+	    const googleSyncedAssignment = await jsonRequest(baseUrl, "/api/assignments", {
+	      method: "POST",
+	      token,
+	      body: {
+	        eventId: createdEvent.json.event.id,
+	        employeeId: googleSyncedEmployee.json.employee.id,
+	        role: "Montaje"
+	      }
+	    });
+	    assert.equal(googleSyncedAssignment.status, 201);
+	    assert.equal(googleSyncedAssignment.json.googleSync.status, "synced");
+
+	    const importedGoogle = await jsonRequest(baseUrl, "/api/calendar/import-google-event", {
       method: "POST",
       token,
       body: {
@@ -1595,9 +2041,19 @@ test("Google Calendar sync writes imported and new events with OAuth credentials
       .split("\n")
       .filter(Boolean)
       .map((line) => JSON.parse(line));
-    assert.equal(googleCalls.some((call) => call.kind === "token"), true);
-    assert.equal(googleCalls.some((call) => call.kind === "calendar" && call.method === "POST" && call.summary === "Servicio OAuth Google"), true);
-    assert.equal(googleCalls.some((call) => call.kind === "calendar" && call.method === "GET" && call.url.includes("iCalUID=google-oauth-imported")), true);
+	    assert.equal(googleCalls.some((call) => call.kind === "token"), true);
+	    assert.equal(googleCalls.some((call) => call.kind === "calendar" && call.method === "POST" && call.summary === "Servicio OAuth Google"), true);
+	    assert.equal(googleCalls.some((call) =>
+	      call.kind === "calendar" &&
+	      call.method === "PATCH" &&
+	      call.summary === "Servicio OAuth Google" &&
+	      call.description.includes("Operario Google Sync") &&
+	      call.private.marfan_event_id === createdEvent.json.event.id &&
+	      call.private.marfan_assignment_count === "1" &&
+	      call.private.marfan_assigned_employee_ids.includes(googleSyncedEmployee.json.employee.id) &&
+	      call.private.marfan_required_roles === "Montaje x1"
+	    ), true);
+	    assert.equal(googleCalls.some((call) => call.kind === "calendar" && call.method === "GET" && call.url.includes("iCalUID=google-oauth-imported")), true);
     assert.equal(googleCalls.some((call) => call.kind === "calendar" && call.method === "PATCH" && call.summary === "Evento Google editado en MARFAN"), true);
   } finally {
     child.kill();

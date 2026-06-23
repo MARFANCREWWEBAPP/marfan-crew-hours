@@ -4,6 +4,7 @@ const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { DatabaseSync } = require("node:sqlite");
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "marfan-db-"));
 process.env.DATA_DIR = tmp;
@@ -25,12 +26,14 @@ test("new installations create schema and seed data once", () => {
 
   assert.equal(users, 4);
   assert.equal(events, 7);
-  assert.equal(migrations, 14);
+  assert.equal(migrations, 16);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('employees') WHERE name = 'shirt_size'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('documents') WHERE name = 'storage_path'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('delivery_notes') WHERE name = 'signature_image'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('events') WHERE name = 'google_calendar_event_id'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('events') WHERE name = 'google_sync_status'").count, 1);
+  assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('events') WHERE name = 'location_source'").count, 1);
+  assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'event_documents'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'event_snapshots'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('event_snapshots') WHERE name = 'payload_hash'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('time_entries') WHERE name = 'gps_accuracy_m'").count, 1);
@@ -48,6 +51,45 @@ test("new installations create schema and seed data once", () => {
 });
 
 test("manual backups are versioned SQLite files", () => {
+  const uploadDir = path.join(tmp, "uploads", "documents");
+  fs.mkdirSync(uploadDir, { recursive: true });
+  const documentPath = path.join(uploadDir, "doc_backup_attachment.txt");
+  fs.writeFileSync(documentPath, "BACKUP DOC OK");
+  dbModule.run(
+    `INSERT INTO documents
+      (id, employee_id, type, name, status, storage_path, file_name, file_mime, file_size, uploaded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+    [
+      "doc_backup_attachment",
+      "emp_alejandro",
+      "PRL",
+      "Documento en backup",
+      "vigente",
+      documentPath,
+      "doc_backup_attachment.txt",
+      "text/plain",
+      fs.statSync(documentPath).size
+    ]
+  );
+  const eventDocumentPath = path.join(uploadDir, "event_doc_backup_attachment.txt");
+  fs.writeFileSync(eventDocumentPath, "EVENT DOC BACKUP OK");
+  dbModule.run(
+    `INSERT INTO event_documents
+      (id, event_id, type, name, visible_to_employee, storage_path, file_name, file_mime, file_size, uploaded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+    [
+      "edoc_backup_attachment",
+      "evt_live",
+      "Recinto",
+      "Plano evento en backup",
+      1,
+      eventDocumentPath,
+      "event_doc_backup_attachment.txt",
+      "text/plain",
+      fs.statSync(eventDocumentPath).size
+    ]
+  );
+
   const backup = dbModule.createBackup("manual", "Test backup");
   assert.equal(backup.type, "manual");
   assert.equal(fs.existsSync(backup.file_path), true);
@@ -55,6 +97,25 @@ test("manual backups are versioned SQLite files", () => {
   const integrity = dbModule.verifySqliteBackupFile(backup.file_path, backup.size_bytes);
   assert.equal(integrity.ok, true);
   assert.equal(integrity.quickCheck, "ok");
+  assert.equal(integrity.attachmentCount, 2);
+  assert.equal(integrity.attachmentBytes, Buffer.byteLength("BACKUP DOC OK") + Buffer.byteLength("EVENT DOC BACKUP OK"));
+
+  const backupDb = new DatabaseSync(backup.file_path, { readOnly: true });
+  try {
+    const embedded = backupDb.prepare(
+      "SELECT document_id, file_name, content FROM backup_document_files WHERE document_id = ?"
+    ).get("doc_backup_attachment");
+    assert.equal(embedded.file_name, "doc_backup_attachment.txt");
+    assert.equal(Buffer.from(embedded.content).toString(), "BACKUP DOC OK");
+    const embeddedEvent = backupDb.prepare(
+      "SELECT document_id, document_scope, file_name, content FROM backup_document_files WHERE document_id = ?"
+    ).get("edoc_backup_attachment");
+    assert.equal(embeddedEvent.document_scope, "event");
+    assert.equal(embeddedEvent.file_name, "event_doc_backup_attachment.txt");
+    assert.equal(Buffer.from(embeddedEvent.content).toString(), "EVENT DOC BACKUP OK");
+  } finally {
+    backupDb.close();
+  }
 
   const row = dbModule.get("SELECT * FROM backups WHERE id = ?", [backup.id]);
   assert.equal(row.label, "Test backup");
@@ -79,6 +140,84 @@ test("restore requests register a downloadable safety backup", () => {
   assert.equal(marker.backupId, backup.id);
   assert.equal(marker.safetyBackupId, restore.safetyBackup.id);
   assert.equal(marker.safetyBackupPath, restore.safetyBackup.file_path);
+});
+
+test("restore extracts uploaded document files embedded in backups", () => {
+  const restoreTmp = fs.mkdtempSync(path.join(os.tmpdir(), "marfan-restore-docs-"));
+  const env = {
+    ...process.env,
+    DATA_DIR: restoreTmp,
+    BACKUP_DIR: path.join(restoreTmp, "backups"),
+    SQLITE_PATH: path.join(restoreTmp, "marfan.sqlite"),
+    AUTO_BACKUP_ON_START: "false"
+  };
+  try {
+    const setup = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const dbModule = require("./server/db");
+          const uploadDir = path.join(process.env.DATA_DIR, "uploads", "documents");
+          fs.mkdirSync(uploadDir, { recursive: true });
+          const documentPath = path.join(uploadDir, "doc_restore_attachment.txt");
+          fs.writeFileSync(documentPath, "RESTORE DOC OK");
+          dbModule.run(
+            "INSERT INTO documents (id, employee_id, type, name, status, storage_path, file_name, file_mime, file_size, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+            ["doc_restore_attachment", "emp_alejandro", "PRL", "Documento restaurable", "vigente", documentPath, "doc_restore_attachment.txt", "text/plain", fs.statSync(documentPath).size]
+          );
+          const eventDocumentPath = path.join(uploadDir, "event_doc_restore_attachment.txt");
+          fs.writeFileSync(eventDocumentPath, "RESTORE EVENT DOC OK");
+          dbModule.run(
+            "INSERT INTO event_documents (id, event_id, type, name, visible_to_employee, storage_path, file_name, file_mime, file_size, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+            ["edoc_restore_attachment", "evt_live", "Recinto", "Plano restaurable", 1, eventDocumentPath, "event_doc_restore_attachment.txt", "text/plain", fs.statSync(eventDocumentPath).size]
+          );
+          const backup = dbModule.createBackup("manual", "Restore documents");
+          fs.rmSync(documentPath, { force: true });
+          fs.rmSync(eventDocumentPath, { force: true });
+          dbModule.requestRestore(backup.id);
+          dbModule.db.close();
+          console.log(JSON.stringify({ backupId: backup.id }));
+        `
+      ],
+      { cwd: path.resolve(__dirname, ".."), env, encoding: "utf8" }
+    );
+    assert.equal(setup.status, 0, setup.stderr);
+
+    const restored = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `
+          const fs = require("node:fs");
+          const dbModule = require("./server/db");
+          const row = dbModule.get("SELECT storage_path FROM documents WHERE id = ?", ["doc_restore_attachment"]);
+          const eventRow = dbModule.get("SELECT storage_path FROM event_documents WHERE id = ?", ["edoc_restore_attachment"]);
+          const table = dbModule.get("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'backup_document_files'");
+          console.log(JSON.stringify({
+            exists: Boolean(row && fs.existsSync(row.storage_path)),
+            content: row && fs.existsSync(row.storage_path) ? fs.readFileSync(row.storage_path, "utf8") : "",
+            eventExists: Boolean(eventRow && fs.existsSync(eventRow.storage_path)),
+            eventContent: eventRow && fs.existsSync(eventRow.storage_path) ? fs.readFileSync(eventRow.storage_path, "utf8") : "",
+            bundleTableCount: table.count
+          }));
+          dbModule.db.close();
+        `
+      ],
+      { cwd: path.resolve(__dirname, ".."), env, encoding: "utf8" }
+    );
+    assert.equal(restored.status, 0, restored.stderr);
+    const payload = JSON.parse(restored.stdout.trim());
+    assert.equal(payload.exists, true);
+    assert.equal(payload.content, "RESTORE DOC OK");
+    assert.equal(payload.eventExists, true);
+    assert.equal(payload.eventContent, "RESTORE EVENT DOC OK");
+    assert.equal(payload.bundleTableCount, 0);
+  } finally {
+    fs.rmSync(restoreTmp, { recursive: true, force: true });
+  }
 });
 
 test("production installations seed German and restored operational data", () => {

@@ -37,13 +37,15 @@ globalThis.fetch = async function mockGoogleFetch(input, init = {}) {
   if (url.startsWith("https://www.googleapis.com/calendar/v3/calendars/")) {
     const parsed = new URL(url);
     const payload = parsePayload(init);
-    record({
-      kind: "calendar",
-      method,
-      url,
-      summary: payload.summary || "",
-      location: payload.location || ""
-    });
+	    record({
+	      kind: "calendar",
+	      method,
+	      url,
+	      summary: payload.summary || "",
+	      location: payload.location || "",
+	      description: payload.description || "",
+	      private: payload.extendedProperties?.private || {}
+	    });
 
     if (method === "GET") {
       const iCalUID = parsed.searchParams.get("iCalUID");

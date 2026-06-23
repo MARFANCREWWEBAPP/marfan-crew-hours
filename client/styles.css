@@ -567,6 +567,15 @@ button:disabled {
   display: grid;
   place-items: center;
   font-weight: 800;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .workspace {
@@ -783,6 +792,32 @@ button:disabled {
   grid-template-columns: minmax(120px, 1fr) minmax(108px, 0.8fr) auto;
   gap: 8px;
   align-items: center;
+}
+
+.event-doc-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.event-doc-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.event-document-form {
+  grid-template-columns: minmax(120px, 0.8fr) minmax(160px, 1fr) minmax(160px, 1fr) auto auto;
+}
+
+.compact-toggle {
+  margin: 0;
+  white-space: nowrap;
 }
 
 .assignment-table .tag {

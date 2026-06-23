@@ -30,6 +30,8 @@ const DEMO_MODE = process.env.APP_DEMO_MODE === "true";
 const DEFAULT_CLOCK_RADIUS_M = 150;
 const MAX_BODY_BYTES = 15_000_000;
 const MAX_DOCUMENT_FILE_BYTES = 8_000_000;
+const MAX_PROFILE_PHOTO_BYTES = 1_000_000;
+const MAX_IMPORT_FILE_BYTES = 8_000_000;
 const DOCUMENT_UPLOAD_DIR = path.join(DATA_DIR, "uploads", "documents");
 const ALLOWED_DOCUMENT_MIME_TYPES = new Set([
   "application/pdf",
@@ -56,6 +58,8 @@ const DOCUMENT_EXTENSION_MIME_TYPES = {
   ".xls": "application/vnd.ms-excel",
   ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 };
+const ALLOWED_PROFILE_PHOTO_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const DEFAULT_GOOGLE_CALENDAR_ID = "21102c189e2a9f5fb7072b9475554e93ae0b5124176fdfaa3da9470149b39e37@group.calendar.google.com";
 const DEFAULT_GOOGLE_CALENDAR_EMBED_URL = "https://calendar.google.com/calendar/embed?src=21102c189e2a9f5fb7072b9475554e93ae0b5124176fdfaa3da9470149b39e37%40group.calendar.google.com&ctz=Europe%2FMadrid";
 const GOOGLE_CALENDAR_TIME_ZONE = "Europe/Madrid";
@@ -117,6 +121,9 @@ function backupStatus(backup) {
     actual_size_bytes: 0,
     sha256: null,
     sqlite_quick_check: "",
+    attachment_count: 0,
+    attachment_bytes: 0,
+    attachment_integrity: "",
     integrity_error: ""
   };
 
@@ -130,6 +137,9 @@ function backupStatus(backup) {
   status.sha256 = sha256File(resolved);
   const sqliteIntegrity = verifySqliteBackupFile(resolved, backup.size_bytes);
   status.sqlite_quick_check = sqliteIntegrity.quickCheck || "";
+  status.attachment_count = sqliteIntegrity.attachmentCount || 0;
+  status.attachment_bytes = sqliteIntegrity.attachmentBytes || 0;
+  status.attachment_integrity = sqliteIntegrity.attachmentIntegrity || "";
   status.integrity_error = sqliteIntegrity.error || "";
   if (!sqliteIntegrity.sizeMatches) status.integrity = "size_mismatch";
   else if (!sqliteIntegrity.ok) status.integrity = sqliteIntegrity.quickCheck ? "sqlite_corrupt" : "sqlite_error";
@@ -477,6 +487,10 @@ function userHasAnyPermission(user, permissions) {
   return permissions.some((permission) => userHasPermission(user, permission));
 }
 
+function userHasAllPermissions(user, permissions) {
+  return permissions.every((permission) => userHasPermission(user, permission));
+}
+
 function adminPermissionsForRequest(pathname, method) {
   const write = method !== "GET";
   if (pathname === "/api/dashboard") return ["dashboard"];
@@ -486,11 +500,14 @@ function adminPermissionsForRequest(pathname, method) {
   if (pathname === "/api/work-roles") return method === "GET" ? ["events", "assignments", "settings"] : ["settings"];
   if (pathname.startsWith("/api/work-roles/") || pathname === "/api/maps/resolve") return ["settings"];
   if (pathname === "/api/calendar/marfan.ics") return [];
+  if (pathname === "/api/calendar/import-google-event" || pathname === "/api/calendar/import-google-events") return ["calendar", "events"];
+  if (pathname === "/api/calendar/google-oauth/start") return ["settings", "calendar"];
   if (pathname === "/api/calendar" || pathname.startsWith("/api/calendar/")) return ["calendar"];
   if (pathname === "/api/imports") return ["imports"];
   if (pathname === "/api/imports/templates/employees" || pathname === "/api/imports/employees") return ["employees", "imports"];
   if (pathname === "/api/imports/templates/clients" || pathname === "/api/imports/clients") return ["clients", "imports"];
   if (/^\/api\/events\/[^/]+\/client-dossier$/.test(pathname)) return ["reports"];
+  if (/^\/api\/events\/[^/]+\/documents$/.test(pathname) || pathname.startsWith("/api/event-documents/")) return ["events", "documents"];
   if (pathname === "/api/events" || pathname.startsWith("/api/events/")) return write ? ["events"] : ["dashboard", "live", "calendar", "events", "assignments", "clocking", "incidents", "finances", "reports"];
   if (pathname === "/api/clients" || pathname.startsWith("/api/clients/")) return write ? ["clients"] : ["clients", "events", "calendar", "assignments", "finances", "reports", "dashboard", "live"];
   if (pathname === "/api/employees" || pathname.startsWith("/api/employees/")) return write ? ["employees"] : ["employees", "events", "assignments", "clocking", "incidents", "documents", "availability", "finances", "reports", "dashboard", "live"];
@@ -507,10 +524,21 @@ function adminPermissionsForRequest(pathname, method) {
   return [];
 }
 
+function adminPermissionRequiresAll(pathname, method) {
+  if (pathname === "/api/imports/templates/employees" || pathname === "/api/imports/employees") return true;
+  if (pathname === "/api/imports/templates/clients" || pathname === "/api/imports/clients") return true;
+  if (pathname === "/api/calendar/import-google-event" || pathname === "/api/calendar/import-google-events") return true;
+  if (pathname === "/api/calendar/google-oauth/start") return true;
+  return false;
+}
+
 function enforceAdminRoutePermission(user, pathname, method) {
   if (!user || user.role !== "admin") return;
   const allowed = adminPermissionsForRequest(pathname, method);
-  if (!allowed.length || userHasAnyPermission(user, allowed)) return;
+  const hasPermission = adminPermissionRequiresAll(pathname, method)
+    ? userHasAllPermissions(user, allowed)
+    : userHasAnyPermission(user, allowed);
+  if (!allowed.length || hasPermission) return;
   const error = new Error("Modulo no permitido para este administrador");
   error.status = 403;
   throw error;
@@ -1351,12 +1379,234 @@ function parseDelimitedRows(text) {
   });
 }
 
+function xmlDecode(value) {
+  return String(value || "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)));
+}
+
+function xmlAttr(source, name) {
+  const pattern = new RegExp(`(?:^|\\s)${name.replace(":", "\\:")}=(?:"([^"]*)"|'([^']*)')`);
+  const match = String(source || "").match(pattern);
+  return match ? xmlDecode(match[1] ?? match[2] ?? "") : "";
+}
+
+function columnIndexFromRef(ref, fallback) {
+  const letters = String(ref || "").match(/^[A-Z]+/i)?.[0] || "";
+  if (!letters) return fallback;
+  let index = 0;
+  for (const char of letters.toUpperCase()) {
+    index = index * 26 + char.charCodeAt(0) - 64;
+  }
+  return index - 1;
+}
+
+function findZipEndOfCentralDirectory(buffer) {
+  const signature = 0x06054b50;
+  const start = Math.max(0, buffer.length - 65_558);
+  for (let offset = buffer.length - 22; offset >= start; offset -= 1) {
+    if (buffer.readUInt32LE(offset) === signature) return offset;
+  }
+  return -1;
+}
+
+function unzipEntries(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 22) {
+    const error = new Error("Excel no valido");
+    error.status = 400;
+    throw error;
+  }
+  const eocd = findZipEndOfCentralDirectory(buffer);
+  if (eocd < 0) {
+    const error = new Error("Excel no valido");
+    error.status = 400;
+    throw error;
+  }
+  const entries = new Map();
+  const totalEntries = buffer.readUInt16LE(eocd + 10);
+  const centralDirectoryOffset = buffer.readUInt32LE(eocd + 16);
+  let offset = centralDirectoryOffset;
+  for (let index = 0; index < totalEntries; index += 1) {
+    if (buffer.readUInt32LE(offset) !== 0x02014b50) break;
+    const method = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const localHeaderOffset = buffer.readUInt32LE(offset + 42);
+    const name = buffer.subarray(offset + 46, offset + 46 + nameLength).toString("utf8").replace(/^\/+/, "");
+    offset += 46 + nameLength + extraLength + commentLength;
+    if (!name || name.endsWith("/")) continue;
+    if (buffer.readUInt32LE(localHeaderOffset) !== 0x04034b50) continue;
+    const localNameLength = buffer.readUInt16LE(localHeaderOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localHeaderOffset + 28);
+    const dataStart = localHeaderOffset + 30 + localNameLength + localExtraLength;
+    const compressed = buffer.subarray(dataStart, dataStart + compressedSize);
+    let data;
+    if (method === 0) data = compressed;
+    else if (method === 8) data = zlib.inflateRawSync(compressed);
+    else {
+      const error = new Error("Excel comprimido no soportado");
+      error.status = 400;
+      throw error;
+    }
+    entries.set(name, data);
+  }
+  return entries;
+}
+
+function xlsxSharedStrings(xml) {
+  const strings = [];
+  for (const match of String(xml || "").matchAll(/<si\b[\s\S]*?<\/si>/gi)) {
+    const text = Array.from(match[0].matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/gi))
+      .map((item) => xmlDecode(item[1]))
+      .join("");
+    strings.push(text);
+  }
+  return strings;
+}
+
+function xlsxDateStyles(xml) {
+  const dateNumFmtIds = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47]);
+  for (const match of String(xml || "").matchAll(/<numFmt\b([^>]*)\/?>/gi)) {
+    const id = Number(xmlAttr(match[1], "numFmtId"));
+    const format = xmlAttr(match[1], "formatCode").toLowerCase();
+    if (Number.isFinite(id) && /[dmyhs]/.test(format) && !/[#0?]/.test(format.replace(/[dmyhs:/\-\s]/g, ""))) {
+      dateNumFmtIds.add(id);
+    }
+  }
+  const cellXfs = String(xml || "").match(/<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/i)?.[1] || "";
+  const styles = new Set();
+  let index = 0;
+  for (const match of cellXfs.matchAll(/<xf\b([^>]*)\/?>/gi)) {
+    const id = Number(xmlAttr(match[1], "numFmtId"));
+    if (dateNumFmtIds.has(id)) styles.add(index);
+    index += 1;
+  }
+  return styles;
+}
+
+function excelSerialDateToIso(value) {
+  const serial = Number(value);
+  if (!Number.isFinite(serial) || serial <= 0) return String(value || "");
+  const date = new Date(Date.UTC(1899, 11, 30) + Math.round(serial) * 86_400_000);
+  return date.toISOString().slice(0, 10);
+}
+
+function xlsxWorkbookSheetPath(entries) {
+  const workbook = entries.get("xl/workbook.xml")?.toString("utf8") || "";
+  const rels = entries.get("xl/_rels/workbook.xml.rels")?.toString("utf8") || "";
+  const firstSheet = workbook.match(/<sheet\b[^>]*>/i)?.[0] || "";
+  const relationId = xmlAttr(firstSheet, "r:id") || xmlAttr(firstSheet, "id");
+  const relation = Array.from(rels.matchAll(/<Relationship\b([^>]*)\/?>/gi))
+    .map((match) => ({ id: xmlAttr(match[1], "Id"), target: xmlAttr(match[1], "Target") }))
+    .find((item) => item.id === relationId);
+  if (!relation?.target) return "xl/worksheets/sheet1.xml";
+  if (relation.target.startsWith("/")) return relation.target.replace(/^\/+/, "");
+  return path.posix.normalize(`xl/${relation.target}`).replace(/^\/+/, "");
+}
+
+function xlsxCellValue(cellXml, attrs, sharedStrings, dateStyles) {
+  const type = xmlAttr(attrs, "t");
+  const style = Number(xmlAttr(attrs, "s"));
+  if (type === "inlineStr") {
+    return Array.from(cellXml.matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/gi))
+      .map((item) => xmlDecode(item[1]))
+      .join("");
+  }
+  const raw = xmlDecode(cellXml.match(/<v\b[^>]*>([\s\S]*?)<\/v>/i)?.[1] || "");
+  if (type === "s") return sharedStrings[Number(raw)] || "";
+  if (type === "b") return raw === "1" ? "TRUE" : "FALSE";
+  if (dateStyles.has(style)) return excelSerialDateToIso(raw);
+  return raw;
+}
+
+function parseXlsxRows(buffer) {
+  const entries = unzipEntries(buffer);
+  const sheetPath = xlsxWorkbookSheetPath(entries);
+  const sheetXml = entries.get(sheetPath)?.toString("utf8");
+  if (!sheetXml) {
+    const error = new Error("Excel sin hoja de datos");
+    error.status = 400;
+    throw error;
+  }
+  const sharedStrings = xlsxSharedStrings(entries.get("xl/sharedStrings.xml")?.toString("utf8") || "");
+  const dateStyles = xlsxDateStyles(entries.get("xl/styles.xml")?.toString("utf8") || "");
+  const tableRows = [];
+  for (const rowMatch of sheetXml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/gi)) {
+    const cells = [];
+    let fallbackColumn = 0;
+    for (const cellMatch of rowMatch[1].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/gi)) {
+      const attrs = cellMatch[1];
+      const column = columnIndexFromRef(xmlAttr(attrs, "r"), fallbackColumn);
+      cells[column] = importClean(xlsxCellValue(cellMatch[2], attrs, sharedStrings, dateStyles));
+      fallbackColumn = column + 1;
+    }
+    if (cells.some((cell) => importClean(cell))) tableRows.push(cells);
+  }
+  const headerIndex = tableRows.findIndex((row) => row.filter((cell) => importClean(cell)).length >= 2);
+  if (headerIndex < 0) return [];
+  const headers = tableRows[headerIndex].map(importHeaderKey);
+  return tableRows.slice(headerIndex + 1).map((cells) => {
+    const item = {};
+    headers.forEach((header, index) => {
+      if (header) item[header] = importClean(cells[index]);
+    });
+    return item;
+  }).filter((row) => Object.values(row).some((value) => importClean(value)));
+}
+
+function importFileBuffer(body) {
+  const raw = String(body.fileDataBase64 || body.fileBase64 || "");
+  if (!raw) return null;
+  const base64 = raw.includes(",") ? raw.split(",").pop() : raw;
+  const compact = base64.replace(/\s+/g, "");
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(compact) || compact.length % 4 !== 0) {
+    const error = new Error("Archivo no valido");
+    error.status = 400;
+    throw error;
+  }
+  const buffer = Buffer.from(compact, "base64");
+  if (!buffer.length || buffer.length > MAX_IMPORT_FILE_BYTES) {
+    const error = new Error("Archivo demasiado grande");
+    error.status = 413;
+    throw error;
+  }
+  return buffer;
+}
+
+function importRowsFromUpload(body) {
+  const sourceName = importClean(body.fileName || "");
+  const extension = path.extname(sourceName).toLowerCase();
+  const mime = String(body.fileMime || "").toLowerCase();
+  const isXlsx = extension === ".xlsx" || mime === XLSX_MIME_TYPE;
+  if (isXlsx) return parseXlsxRows(importFileBuffer(body));
+  if (!String(body.fileText || "").trim()) {
+    const error = new Error("Archivo CSV, TSV o Excel obligatorio");
+    error.status = 400;
+    throw error;
+  }
+  return parseDelimitedRows(body.fileText);
+}
+
 function importValue(row, aliases) {
   for (const alias of aliases) {
     const value = row[importHeaderKey(alias)];
     if (importClean(value)) return importClean(value);
   }
   return "";
+}
+
+function importOptionalNumber(row, aliases) {
+  const value = importValue(row, aliases);
+  if (!value) return null;
+  const number = Number(String(value).replace(",", "."));
+  return Number.isFinite(number) ? number : null;
 }
 
 function splitImportSkills(value, fallback = []) {
@@ -1497,14 +1747,14 @@ function recordDataImport({ source, rowsRead, inserted, updated, skipped, metada
   return get("SELECT * FROM data_imports WHERE id = ?", [id]);
 }
 
-function importEmployeesCsv({ text, source, defaultPassword, actor }) {
-  const rows = parseDelimitedRows(text).slice(0, 5000);
+function importEmployeesCsv({ text, source, fileMime, fileDataBase64, defaultPassword, actor }) {
+  const sourceName = importClean(source) || "operarios.csv";
+  const rows = importRowsFromUpload({ fileText: text, fileName: sourceName, fileMime, fileDataBase64 }).slice(0, 5000);
   let inserted = 0;
   let updated = 0;
   let skipped = 0;
   let usersCreated = 0;
   const now = new Date().toISOString();
-  const sourceName = importClean(source) || "operarios.csv";
   transaction(() => {
     for (const row of rows) {
       const firstName = importValue(row, ["NOMBRE", "nombre"]);
@@ -1518,11 +1768,17 @@ function importEmployeesCsv({ text, source, defaultPassword, actor }) {
       const phone = importValue(row, ["TELEFONO", "TELÉFONO", "MOVIL", "MÓVIL", "phone"]);
       const email = importValue(row, ["CORREO ELECTRONICO", "CORREO ELECTRÓNICO", "EMAIL", "MAIL"]).toLowerCase();
       const dni = importValue(row, ["D.N.I.", "DNI", "NIF"]);
-      const role = importValue(row, ["ROL", "PUESTO", "ROLE"]) || "Operario";
-      const skills = splitImportSkills(importValue(row, ["SKILLS", "HABILIDADES", "APTITUDES"]), [role.toLowerCase()]);
+      const existing = findImportedEmployee({ dni, email, phone });
+      const roleInput = importValue(row, ["ROL", "PUESTO", "ROLE"]);
+      const role = roleInput || existing?.role || "Operario";
+      const skillsInput = importValue(row, ["SKILLS", "HABILIDADES", "APTITUDES"]);
+      const skills = skillsInput
+        ? splitImportSkills(skillsInput, [])
+        : existing
+          ? jsonField(existing.skills, [role.toLowerCase()])
+          : [role.toLowerCase()];
       const { userId, created } = ensureImportedEmployeeUser({ name, email, phone, defaultPassword });
       if (created) usersCreated += 1;
-      const existing = findImportedEmployee({ dni, email, phone });
       const values = {
         phone,
         email,
@@ -1540,17 +1796,17 @@ function importEmployeesCsv({ text, source, defaultPassword, actor }) {
         epiSize: importValue(row, ["EPI", "TALLA EPI"]),
         emergencyContact: importValue(row, ["CONTACTO EMERGENCIA", "EMERGENCIA"]),
         city: importValue(row, ["CIUDAD", "LOCALIDAD"]),
-        hourlyRate: Number(importValue(row, ["TARIFA HORA", "PRECIO HORA", "HORA"]) || 0),
-        kmRate: Number(importValue(row, ["KM", "PRECIO KM"]) || 0.24),
-        dietRate: Number(importValue(row, ["DIETA", "DIETAS"]) || 0)
+        hourlyRate: importOptionalNumber(row, ["TARIFA HORA", "PRECIO HORA", "HORA"]),
+        kmRate: importOptionalNumber(row, ["KM", "PRECIO KM"]),
+        dietRate: importOptionalNumber(row, ["DIETA", "DIETAS"])
       };
       if (existing) {
         run(
           `UPDATE employees
            SET user_id = COALESCE(user_id, ?), name = ?, role = COALESCE(NULLIF(?, ''), role),
                phone = COALESCE(NULLIF(?, ''), phone), email = COALESCE(NULLIF(?, ''), email),
-               city = COALESCE(NULLIF(?, ''), city), hourly_rate = COALESCE(NULLIF(?, 0), hourly_rate),
-               km_rate = COALESCE(NULLIF(?, 0), km_rate), diet_rate = COALESCE(NULLIF(?, 0), diet_rate),
+               city = COALESCE(NULLIF(?, ''), city), hourly_rate = COALESCE(?, hourly_rate),
+               km_rate = COALESCE(?, km_rate), diet_rate = COALESCE(?, diet_rate),
                skills = ?, dni = COALESCE(NULLIF(?, ''), dni),
                social_security_number = COALESCE(NULLIF(?, ''), social_security_number),
                bank_account = COALESCE(NULLIF(?, ''), bank_account),
@@ -1606,9 +1862,9 @@ function importEmployeesCsv({ text, source, defaultPassword, actor }) {
             phone,
             email,
             values.city,
-            values.hourlyRate,
-            values.kmRate,
-            values.dietRate,
+            values.hourlyRate ?? 0,
+            values.kmRate ?? 0.24,
+            values.dietRate ?? 0,
             JSON.stringify(employeeSkillsFromBody({ role }, skills)),
             dni,
             values.socialSecurityNumber,
@@ -1643,12 +1899,12 @@ function importEmployeesCsv({ text, source, defaultPassword, actor }) {
   return { import: importRow, rowsRead: rows.length, inserted, updated, skipped, usersCreated };
 }
 
-function importClientsCsv({ text, source, actor }) {
-  const rows = parseDelimitedRows(text).slice(0, 5000);
+function importClientsCsv({ text, source, fileMime, fileDataBase64, actor }) {
+  const sourceName = importClean(source) || "clientes.csv";
+  const rows = importRowsFromUpload({ fileText: text, fileName: sourceName, fileMime, fileDataBase64 }).slice(0, 5000);
   let inserted = 0;
   let updated = 0;
   let skipped = 0;
-  const sourceName = importClean(source) || "clientes.csv";
   transaction(() => {
     for (const row of rows) {
       const name = importValue(row, ["CLIENTE", "NOMBRE", "RAZON SOCIAL", "RAZÓN SOCIAL"]);
@@ -1656,7 +1912,7 @@ function importClientsCsv({ text, source, actor }) {
         skipped += 1;
         continue;
       }
-      const legalName = importValue(row, ["RAZON SOCIAL", "RAZÓN SOCIAL"]) || name;
+      const legalName = importValue(row, ["RAZON SOCIAL", "RAZÓN SOCIAL"]);
       const taxId = importValue(row, ["CIF", "NIF", "TAX ID"]);
       const contactName = importValue(row, ["PERSONA CONTACTO", "CONTACTO", "CONTACT NAME"]);
       const email = importValue(row, ["MAIL", "EMAIL", "CORREO"]);
@@ -1668,7 +1924,7 @@ function importClientsCsv({ text, source, actor }) {
       if (existing) {
         run(
           `UPDATE clients
-           SET name = ?, legal_name = ?, tax_id = COALESCE(NULLIF(?, ''), tax_id),
+           SET name = ?, legal_name = COALESCE(NULLIF(?, ''), legal_name), tax_id = COALESCE(NULLIF(?, ''), tax_id),
                contact_name = COALESCE(NULLIF(?, ''), contact_name),
                email = COALESCE(NULLIF(?, ''), email), phone = COALESCE(NULLIF(?, ''), phone),
                address = COALESCE(NULLIF(?, ''), address), province = COALESCE(NULLIF(?, ''), province),
@@ -1681,7 +1937,7 @@ function importClientsCsv({ text, source, actor }) {
         run(
           `INSERT INTO clients (id, name, legal_name, tax_id, contact_name, email, phone, address, province, notes, source_ref)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [randomId("cli"), name, legalName, taxId, contactName, email, phone, address, province, notes, sourceName]
+          [randomId("cli"), name, legalName || name, taxId, contactName, email, phone, address, province, notes, sourceName]
         );
         inserted += 1;
       }
@@ -1848,13 +2104,42 @@ function calculateServicePricing({ startTime, endTime, lat, lng, requirements = 
   };
 }
 
-function eventCoordinatesFromBody(body) {
+function coordinatePairFromValues(latValue, lngValue) {
+  if (latValue === undefined || lngValue === undefined) return null;
+  if (String(latValue).trim() === "" || String(lngValue).trim() === "") return null;
+  const lat = Number(String(latValue).replace(",", "."));
+  const lng = Number(String(lngValue).replace(",", "."));
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
+}
+
+function eventCoordinatesFromBody(body, options = {}) {
   const settings = settingMap();
   const fromMaps = extractGoogleMapsCoordinates(body.googleMapsUrl || body.mapsUrl || "");
+  const manual = coordinatePairFromValues(body.lat, body.lng);
+  if (fromMaps) return { ...fromMaps, source: "google_maps" };
+  if (manual) return { ...manual, source: options.manualSource || "manual" };
   return {
-    lat: Number(body.lat || fromMaps?.lat || numberSetting(settings, "base_lat", 36.7213)),
-    lng: Number(body.lng || fromMaps?.lng || numberSetting(settings, "base_lng", -4.42164))
+    lat: Number(options.fallbackLat ?? numberSetting(settings, "base_lat", 36.7213)),
+    lng: Number(options.fallbackLng ?? numberSetting(settings, "base_lng", -4.42164)),
+    source: options.fallbackSource || "base_fallback"
   };
+}
+
+function hasUsableEventCoordinates(event) {
+  const pair = coordinatePairFromValues(event?.lat, event?.lng);
+  if (!pair) return false;
+  if (Math.abs(pair.lat) < 0.000001 && Math.abs(pair.lng) < 0.000001) return false;
+  const source = String(event?.location_source || "").toLowerCase();
+  if (source === "base_fallback") return false;
+  const locationText = `${event?.location || ""} ${event?.address || ""}`.toLowerCase();
+  if (!source && locationText.includes("ubicacion pendiente")) return false;
+  return true;
+}
+
+function eventClockLocationBlockReason(event) {
+  return hasUsableEventCoordinates(event) ? "" : "Completa la ubicacion GPS real del evento antes de fichar";
 }
 
 function normalizeRequirements(input, fallbackTotal = 1) {
@@ -1985,6 +2270,28 @@ function listDocuments({ employeeId } = {}) {
   )
     .map(hydrateDocument)
     .sort((a, b) => documentSeverity(a.status) - documentSeverity(b.status) || String(a.expires_at || "9999").localeCompare(String(b.expires_at || "9999")));
+}
+
+function listEventDocuments({ eventId, visibleOnly = false } = {}) {
+  const params = [];
+  const where = [];
+  if (eventId) {
+    where.push("event_documents.event_id = ?");
+    params.push(eventId);
+  }
+  if (visibleOnly) where.push("event_documents.visible_to_employee = 1");
+  return all(
+    `SELECT event_documents.*,
+            events.name AS event_name,
+            uploaded_by.name AS uploaded_by_name,
+            CASE WHEN event_documents.storage_path IS NOT NULL THEN 1 ELSE 0 END AS has_file
+     FROM event_documents
+     JOIN events ON events.id = event_documents.event_id
+     LEFT JOIN users uploaded_by ON uploaded_by.id = event_documents.uploaded_by_user_id
+     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+     ORDER BY event_documents.created_at DESC`,
+    params
+  );
 }
 
 function documentComplianceSummary(documents = listDocuments()) {
@@ -2814,12 +3121,16 @@ function clockProgress(event, assignment, entries, policy = clockPolicy()) {
   const lastEntry = accepted[0] || null;
   const entryWindow = clockWindowState(event, "entrada", policy);
   const exitWindow = clockWindowState(event, "salida", policy);
-  const canClockIn = ["sin_fichar", "pendiente", "tarde"].includes(state) && entryWindow.allowed;
-  const canClockOut = state === "en_curso" && exitWindow.allowed;
+  const locationBlockReason = ["sin_fichar", "pendiente", "tarde", "en_curso"].includes(state)
+    ? eventClockLocationBlockReason(event)
+    : "";
+  const canClockIn = ["sin_fichar", "pendiente", "tarde"].includes(state) && entryWindow.allowed && !locationBlockReason;
+  const canClockOut = state === "en_curso" && exitWindow.allowed && !locationBlockReason;
   const blockReason =
-    ["sin_fichar", "pendiente", "tarde"].includes(state) && !entryWindow.allowed ? entryWindow.reason :
-    state === "en_curso" && !exitWindow.allowed ? exitWindow.reason :
-    "";
+    locationBlockReason ||
+    (["sin_fichar", "pendiente", "tarde"].includes(state) && !entryWindow.allowed ? entryWindow.reason :
+      state === "en_curso" && !exitWindow.allowed ? exitWindow.reason :
+      "");
   return {
     state,
     lastEntry,
@@ -2859,6 +3170,7 @@ function employeeServiceChecklist(service, documents = []) {
   const docWarnings = documents.filter((document) => document.status === "proximo");
   const checkedIn = ["en_curso", "finalizado"].includes(service.clock_state);
   const checkedOut = service.clock_state === "finalizado";
+  const locationReady = hasUsableEventCoordinates(service);
   const items = [
     {
       key: "confirmed",
@@ -2878,9 +3190,9 @@ function employeeServiceChecklist(service, documents = []) {
     },
     {
       key: "location",
-      label: service.lat && service.lng ? "Ubicacion del recinto lista" : "Ubicacion pendiente",
-      status: service.lat && service.lng ? "done" : "pending",
-      detail: service.lat && service.lng ? service.location : "Falta ubicacion GPS del evento"
+      label: locationReady ? "Ubicacion del recinto lista" : "Ubicacion pendiente",
+      status: locationReady ? "done" : "pending",
+      detail: locationReady ? service.location : "Falta ubicacion GPS real del evento"
     },
     {
       key: "clock_in",
@@ -3030,6 +3342,7 @@ function eventDetail(eventId) {
   event.incidents = all("SELECT * FROM incidents WHERE event_id = ? ORDER BY created_at DESC", [eventId]);
   event.deliveryNote = get("SELECT * FROM delivery_notes WHERE event_id = ?", [eventId]) || null;
   event.allowances = listAllowances({ eventId });
+  event.documents = listEventDocuments({ eventId });
   return event;
 }
 
@@ -3408,15 +3721,18 @@ function importGoogleCalendarEvent(body, actor) {
   const existing = eventDetailByGoogleUid(googleUid);
   if (existing) return { event: existing, created: false };
 
-  const settings = settingMap();
   const clientId = upsertGoogleCalendarClient();
   const id = randomId("evt");
   const date = body.date || formatDate();
   const startTime = body.startTime || body.start_time || "09:00";
   const endTime = body.endTime || body.end_time || addTime(startTime, 2);
   const location = body.location || "Ubicacion pendiente";
-  const lat = Number(body.lat || settings.base_lat || 36.7213);
-  const lng = Number(body.lng || settings.base_lng || -4.42164);
+  const coords = eventCoordinatesFromBody(
+    { ...body, googleMapsUrl: body.googleMapsUrl || body.google_maps_url || "" },
+    { manualSource: "google_calendar" }
+  );
+  const lat = coords.lat;
+  const lng = coords.lng;
   const pricing = calculateServicePricing({
     startTime,
     endTime,
@@ -3431,8 +3747,8 @@ function importGoogleCalendarEvent(body, actor) {
       (id, name, client_id, date, start_time, end_time, location, address, lat, lng, team_leader_id,
        required_total, status, notes, budget, google_maps_url, vehicle_count, base_distance_km, billable_km,
        kilometre_price, role_price_total, night_price_total, distance_price_total, service_price,
-       google_calendar_uid, google_calendar_source, google_calendar_event_id, google_sync_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       google_calendar_uid, google_calendar_source, google_calendar_event_id, google_sync_status, location_source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       body.name || "Evento Google",
@@ -3461,7 +3777,8 @@ function importGoogleCalendarEvent(body, actor) {
       googleUid,
       body.source || "google",
       body.googleEventId || body.google_event_id || null,
-      "imported"
+      "imported",
+      coords.source
     ]
   );
   ensureDraftDeliveryNote({ id, service_price: pricing.servicePrice, budget: 0 });
@@ -4096,6 +4413,27 @@ function requirementsSummary(requirements = []) {
   return requirements.map((requirement) => `${requirement.role} x${requirement.count}`).join(", ");
 }
 
+function googlePrivateValue(value, max = 900) {
+  return String(value ?? "").slice(0, max);
+}
+
+function googlePrivateEventProperties(event) {
+  const activeAssignments = (event.assignments || []).filter((assignment) => assignment.status !== "bloqueado");
+  return {
+    marfan_event_id: googlePrivateValue(event.id),
+    marfan_client_id: googlePrivateValue(event.client_id),
+    marfan_client_name: googlePrivateValue(event.client_name || ""),
+    marfan_status: googlePrivateValue(event.status || ""),
+    marfan_required_total: String(event.required_total || 0),
+    marfan_assignment_count: String(activeAssignments.length),
+    marfan_assigned_employee_ids: googlePrivateValue(activeAssignments.map((assignment) => assignment.employee_id).join(",")),
+    marfan_assigned_roles: googlePrivateValue(activeAssignments.map((assignment) => `${assignment.employee_id}:${assignment.role}`).join("|")),
+    marfan_required_roles: googlePrivateValue(requirementsSummary(event.requirements || [])),
+    marfan_team_leader_id: googlePrivateValue(event.team_leader_id || ""),
+    marfan_service_price: String(Number(event.service_price || event.budget || 0))
+  };
+}
+
 function googleEventPayloadFromMarfanEvent(event, origin = "https://marfancrew.local") {
   const dateRange = googleEventDateRange(event);
   const description = [
@@ -4115,11 +4453,7 @@ function googleEventPayloadFromMarfanEvent(event, origin = "https://marfancrew.l
     start: dateRange.start,
     end: dateRange.end,
     extendedProperties: {
-      private: {
-        marfan_event_id: event.id,
-        marfan_status: event.status || "",
-        marfan_required_total: String(event.required_total || 0)
-      }
+      private: googlePrivateEventProperties(event)
     },
     reminders: { useDefault: true }
   };
@@ -4613,6 +4947,62 @@ function decodeDocumentBase64(rawValue) {
   return Buffer.from(compact, "base64");
 }
 
+function cleanProfilePhotoMime(value) {
+  const mime = String(value || "").split(";")[0].trim().toLowerCase();
+  if (!ALLOWED_PROFILE_PHOTO_MIME_TYPES.has(mime)) {
+    const error = new Error("Foto no valida. Usa JPG, PNG o WEBP.");
+    error.status = 415;
+    throw error;
+  }
+  return mime;
+}
+
+function profilePhotoMagicMatches(buffer, mime) {
+  if (mime === "image/png") return buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if (mime === "image/jpeg") return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  if (mime === "image/webp") return buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP";
+  return false;
+}
+
+function normalizeProfilePhoto(body, existingPhotoUrl = "") {
+  if (body.photoDataBase64) {
+    const raw = String(body.photoDataBase64 || "");
+    const declaredMime = raw.match(/^data:([^;]+);base64,/i)?.[1] || body.photoMime || "";
+    const mime = cleanProfilePhotoMime(declaredMime);
+    const buffer = decodeDocumentBase64(raw);
+    if (!buffer.length) {
+      const error = new Error("Foto vacia");
+      error.status = 400;
+      throw error;
+    }
+    if (buffer.length > MAX_PROFILE_PHOTO_BYTES) {
+      const error = new Error("Foto demasiado grande. Maximo 1 MB.");
+      error.status = 413;
+      throw error;
+    }
+    if (!profilePhotoMagicMatches(buffer, mime)) {
+      const error = new Error("Foto no valida. El archivo no coincide con el tipo de imagen.");
+      error.status = 400;
+      throw error;
+    }
+    return `data:${mime};base64,${buffer.toString("base64")}`;
+  }
+
+  if (body.photoUrl !== undefined) {
+    const value = String(body.photoUrl || "").trim();
+    if (!value) return "";
+    if (/^https?:\/\/[^\s]+$/i.test(value)) return value;
+    if (/^data:image\/(png|jpeg|webp);base64,/i.test(value)) {
+      return normalizeProfilePhoto({ photoDataBase64: value }, existingPhotoUrl);
+    }
+    const error = new Error("Foto no valida. Usa una URL https o sube una imagen.");
+    error.status = 400;
+    throw error;
+  }
+
+  return existingPhotoUrl || "";
+}
+
 function saveDocumentFile(documentId, body) {
   const safeName = body.fileName ? safeFileName(body.fileName) : null;
   if (!body.fileDataBase64) {
@@ -4664,6 +5054,19 @@ function canAccessDocument(user, document) {
   if (["admin", "super_admin"].includes(user.role)) return true;
   const employee = get("SELECT id FROM employees WHERE user_id = ?", [user.id]);
   return Boolean(employee && employee.id === document.employee_id);
+}
+
+function canAccessEventDocument(user, document) {
+  if (!user || !document) return false;
+  if (["admin", "super_admin"].includes(user.role)) return true;
+  if (!Number(document.visible_to_employee || 0)) return false;
+  const employee = get("SELECT id FROM employees WHERE user_id = ?", [user.id]);
+  if (!employee) return false;
+  const assignment = get(
+    "SELECT id FROM assignments WHERE event_id = ? AND employee_id = ? AND status != 'bloqueado'",
+    [document.event_id, employee.id]
+  );
+  return Boolean(assignment);
 }
 
 function isTeamLeaderForEvent(event, employee, assignment) {
@@ -4744,7 +5147,28 @@ function listUsers() {
   return all(
     `SELECT users.id, users.role, users.name, users.email, users.phone, users.avatar_url, users.active,
             users.last_login_at, users.created_at, users.permissions_json,
-            employees.id AS employee_id, employees.role AS employee_role, employees.status AS employee_status
+            employees.id AS employee_id, employees.role AS employee_role, employees.status AS employee_status,
+            (
+              SELECT COUNT(*)
+              FROM password_reset_tokens
+              WHERE password_reset_tokens.user_id = users.id
+                AND password_reset_tokens.used_at IS NULL
+                AND datetime(password_reset_tokens.expires_at) > CURRENT_TIMESTAMP
+            ) AS pending_recovery_count,
+            (
+              SELECT MAX(created_at)
+              FROM password_reset_tokens
+              WHERE password_reset_tokens.user_id = users.id
+                AND password_reset_tokens.used_at IS NULL
+                AND datetime(password_reset_tokens.expires_at) > CURRENT_TIMESTAMP
+            ) AS recovery_requested_at,
+            (
+              SELECT MAX(expires_at)
+              FROM password_reset_tokens
+              WHERE password_reset_tokens.user_id = users.id
+                AND password_reset_tokens.used_at IS NULL
+                AND datetime(password_reset_tokens.expires_at) > CURRENT_TIMESTAMP
+            ) AS recovery_expires_at
      FROM users
      LEFT JOIN employees ON employees.user_id = users.id
      ORDER BY CASE users.role WHEN 'super_admin' THEN 1 WHEN 'admin' THEN 2 ELSE 3 END, users.name`
@@ -4761,7 +5185,11 @@ function listUsers() {
     createdAt: row.created_at,
     employeeId: row.employee_id,
     employeeRole: row.employee_role,
-    employeeStatus: row.employee_status
+    employeeStatus: row.employee_status,
+    recoveryPending: Number(row.pending_recovery_count || 0) > 0,
+    recoveryPendingCount: Number(row.pending_recovery_count || 0),
+    recoveryRequestedAt: row.recovery_requested_at,
+    recoveryExpiresAt: row.recovery_expires_at
   }));
 }
 
@@ -4811,9 +5239,20 @@ function deliveryNoteRows(event) {
   });
 }
 
+function deliveryPricingContext(event) {
+  const settings = settingMap();
+  const baseAddress = String(settings.base_address || "Calle Ciro Alegria 89, Malaga").trim() || "Calle Ciro Alegria 89, Malaga";
+  const includedKm = numberSetting(settings, "included_km", 20);
+  const kilometrePrice = Number.isFinite(Number(event.kilometre_price))
+    ? Number(event.kilometre_price)
+    : numberSetting(settings, "vehicle_km_price", 0.37);
+  return { baseAddress, includedKm, kilometrePrice };
+}
+
 function deliveryNotePdf(event) {
   const note = event.deliveryNote || {};
   const servicePrice = Number(note.service_price ?? event.service_price ?? event.budget ?? 0);
+  const pricingContext = deliveryPricingContext(event);
   const rows = deliveryNoteRows(event);
   const signatureImage = decodePngDataUrlImage(note.signature_image);
   const pdfImages = signatureImage ? [signatureImage] : [];
@@ -4871,9 +5310,9 @@ function deliveryNotePdf(event) {
   stroke(0.84, 0.87, 0.91);
   rect(40, 456, 515, 44, "B");
   text(`Direccion: ${event.address || event.location}`, 54, 482, 8, "F1", [0.16, 0.22, 0.31], 105);
-  text(`Base Ciro Alegria 89 Malaga -> ${Number(event.base_distance_km || 0).toFixed(1)} km`, 54, 466, 8, "F1", [0.16, 0.22, 0.31], 80);
+  text(`Base ${pricingContext.baseAddress} -> ${Number(event.base_distance_km || 0).toFixed(1)} km`, 54, 466, 8, "F1", [0.16, 0.22, 0.31], 80);
   text(`Roles ${moneyText(event.role_price_total)} · Nocturnidad ${moneyText(event.night_price_total)} · Km ${moneyText(event.distance_price_total)}`, 300, 466, 8, "F2", [0.06, 0.09, 0.16], 70);
-  text(`Km facturables ${Number(event.billable_km || 0).toFixed(1)} · Vehiculos ${Number(event.vehicle_count || 1)} · Tarifa ${Number(event.kilometre_price || 0).toFixed(2)} EUR/km`, 300, 482, 8, "F1", [0.16, 0.22, 0.31], 70);
+  text(`Km incluidos ${pricingContext.includedKm.toFixed(1)} · Facturables ${Number(event.billable_km || 0).toFixed(1)} · Vehiculos ${Number(event.vehicle_count || 1)} · ${pricingContext.kilometrePrice.toFixed(2)} EUR/km`, 300, 482, 8, "F1", [0.16, 0.22, 0.31], 70);
 
   text("Equipo, horario y pluses", 40, 424, 12, "F2", [0.024, 0.063, 0.11], 40);
   fill(0.024, 0.063, 0.11);
@@ -4941,6 +5380,7 @@ function deliveryNotePdf(event) {
 function deliveryNoteHtml(event) {
   const note = event.deliveryNote || {};
   const servicePrice = Number(note.service_price ?? event.service_price ?? event.budget ?? 0);
+  const pricingContext = deliveryPricingContext(event);
   const rows = deliveryNoteRows(event).map(({ assignment, allowance }) => {
     return `
       <tr>
@@ -4994,8 +5434,10 @@ function deliveryNoteHtml(event) {
           <div><strong>Jefe de equipo</strong><br />${escHtml(event.team_leader_name || "Pendiente")}</div>
           <div><strong>Precio del servicio</strong><br />${servicePrice.toFixed(2)} EUR</div>
           <div><strong>Estado albaran</strong><br />${note.locked ? "Firmado y bloqueado" : "Pendiente de firma"}</div>
+          <div><strong>Base de calculo</strong><br />${escHtml(pricingContext.baseAddress)}</div>
           <div><strong>Distancia desde base</strong><br />${Number(event.base_distance_km || 0).toFixed(1)} km</div>
-          <div><strong>Km facturables</strong><br />${Number(event.billable_km || 0).toFixed(1)} km · ${Number(event.vehicle_count || 1)} veh.</div>
+          <div><strong>Km incluidos</strong><br />${pricingContext.includedKm.toFixed(1)} km</div>
+          <div><strong>Km facturables</strong><br />${Number(event.billable_km || 0).toFixed(1)} km · ${Number(event.vehicle_count || 1)} veh. · ${pricingContext.kilometrePrice.toFixed(2)} EUR/km</div>
           <div><strong>Roles y nocturnidad</strong><br />${Number(event.role_price_total || 0).toFixed(2)} EUR + ${Number(event.night_price_total || 0).toFixed(2)} EUR</div>
           <div><strong>Kilometraje</strong><br />${Number(event.distance_price_total || 0).toFixed(2)} EUR</div>
         </section>
@@ -5695,6 +6137,11 @@ async function handleApi(req, res, url) {
       }
 
       if (nextActive === false || password) run("DELETE FROM sessions WHERE user_id = ?", [targetId]);
+      if (password) {
+        run("UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND used_at IS NULL", [
+          targetId
+        ]);
+      }
       audit(user, "user_updated", "user", targetId, {
         role: finalRole,
         active: nextActive === undefined ? Boolean(target.active) : nextActive,
@@ -5819,10 +6266,12 @@ async function handleApi(req, res, url) {
   if (pathname === "/api/imports/employees" && method === "POST") {
     requireAdmin(user);
     const body = await readBody(req);
-    if (!String(body.fileText || "").trim()) return sendJson(res, 400, { error: "Archivo CSV obligatorio" });
+    if (!String(body.fileText || body.fileDataBase64 || "").trim()) return sendJson(res, 400, { error: "Archivo CSV, TSV o Excel obligatorio" });
     const result = importEmployeesCsv({
       text: body.fileText,
       source: body.fileName || "operarios.csv",
+      fileMime: body.fileMime,
+      fileDataBase64: body.fileDataBase64,
       defaultPassword: body.defaultPassword || "Marfan2026!",
       actor: user
     });
@@ -5832,10 +6281,12 @@ async function handleApi(req, res, url) {
   if (pathname === "/api/imports/clients" && method === "POST") {
     requireAdmin(user);
     const body = await readBody(req);
-    if (!String(body.fileText || "").trim()) return sendJson(res, 400, { error: "Archivo CSV obligatorio" });
+    if (!String(body.fileText || body.fileDataBase64 || "").trim()) return sendJson(res, 400, { error: "Archivo CSV, TSV o Excel obligatorio" });
     const result = importClientsCsv({
       text: body.fileText,
       source: body.fileName || "clientes.csv",
+      fileMime: body.fileMime,
+      fileDataBase64: body.fileDataBase64,
       actor: user
     });
     return sendJson(res, 201, result);
@@ -5868,8 +6319,8 @@ async function handleApi(req, res, url) {
         `INSERT INTO events
           (id, name, client_id, date, start_time, end_time, location, address, lat, lng, team_leader_id,
            required_total, status, notes, budget, google_maps_url, vehicle_count, base_distance_km, billable_km,
-           kilometre_price, role_price_total, night_price_total, distance_price_total, service_price)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           kilometre_price, role_price_total, night_price_total, distance_price_total, service_price, location_source)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           body.name,
@@ -5894,7 +6345,8 @@ async function handleApi(req, res, url) {
           pricing.rolePriceTotal,
           pricing.nightPriceTotal,
           pricing.distancePriceTotal,
-          pricing.servicePrice
+          pricing.servicePrice,
+          coords.source
         ]
       );
       for (const requirement of storedRequirements) {
@@ -5946,9 +6398,12 @@ async function handleApi(req, res, url) {
     if (eventPerformed(existing)) {
       return sendJson(res, 409, { error: "Evento efectuado: solo se permite revisar o crear incidencias" });
     }
-    const mapsCoords = extractGoogleMapsCoordinates(body.googleMapsUrl ?? existing.google_maps_url ?? "");
-    const lat = Number(body.lat ?? mapsCoords?.lat ?? existing.lat);
-    const lng = Number(body.lng ?? mapsCoords?.lng ?? existing.lng);
+    const locationFieldsSubmitted = ["googleMapsUrl", "mapsUrl", "lat", "lng"].some((key) =>
+      Object.prototype.hasOwnProperty.call(body, key)
+    );
+    const coords = locationFieldsSubmitted
+      ? eventCoordinatesFromBody(body)
+      : { lat: existing.lat, lng: existing.lng, source: existing.location_source || null };
     const nextRequirements = body.requirements
       ? normalizeRequirements(body.requirements, body.requiredTotal || existing.required_total)
       : all("SELECT role, count FROM event_requirements WHERE event_id = ?", [eventId]);
@@ -5957,7 +6412,8 @@ async function handleApi(req, res, url) {
       run(
         `UPDATE events
          SET name = ?, client_id = ?, date = ?, start_time = ?, end_time = ?, location = ?, address = ?, lat = ?, lng = ?,
-             team_leader_id = ?, required_total = ?, notes = ?, budget = ?, google_maps_url = ?, vehicle_count = ?
+             team_leader_id = ?, required_total = ?, notes = ?, budget = ?, google_maps_url = ?, vehicle_count = ?,
+             location_source = ?
          WHERE id = ?`,
         [
           body.name ?? existing.name,
@@ -5967,14 +6423,15 @@ async function handleApi(req, res, url) {
           body.endTime ?? existing.end_time,
           body.location ?? existing.location,
           body.address ?? existing.address,
-          lat,
-          lng,
+          coords.lat,
+          coords.lng,
           body.teamLeaderId === "" ? null : (body.teamLeaderId ?? existing.team_leader_id),
           requiredTotal,
           body.notes ?? existing.notes,
           body.budget === "" || body.budget === undefined ? existing.budget : Number(body.budget),
           body.googleMapsUrl ?? existing.google_maps_url,
           Number(body.vehicleCount ?? existing.vehicle_count ?? 1),
+          coords.source,
           eventId
         ]
       );
@@ -6046,8 +6503,8 @@ async function handleApi(req, res, url) {
         `INSERT INTO events
           (id, name, client_id, date, start_time, end_time, location, address, lat, lng, team_leader_id,
            required_total, status, notes, budget, google_maps_url, vehicle_count, base_distance_km, billable_km,
-           kilometre_price, role_price_total, night_price_total, distance_price_total, service_price)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           kilometre_price, role_price_total, night_price_total, distance_price_total, service_price, location_source)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           `${source.name} copia`,
@@ -6072,7 +6529,8 @@ async function handleApi(req, res, url) {
           Number(source.role_price_total || 0),
           Number(source.night_price_total || 0),
           Number(source.distance_price_total || 0),
-          Number(source.service_price || source.budget || 0)
+          Number(source.service_price || source.budget || 0),
+          source.location_source || null
         ]
       );
       for (const requirement of source.requirements) {
@@ -6579,8 +7037,11 @@ async function handleApi(req, res, url) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return sendJson(res, 400, { error: "Ubicacion GPS obligatoria" });
     }
-    const geo = isInsideRadius(lat, lng, event.lat, event.lng, policy.radiusM);
-    const accepted = Boolean(assignment && windowState.allowed && geo.inside);
+    const locationBlockReason = eventClockLocationBlockReason(event);
+    const geo = locationBlockReason
+      ? { distance: 0, inside: false }
+      : isInsideRadius(lat, lng, event.lat, event.lng, policy.radiusM);
+    const accepted = Boolean(assignment && windowState.allowed && geo.inside && !locationBlockReason);
     const sequenceError = accepted ? clockSequenceError(event, assignment, employee.id, type, policy) : null;
     if (sequenceError) {
       return sendJson(res, 409, {
@@ -6613,7 +7074,7 @@ async function handleApi(req, res, url) {
           geo.distance,
           geo.inside ? 1 : 0,
           accepted ? 1 : 0,
-          accepted ? "" : windowState.reason || "Intento de fichaje bloqueado",
+          accepted ? "" : locationBlockReason || windowState.reason || "Intento de fichaje bloqueado",
           Number.isFinite(accuracy) ? accuracy : null,
           ipAddress,
           userAgent
@@ -6655,7 +7116,9 @@ async function handleApi(req, res, url) {
     if (!accepted) {
       const reason = !assignment
         ? "Operario no asignado"
-        : !windowState.allowed
+        : locationBlockReason
+          ? locationBlockReason
+          : !windowState.allowed
           ? windowState.reason
           : "Fuera del radio GPS";
       const incidentId = randomId("inc");
@@ -6676,7 +7139,7 @@ async function handleApi(req, res, url) {
       });
       return sendJson(res, 409, {
         error: reason,
-        distance: geo.distance,
+        distance: locationBlockReason ? null : geo.distance,
         radius: policy.radiusM,
         windowOpenAt: windowState.openAt?.toISOString?.() || "",
         windowCloseAt: windowState.closeAt?.toISOString?.() || "",
@@ -7043,6 +7506,71 @@ async function handleApi(req, res, url) {
     });
   }
 
+  const eventDocumentsMatch = pathname.match(/^\/api\/events\/([^/]+)\/documents$/);
+  if (eventDocumentsMatch && method === "POST") {
+    requireAdmin(user);
+    const event = get("SELECT id FROM events WHERE id = ?", [eventDocumentsMatch[1]]);
+    if (!event) return sendJson(res, 404, { error: "Evento no encontrado" });
+    const body = await readBody(req);
+    const id = randomId("edoc");
+    const file = saveDocumentFile(id, body);
+    run(
+      `INSERT INTO event_documents
+        (id, event_id, type, name, notes, visible_to_employee, file_name, file_mime, file_size, storage_path, uploaded_at, uploaded_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`,
+      [
+        id,
+        event.id,
+        String(body.type || "Operativo").trim() || "Operativo",
+        String(body.name || file.fileName || "Documento evento").trim() || "Documento evento",
+        body.notes || "",
+        body.visibleToEmployee === false || body.visibleToEmployee === "false" ? 0 : 1,
+        file.fileName,
+        file.fileMime,
+        file.fileSize,
+        file.storagePath,
+        user.id
+      ]
+    );
+    audit(user, "event_document_uploaded", "event_document", id, {
+      eventId: event.id,
+      type: body.type || "Operativo",
+      hasFile: Boolean(file.storagePath)
+    });
+    createEventSnapshot(event.id, "event_document_uploaded", user, {
+      documentId: id,
+      type: body.type || "Operativo",
+      hasFile: Boolean(file.storagePath)
+    });
+    return sendJson(res, 201, {
+      document: listEventDocuments({ eventId: event.id }).find((document) => document.id === id),
+      event: eventDetail(event.id)
+    });
+  }
+
+  const eventDocumentFileMatch = pathname.match(/^\/api\/event-documents\/([^/]+)\/file$/);
+  if (eventDocumentFileMatch && method === "GET") {
+    requireUser(user);
+    const document = get("SELECT * FROM event_documents WHERE id = ?", [eventDocumentFileMatch[1]]);
+    if (!document) return sendJson(res, 404, { error: "Documento de evento no encontrado" });
+    if (!canAccessEventDocument(user, document)) return sendJson(res, 403, { error: "Permiso insuficiente" });
+    const filePath = documentFilePath(document);
+    if (!filePath) return sendJson(res, 404, { error: "Archivo no disponible" });
+    audit(user, "event_document_file_opened", "event_document", document.id, {
+      eventId: document.event_id,
+      fileName: document.file_name || document.name,
+      fileMime: document.file_mime || "application/octet-stream",
+      fileSize: document.file_size || fs.statSync(filePath).size
+    });
+    return send(res, 200, fs.readFileSync(filePath), {
+      "content-type": document.file_mime || "application/octet-stream",
+      "content-disposition": `inline; filename="${safeFileName(document.file_name || document.name)}"`,
+      "cache-control": "private, no-store, max-age=0",
+      "pragma": "no-cache",
+      "expires": "0"
+    });
+  }
+
   if (pathname === "/api/incidents" && method === "POST") {
     requireAdmin(user);
     const body = await readBody(req);
@@ -7078,7 +7606,7 @@ async function handleApi(req, res, url) {
     const serviceSql = `
       SELECT events.id, events.name, events.date, events.start_time, events.end_time, events.location,
              events.address, events.lat, events.lng, events.status, events.notes,
-             events.google_maps_url,
+             events.google_maps_url, events.location_source,
              clients.name AS client_name,
              leaders.name AS team_leader_name,
              leaders.phone AS team_leader_phone,
@@ -7117,6 +7645,9 @@ async function handleApi(req, res, url) {
         )
       : [];
     const documents = listDocuments({ employeeId: employee.id });
+    const eventDocuments = nextAssignmentRaw
+      ? listEventDocuments({ eventId: nextAssignmentRaw.id, visibleOnly: true })
+      : [];
     const addChecklist = (service) => ({
       ...service,
       checklist: employeeServiceChecklist(service, documents)
@@ -7130,12 +7661,13 @@ async function handleApi(req, res, url) {
        WHERE employee_id = ? AND accepted = 1`,
       [employee.id]
     );
-    const allowances = get(
-      `SELECT COALESCE(SUM(km), 0) AS km,
-              COALESCE(SUM(night_hours), 0) AS night_hours
-       FROM allowances
-       WHERE employee_id = ?`,
-      [employee.id]
+	    const allowances = get(
+	      `SELECT COALESCE(SUM(km), 0) AS km,
+	              COALESCE(SUM(diet), 0) AS dietas,
+	              COALESCE(SUM(night_hours), 0) AS night_hours
+	       FROM allowances
+	       WHERE employee_id = ?`,
+	      [employee.id]
     );
     const incidentRows = all(
       `SELECT incidents.id, incidents.event_id, incidents.type, incidents.priority, incidents.status,
@@ -7167,16 +7699,18 @@ async function handleApi(req, res, url) {
       pastServices,
       coworkers,
       documents,
+      eventDocuments,
       availability: availabilityRows,
       incidents: incidentRows,
       history: {
         events_done: timeStats.events_done,
-        entries: timeStats.entries,
-        hours: Math.round(plannedHours * 10) / 10,
-        km: Math.round(Number(allowances.km || 0) * 10) / 10,
-        night_hours: Number(allowances.night_hours || 0),
-        incidents: incidentRows.length
-      },
+	        entries: timeStats.entries,
+	        hours: Math.round(plannedHours * 10) / 10,
+	        km: Math.round(Number(allowances.km || 0) * 10) / 10,
+	        dietas: Math.round(Number(allowances.dietas || 0) * 100) / 100,
+	        night_hours: Number(allowances.night_hours || 0),
+	        incidents: incidentRows.length
+	      },
       radius: policy.radiusM,
       clockPolicy: policy,
       office: {
@@ -7190,23 +7724,24 @@ async function handleApi(req, res, url) {
     requireUser(user);
     const employee = get("SELECT * FROM employees WHERE user_id = ?", [user.id]);
     if (!employee) return sendJson(res, 404, { error: "Empleado no encontrado" });
-    const body = await readBody(req);
-    const email = body.email === undefined ? cleanContactEmail(employee.email) : cleanContactEmail(body.email);
-    const phone = body.phone === undefined ? cleanContactPhone(employee.phone) : cleanContactPhone(body.phone);
-    validateEmployeeProfileContact({ employeeId: employee.id, userId: user.id, email, phone });
-    const password = body.password ? hashPassword(validateNewPassword(body.password)) : null;
-    transaction(() => {
-      run(
-        `UPDATE employees
-         SET phone = ?, email = ?, photo_url = ?
+	    const body = await readBody(req);
+	    const email = body.email === undefined ? cleanContactEmail(employee.email) : cleanContactEmail(body.email);
+	    const phone = body.phone === undefined ? cleanContactPhone(employee.phone) : cleanContactPhone(body.phone);
+	    validateEmployeeProfileContact({ employeeId: employee.id, userId: user.id, email, phone });
+	    const password = body.password ? hashPassword(validateNewPassword(body.password)) : null;
+	    const photoUrl = normalizeProfilePhoto(body, employee.photo_url);
+	    transaction(() => {
+	      run(
+	        `UPDATE employees
+	         SET phone = ?, email = ?, photo_url = ?
          WHERE id = ?`,
         [
-          phone,
-          email,
-          body.photoUrl ?? employee.photo_url,
-          employee.id
-        ]
-      );
+	          phone,
+	          email,
+	          photoUrl,
+	          employee.id
+	        ]
+	      );
       run(
         `UPDATE users
          SET phone = ?, email = ?,
@@ -7222,11 +7757,12 @@ async function handleApi(req, res, url) {
         ]
       );
       if (password) run("DELETE FROM sessions WHERE user_id = ?", [user.id]);
-      audit(user, "employee_profile_updated", "employee", employee.id, {
-        emailChanged: email !== cleanContactEmail(employee.email),
-        phoneChanged: phone !== cleanContactPhone(employee.phone),
-        passwordChanged: Boolean(password)
-      });
+	      audit(user, "employee_profile_updated", "employee", employee.id, {
+	        emailChanged: email !== cleanContactEmail(employee.email),
+	        phoneChanged: phone !== cleanContactPhone(employee.phone),
+	        photoChanged: photoUrl !== (employee.photo_url || ""),
+	        passwordChanged: Boolean(password)
+	      });
     });
     return sendJson(res, 200, {
       employee: employeePortalProfile(get("SELECT * FROM employees WHERE id = ?", [employee.id]))

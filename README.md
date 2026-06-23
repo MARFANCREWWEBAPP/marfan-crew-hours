@@ -47,11 +47,11 @@ La app incluye un menu `Configuracion` para cambiar:
 - Precio por kilometro y vehiculo: `0.37`
 - Roles de trabajo con precio base/hora y precio nocturno/hora
 
-Al crear un evento, el precio se calcula con roles requeridos, horario, nocturnidad, distancia a la base y numero de vehiculos. Si se pega un enlace largo de Google Maps con coordenadas, la app rellena latitud y longitud del recinto.
+Al crear un evento, el precio se calcula con roles requeridos, horario, nocturnidad, distancia a la base y numero de vehiculos. Si se pega un enlace largo de Google Maps con coordenadas, la app rellena latitud y longitud del recinto. Si un evento queda con coordenada de emergencia de la base, el portal del operario bloquea el fichaje hasta completar la ubicacion GPS real.
 
 ## Importar datos reales
 
-El importador es idempotente: actualiza por DNI/CIF/email/telefono y no duplica filas si se ejecuta otra vez.
+El importador es idempotente: actualiza por DNI/CIF/email/telefono y no duplica filas si se ejecuta otra vez. Desde la app se pueden subir archivos `.xlsx`, `.csv` o `.tsv` en `Importaciones`, `Operarios` o `Clientes`.
 
 ```bash
 /Users/marquee/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 scripts/import_real_data.py \
@@ -81,7 +81,7 @@ Regla importante:
 - Si la base ya existe, no se sobrescribe.
 - Las migraciones se aplican de forma incremental.
 - Las semillas solo se crean en una instalación nueva.
-- Los backups se guardan en `backups/` o en `BACKUP_DIR`, con verificacion de integridad, descarga protegida y restauracion solo para super admin.
+- Los backups se guardan en `backups/` o en `BACKUP_DIR`, con verificacion de integridad, descarga protegida y restauracion solo para super admin. Cada copia SQLite incluye tambien los archivos subidos de documentacion RRHH para poder restaurarlos junto a la base.
 - Para preparar una restauracion hay que escribir `RESTAURAR`; antes de aplicarla se genera siempre un backup de seguridad.
 
 ## Railway
@@ -129,24 +129,29 @@ Si Google muestra `redirect_uri_mismatch`, la URI autorizada en Google Cloud no 
 - Búsqueda global de eventos, operarios y clientes
 - Centro Live
 - Calendario Pro
+- Google Calendar con sincronización de horario, ubicación, descripción operativa y metadatos privados de equipo/requisitos
 - Eventos con duplicado operativo de servicio, requisitos y equipo asignado validado; los efectuados quedan en solo revision
 - Clientes
 - Operarios
 - Asignaciones con recomendaciones y prevalidacion visible de bloqueos
 - Planificador con rol sugerido, distancia, carga reciente, disponibilidad, descanso y documentacion obligatoria por rol critico
-- Fichajes geolocalizados con secuencia entrada/salida, evidencia GPS/dispositivo y trazabilidad de correcciones
+- Fichajes geolocalizados con secuencia entrada/salida, evidencia GPS/dispositivo, bloqueo si falta ubicacion real del recinto y trazabilidad de correcciones
 - Portal empleado con confirmacion de asistencia a servicios
 - Portal empleado con checklist operativo real y botones de oficina configurables
 - Calendario personal del empleado con vistas mes, semana, dia y agenda
+- Histórico del empleado con horas, eventos, kilómetros, dietas, nocturnidad e incidencias sin costes internos
+- Perfil del empleado con actualización de contacto, contraseña y foto subida de forma persistente
 - Incidencias con deteccion automatica de retrasos/ausencias, resolucion, nota de cierre e informes
 - Documentación RRHH con archivos protegidos, tipos/tamaños validados, trazabilidad de aperturas, pestaña Docs en portal empleado, subida de documentos y revisión desde oficina
+- Documentos operativos por evento con visibilidad para operarios asignados y copia incluida en backups
+- Importaciones centralizadas de operarios y clientes desde Excel/CSV/TSV con historial y conteo de cambios
 - Finanzas con pluses por evento: kilometros, dietas, nocturnidad y extras por operario
 - Informes JSON/CSV/Excel/PDF
 - Dossier cliente por evento con equipo asignado y estado documental
-- Albarán A4 imprimible con precio, firma cliente y bloqueo
+- Albarán A4 imprimible con precio, base/kilometraje configurable, firma cliente y bloqueo
 - Configuracion editable de base, kilometraje y roles
 - Backups manuales y automáticos con verificacion, descarga y restauracion segura
 - Super Admin para usuarios y permisos
-- Recuperación de acceso sin exponer códigos en público y reset seguro por Super Admin
+- Recuperación de acceso sin exponer códigos en público, aviso pendiente en Administradores y reset seguro por Super Admin
 - Sesiones con cookies HttpOnly/SameSite solo para lecturas seguras, tokens hasheados, limite de intentos de login y cabeceras HTTP defensivas
 - Auditoria Super Admin de accesos, cambios sensibles, backups y exportacion CSV

@@ -1,11 +1,13 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
 const { hashPassword, randomId } = require("./security");
 
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), "data"));
 const BACKUP_DIR = path.resolve(process.env.BACKUP_DIR || path.join(process.cwd(), "backups"));
 const DB_PATH = path.resolve(process.env.SQLITE_PATH || path.join(DATA_DIR, "marfan.sqlite"));
+const DOCUMENT_UPLOAD_DIR = path.join(DATA_DIR, "uploads", "documents");
 const AUTO_BACKUP_ON_START = process.env.AUTO_BACKUP_ON_START !== "false";
 const SEED_DEMO_DATA = envFlag("MARFAN_SEED_DEMO_DATA", process.env.NODE_ENV !== "production");
 const SEED_REAL_DATA = envFlag("MARFAN_SEED_REAL_DATA", true);
@@ -26,6 +28,7 @@ function envFlag(name, fallback) {
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
+fs.mkdirSync(DOCUMENT_UPLOAD_DIR, { recursive: true });
 
 applyPendingRestore();
 
@@ -82,6 +85,7 @@ function applyPendingRestore() {
   }
 
   fs.copyFileSync(backupPath, DB_PATH);
+  restoreDocumentFilesFromBackupDatabase();
   fs.rmSync(markerPath);
 }
 
@@ -525,6 +529,36 @@ const migrations = [
         SELECT 1 FROM delivery_notes WHERE delivery_notes.event_id = events.id
       );
     `
+  },
+  {
+    version: 15,
+    name: "event-location-source",
+    sql: `
+      ALTER TABLE events ADD COLUMN location_source TEXT;
+    `
+  },
+  {
+    version: 16,
+    name: "event-documents",
+    sql: `
+      CREATE TABLE IF NOT EXISTS event_documents (
+        id TEXT PRIMARY KEY,
+        event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        type TEXT NOT NULL DEFAULT 'Operativo',
+        name TEXT NOT NULL,
+        notes TEXT,
+        visible_to_employee INTEGER NOT NULL DEFAULT 1,
+        file_name TEXT,
+        file_mime TEXT,
+        file_size INTEGER,
+        storage_path TEXT,
+        uploaded_at TEXT,
+        uploaded_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_event_documents_event ON event_documents(event_id);
+    `
   }
 ];
 
@@ -646,7 +680,8 @@ const PRODUCTION_SEED_TABLES = [
       "google_maps_url", "vehicle_count", "base_distance_km", "billable_km", "kilometre_price",
       "role_price_total", "night_price_total", "distance_price_total", "service_price",
       "google_calendar_uid", "google_calendar_source", "google_calendar_event_id",
-      "google_calendar_html_link", "google_sync_status", "google_sync_error", "google_synced_at"
+      "google_calendar_html_link", "google_sync_status", "google_sync_error", "google_synced_at",
+      "location_source"
     ]
   },
   { table: "event_requirements", columns: ["id", "event_id", "role", "count"] },
@@ -964,12 +999,188 @@ function escapeSqlLiteral(value) {
   return String(value).replaceAll("'", "''");
 }
 
+function documentUploadPath(storagePath) {
+  const resolved = path.resolve(storagePath || "");
+  const base = path.resolve(DOCUMENT_UPLOAD_DIR);
+  if (!resolved.startsWith(`${base}${path.sep}`)) return null;
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) return null;
+  return resolved;
+}
+
+function safeBackupAttachmentName(value, fallback = "documento") {
+  const cleaned = path.basename(String(value || fallback))
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "");
+  return cleaned || fallback;
+}
+
+function embedDocumentFilesInBackup(filePath) {
+  const rows = all(
+    `SELECT 'employee' AS document_scope, id, storage_path, file_name, file_mime, file_size
+     FROM documents
+     WHERE storage_path IS NOT NULL AND storage_path != ''`
+  );
+  const eventDocumentTable = get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'event_documents'");
+  if (eventDocumentTable) {
+    rows.push(...all(
+      `SELECT 'event' AS document_scope, id, storage_path, file_name, file_mime, file_size
+       FROM event_documents
+       WHERE storage_path IS NOT NULL AND storage_path != ''`
+    ));
+  }
+  if (!rows.length) return { count: 0, bytes: 0 };
+
+  const backupDb = new DatabaseSync(filePath);
+  let count = 0;
+  let bytes = 0;
+  try {
+    backupDb.exec(`
+      DROP TABLE IF EXISTS backup_document_files;
+      CREATE TABLE IF NOT EXISTS backup_document_files (
+        document_id TEXT NOT NULL,
+        document_scope TEXT NOT NULL DEFAULT 'employee',
+        relative_path TEXT NOT NULL,
+        file_name TEXT,
+        file_mime TEXT,
+        file_size INTEGER NOT NULL,
+        sha256 TEXT NOT NULL,
+        content BLOB NOT NULL,
+        backed_up_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (document_scope, document_id)
+      );
+    `);
+    const insert = backupDb.prepare(
+      `INSERT INTO backup_document_files
+        (document_id, document_scope, relative_path, file_name, file_mime, file_size, sha256, content)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    backupDb.exec("BEGIN IMMEDIATE");
+    try {
+      for (const row of rows) {
+        const sourcePath = documentUploadPath(row.storage_path);
+        if (!sourcePath) continue;
+        const content = fs.readFileSync(sourcePath);
+        const fileName = safeBackupAttachmentName(row.file_name || path.basename(sourcePath), `${row.id}.bin`);
+        const documentScope = row.document_scope || "employee";
+        const relativePath = `${documentScope}-${row.id}-${fileName}`;
+        const hash = crypto.createHash("sha256").update(content).digest("hex");
+        insert.run(row.id, documentScope, relativePath, fileName, row.file_mime || "", content.length, hash, content);
+        count += 1;
+        bytes += content.length;
+      }
+      backupDb.exec("COMMIT");
+    } catch (error) {
+      backupDb.exec("ROLLBACK");
+      throw error;
+    }
+  } finally {
+    backupDb.close();
+  }
+  return { count, bytes };
+}
+
+function backupDocumentFilesSummary(filePath) {
+  const summary = {
+    attachmentCount: 0,
+    attachmentBytes: 0,
+    attachmentIntegrity: "not_present",
+    attachmentError: ""
+  };
+  const checkDb = new DatabaseSync(filePath, { readOnly: true });
+  try {
+    const table = checkDb.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'backup_document_files'"
+    ).get();
+    if (!table) return summary;
+    const columns = checkDb.prepare("PRAGMA table_info(backup_document_files)").all().map((row) => row.name);
+    const scopeExpression = columns.includes("document_scope") ? "document_scope" : "'employee' AS document_scope";
+    const rows = checkDb.prepare(
+      `SELECT document_id, ${scopeExpression}, relative_path, file_size, sha256, content FROM backup_document_files`
+    ).all();
+    summary.attachmentIntegrity = "verified";
+    for (const row of rows) {
+      const content = Buffer.from(row.content || []);
+      const expectedSize = Number(row.file_size || 0);
+      const hash = crypto.createHash("sha256").update(content).digest("hex");
+      summary.attachmentCount += 1;
+      summary.attachmentBytes += content.length;
+      if (content.length !== expectedSize || hash !== row.sha256) {
+        summary.attachmentIntegrity = "corrupt";
+        summary.attachmentError = `Adjunto no verificable: ${row.document_scope || "employee"}:${row.document_id || row.relative_path}`;
+        break;
+      }
+    }
+  } finally {
+    checkDb.close();
+  }
+  return summary;
+}
+
+function restoreDocumentFilesFromBackupDatabase() {
+  const restoreDb = new DatabaseSync(DB_PATH);
+  try {
+    const table = restoreDb.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'backup_document_files'"
+    ).get();
+    if (!table) return { restored: 0, bytes: 0 };
+    const columns = restoreDb.prepare("PRAGMA table_info(backup_document_files)").all().map((row) => row.name);
+    const scopeExpression = columns.includes("document_scope") ? "document_scope" : "'employee' AS document_scope";
+    const rows = restoreDb.prepare(
+      `SELECT document_id, ${scopeExpression}, relative_path, file_name, file_size, sha256, content FROM backup_document_files`
+    ).all();
+    let restored = 0;
+    let bytes = 0;
+    fs.mkdirSync(DOCUMENT_UPLOAD_DIR, { recursive: true });
+    const updateEmployeeDocument = restoreDb.prepare("UPDATE documents SET storage_path = ? WHERE id = ?");
+    const hasEventDocuments = restoreDb.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'event_documents'"
+    ).get();
+    const updateEventDocument = hasEventDocuments
+      ? restoreDb.prepare("UPDATE event_documents SET storage_path = ? WHERE id = ?")
+      : null;
+    restoreDb.exec("BEGIN IMMEDIATE");
+    try {
+      for (const row of rows) {
+        const content = Buffer.from(row.content || []);
+        const hash = crypto.createHash("sha256").update(content).digest("hex");
+        if (content.length !== Number(row.file_size || 0) || hash !== row.sha256) {
+          throw new Error(`Restore rejected: document attachment is corrupt (${row.document_id}).`);
+        }
+        const relativePath = safeBackupAttachmentName(row.relative_path || row.file_name, `${row.document_id}.bin`);
+        const targetPath = path.join(DOCUMENT_UPLOAD_DIR, relativePath);
+        fs.writeFileSync(targetPath, content);
+        if (row.document_scope === "event" && updateEventDocument) {
+          updateEventDocument.run(targetPath, row.document_id);
+        } else {
+          updateEmployeeDocument.run(targetPath, row.document_id);
+        }
+        restored += 1;
+        bytes += content.length;
+      }
+      restoreDb.exec("DROP TABLE IF EXISTS backup_document_files");
+      restoreDb.exec("COMMIT");
+    } catch (error) {
+      restoreDb.exec("ROLLBACK");
+      throw error;
+    }
+    return { restored, bytes };
+  } finally {
+    restoreDb.close();
+  }
+}
+
 function verifySqliteBackupFile(filePath, expectedSize = 0) {
   const result = {
     ok: false,
     exists: false,
     sizeMatches: false,
     quickCheck: "",
+    attachmentCount: 0,
+    attachmentBytes: 0,
+    attachmentIntegrity: "not_checked",
     error: ""
   };
   try {
@@ -991,9 +1202,16 @@ function verifySqliteBackupFile(filePath, expectedSize = 0) {
     } finally {
       checkDb.close();
     }
-    result.ok = result.sizeMatches && result.quickCheck.toLowerCase() === "ok";
+    const attachments = backupDocumentFilesSummary(filePath);
+    result.attachmentCount = attachments.attachmentCount;
+    result.attachmentBytes = attachments.attachmentBytes;
+    result.attachmentIntegrity = attachments.attachmentIntegrity;
+    result.ok = result.sizeMatches
+      && result.quickCheck.toLowerCase() === "ok"
+      && !["corrupt"].includes(result.attachmentIntegrity);
     if (!result.sizeMatches) result.error = "Tamano del archivo no coincide";
     else if (!result.ok) result.error = `SQLite quick_check: ${result.quickCheck || "sin resultado"}`;
+    if (attachments.attachmentError) result.error = attachments.attachmentError;
     return result;
   } catch (error) {
     result.error = error.message;
@@ -1006,6 +1224,7 @@ function createBackup(type = "manual", label = "Backup manual") {
   const fileName = `${type}-${timestamp}.sqlite`;
   const filePath = path.join(BACKUP_DIR, fileName);
   db.exec(`VACUUM INTO '${escapeSqlLiteral(filePath)}'`);
+  embedDocumentFilesInBackup(filePath);
   const stats = fs.statSync(filePath);
   const backup = {
     id: randomId("bak"),
