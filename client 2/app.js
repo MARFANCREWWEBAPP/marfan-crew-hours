@@ -1884,7 +1884,7 @@ function employeeForm() {
       </div>
       <div class="leader-toggle portal-password-box">
         <label class="toggle-row"><input name="portalPasswordMode" type="radio" value="phone" checked /> Usar telefono como usuario y contrasena</label>
-        <small>Recomendado: el usuario entra con su telefono y la contrasena son sus ultimos 9 digitos.</small>
+        <small>Por defecto: telefono sin espacios y sin +34. Ejemplo +34 600 111 000 -> 600111000.</small>
         <label class="toggle-row"><input name="portalPasswordMode" type="radio" value="manual" /> Asignar contrasena manual</label>
         <div class="field"><label>Contrasena manual</label><input name="portalPassword" type="password" minlength="8" autocomplete="new-password" placeholder="Minimo 8, letras y numeros" /></div>
       </div>
@@ -1987,7 +1987,7 @@ function employeeEditForm(employee) {
           <label class="toggle-row"><input name="portalPasswordMode" type="radio" value="manual" checked /> Mantener contrasena o asignar manual</label>
           <div class="field"><label>Nueva contrasena manual</label><input name="portalPassword" type="password" minlength="8" autocomplete="new-password" placeholder="Dejar vacio para no cambiar" /></div>
           <label class="toggle-row"><input name="portalPasswordMode" type="radio" value="phone" /> Cambiar contrasena al telefono</label>
-          <small>Si eliges telefono, la contrasena pasara a ser sus ultimos 9 digitos.</small>
+          <small>Si eliges telefono, la contrasena pasara a ser el numero sin espacios y sin +34.</small>
         </div>
       ` : `
         <div class="leader-toggle">
@@ -1996,7 +1996,7 @@ function employeeEditForm(employee) {
         </div>
         <div class="leader-toggle portal-password-box">
           <label class="toggle-row"><input name="portalPasswordMode" type="radio" value="phone" checked /> Usar telefono como usuario y contrasena</label>
-          <small>El usuario entra con su telefono y la contrasena son sus ultimos 9 digitos.</small>
+          <small>Por defecto: telefono sin espacios y sin +34. Ejemplo +34 600 111 000 -> 600111000.</small>
           <label class="toggle-row"><input name="portalPasswordMode" type="radio" value="manual" /> Asignar contrasena manual</label>
           <div class="field"><label>Contrasena manual</label><input name="portalPassword" type="password" minlength="8" autocomplete="new-password" placeholder="Minimo 8, letras y numeros" /></div>
         </div>

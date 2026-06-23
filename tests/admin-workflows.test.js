@@ -449,7 +449,7 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 
     const leaderPortalLogin = await jsonRequest(baseUrl, "/api/auth/login", {
       method: "POST",
-      body: { identifier: "600111000", password: "Marfan2026!", mode: "employee" }
+      body: { identifier: "600111000", password: "600111000", mode: "employee" }
     });
     assert.equal(leaderPortalLogin.status, 200);
     assert.equal(leaderPortalLogin.json.user.role, "employee");
@@ -487,7 +487,7 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(manualLeaderPassword.status, 200);
     const oldLeaderPasswordLogin = await jsonRequest(baseUrl, "/api/auth/login", {
       method: "POST",
-      body: { identifier: "600111000", password: "Marfan2026!", mode: "employee" }
+      body: { identifier: "600111000", password: "600111000", mode: "employee" }
     });
     assert.equal(oldLeaderPasswordLogin.status, 401);
     const newLeaderPasswordLogin = await jsonRequest(baseUrl, "/api/auth/login", {
@@ -1483,7 +1483,7 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 
     const autoConfirmLogin = await jsonRequest(baseUrl, "/api/auth/login", {
       method: "POST",
-      body: { identifier: "600111999", password: "Marfan2026!", mode: "employee" }
+      body: { identifier: "600111999", password: "600111999", mode: "employee" }
     });
     assert.equal(autoConfirmLogin.status, 200);
 
@@ -1555,7 +1555,7 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 
     const noGpsLogin = await jsonRequest(baseUrl, "/api/auth/login", {
       method: "POST",
-      body: { identifier: "600111888", password: "Marfan2026!", mode: "employee" }
+      body: { identifier: "600111888", password: "600111888", mode: "employee" }
     });
     assert.equal(noGpsLogin.status, 200);
 

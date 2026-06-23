@@ -21,6 +21,7 @@ En Railway, con `NODE_ENV=production`, `MARFAN_SEED_DEMO_DATA=false` y `MARFAN_S
 - Super Admin: `info@marquee.es` / `Marquee2026!`
 - Datos iniciales recuperados: 27 operarios, 125 clientes, 22 eventos, 28 asignaciones y fichajes/incidencias existentes desde `seed/production-data.json`
 - Acceso inicial operarios: email o telefono importado / `Marfan2026!`
+- Operarios creados desde el menu: por defecto telefono como usuario y contrasena, sin espacios y omitiendo `+34`. Ejemplo `+34 600 111 000` entra con `600111000` / `600111000`.
 
 Si se pierde el acceso, deja `MARFAN_SUPERADMIN_PASSWORD=Marquee2026!` y activa `MARFAN_RECOVER_SUPERADMIN_ON_START=true` durante un solo despliegue. La app creara un backup y restaurara solo el acceso de German sin borrar clientes, operarios, eventos ni usuarios. Despues vuelve a dejar `MARFAN_RECOVER_SUPERADMIN_ON_START=false`.
 
@@ -146,7 +147,7 @@ Si Google muestra `redirect_uri_mismatch`, la URI autorizada en Google Cloud no 
 - Google Calendar con sincronización de horario, ubicación, descripción operativa y metadatos privados de equipo/requisitos
 - Eventos con duplicado operativo de servicio, requisitos y equipo asignado validado; los efectuados quedan en solo revision y el borrado queda reservado al Super Admin
 - Clientes
-- Operarios con acceso al portal por email o telefono, contrasena manual desde oficina o telefono como usuario/contrasena
+- Operarios con acceso al portal por email o telefono, contrasena manual desde oficina o telefono como usuario/contrasena sin espacios y sin `+34`
 - Asignaciones con recomendaciones y prevalidacion visible de bloqueos
 - Planificador con rol sugerido, distancia, carga reciente, disponibilidad, descanso y documentacion obligatoria por rol critico
 - Fichajes geolocalizados con secuencia entrada/salida, evidencia GPS/dispositivo, bloqueo si falta ubicacion real del recinto y trazabilidad de correcciones

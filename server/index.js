@@ -1144,17 +1144,24 @@ function employeePhonePassword(phone) {
 }
 
 function employeePortalPasswordForCreate(body, phone) {
-  if (body.portalPasswordMode === "phone") {
-    return { password: employeePhonePassword(phone), mode: "phone" };
-  }
   const password = String(body.portalPassword || "").trim();
-  if (body.portalPasswordMode === "manual" && !password) {
-    const error = new Error("Contrasena manual obligatoria");
+  if (body.portalPasswordMode === "manual") {
+    if (!password) {
+      const error = new Error("Contrasena manual obligatoria");
+      error.status = 400;
+      throw error;
+    }
+    return { password: validateEmployeePortalPassword(password), mode: "manual" };
+  }
+  if (password) {
+    return { password: validateEmployeePortalPassword(password), mode: "manual" };
+  }
+  if (!phoneLoginKey(phone)) {
+    const error = new Error("Telefono obligatorio para usarlo como contrasena por defecto");
     error.status = 400;
     throw error;
   }
-  const finalPassword = password || "Marfan2026!";
-  return { password: validateEmployeePortalPassword(finalPassword), mode: password ? "manual" : "default" };
+  return { password: employeePhonePassword(phone), mode: "phone" };
 }
 
 function employeePortalPasswordForUpdate(body, phone) {
