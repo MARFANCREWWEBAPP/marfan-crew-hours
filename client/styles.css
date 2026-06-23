@@ -379,8 +379,9 @@ button:disabled {
 .app-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: var(--sidebar) 1fr;
+  grid-template-columns: var(--sidebar) minmax(0, 1fr);
   background: var(--bg);
+  width: 100%;
 }
 
 .sidebar {
@@ -388,10 +389,18 @@ button:disabled {
   color: #fff;
   padding: 18px 12px;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: var(--sidebar);
+  min-width: var(--sidebar);
+  height: 100vh;
   min-height: 100vh;
   position: sticky;
   top: 0;
+  left: 0;
+  z-index: 60;
+  overflow-y: auto;
+  overflow-x: hidden;
+  align-self: start;
 }
 
 .sidebar .brand-mark {
@@ -424,6 +433,19 @@ button:disabled {
 .nav-list button.active {
   background: rgba(10, 115, 232, 0.9);
   color: #fff;
+}
+
+.sidebar .brand-title,
+.sidebar .brand-title span,
+.sidebar .nav-list button,
+.sidebar .sidebar-foot {
+  opacity: 1;
+  visibility: visible;
+}
+
+.sidebar .nav-list button {
+  color: rgba(255, 255, 255, 0.92);
+  white-space: nowrap;
 }
 
 .sidebar-foot {
@@ -2387,12 +2409,18 @@ button:disabled {
   }
 
   .sidebar {
-    position: static;
+    position: sticky;
+    top: 0;
+    width: 100%;
+    min-width: 0;
+    height: auto;
     min-height: auto;
+    max-height: 46vh;
+    z-index: 80;
   }
 
   .nav-list {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .topbar {
