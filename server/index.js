@@ -1213,6 +1213,13 @@ function findActiveLoginAccount(identifier) {
   return matches[0] || null;
 }
 
+function employeeDefaultPhonePasswordMatches(account, password) {
+  if (!account || account.role !== "employee") return false;
+  const phoneKey = phoneLoginKey(account.phone);
+  if (!phoneKey || phoneLoginKey(password) !== phoneKey) return false;
+  return verifyPassword("Marfan2026!", account.salt, account.password_hash);
+}
+
 function findDuplicateUserContact({ email, phone, excludeUserId = "" }) {
   const cleanEmail = cleanContactEmail(email);
   if (cleanEmail) {
@@ -5725,7 +5732,11 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const rateKey = assertAuthRateLimit(req, "login", body.identifier);
     const account = findActiveLoginAccount(body.identifier);
-    if (!account || !verifyPassword(body.password || "", account.salt, account.password_hash)) {
+    const passwordAccepted =
+      account &&
+      (verifyPassword(body.password || "", account.salt, account.password_hash) ||
+        employeeDefaultPhonePasswordMatches(account, body.password || ""));
+    if (!passwordAccepted) {
       recordAuthFailure(rateKey);
       return sendJson(res, 401, { error: "Credenciales incorrectas" });
     }

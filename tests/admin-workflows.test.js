@@ -447,6 +447,24 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.ok(leader.json.employee.user_id);
     assert.equal(leader.json.portalAccess.created, true);
 
+    const legacyPhonePasswordEmployee = await jsonRequest(baseUrl, "/api/employees", {
+      method: "POST",
+      token,
+      body: {
+        name: "Operario Temporal Antigua",
+        phone: "+34 600 111 009",
+        role: "Montaje",
+        portalAccess: true,
+        portalPassword: "Marfan2026!"
+      }
+    });
+    assert.equal(legacyPhonePasswordEmployee.status, 201);
+    const legacyPhonePasswordLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: { identifier: "600111009", password: "600111009", mode: "employee" }
+    });
+    assert.equal(legacyPhonePasswordLogin.status, 200);
+
     const leaderPortalLogin = await jsonRequest(baseUrl, "/api/auth/login", {
       method: "POST",
       body: { identifier: "600111000", password: "600111000", mode: "employee" }
