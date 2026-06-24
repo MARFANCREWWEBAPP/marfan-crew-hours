@@ -1889,7 +1889,7 @@ function employeeForm() {
       <div class="field"><label>Telefono</label><input name="phone" /></div>
       <div class="field"><label>Email</label><input name="email" type="email" /></div>
       <div class="field"><label>Foto / URL</label><input name="photoUrl" placeholder="https://..." /></div>
-      <div class="field"><label>Subir foto identificativa</label><input name="photoFile" type="file" accept="image/jpeg,image/png,image/webp" /></div>
+      <div class="field"><label>Subir foto identificativa</label><input name="photoFile" type="file" accept="image/jpeg,image/png,image/webp" /><small class="muted">JPG, PNG o WebP hasta 6 MB.</small></div>
       <div class="leader-toggle">
         <label class="toggle-row"><input name="portalAccess" type="checkbox" checked /> Crear acceso portal empleado</label>
         <small>El operario podra entrar con su telefono o email.</small>
@@ -2005,7 +2005,7 @@ function employeeEditForm(employee) {
       <div class="leader-toggle employee-photo-editor">
         ${employeeAvatar(employee)}
         <div class="field"><label>Foto / URL</label><input name="photoUrl" value="${esc(photoInputValue)}" placeholder="https://..." /></div>
-        <div class="field"><label>Subir nueva foto</label><input name="photoFile" type="file" accept="image/jpeg,image/png,image/webp" /></div>
+        <div class="field"><label>Subir nueva foto</label><input name="photoFile" type="file" accept="image/jpeg,image/png,image/webp" /><small class="muted">JPG, PNG o WebP hasta 6 MB.</small></div>
         <small>La foto subida queda guardada con la ficha del operario y aparece en listados.</small>
       </div>
       ${employee.user_id ? `
@@ -3415,7 +3415,7 @@ function employeeTabView(data) {
 	      <div class="field"><label>Telefono</label><input name="phone" value="${esc(data.employee.phone || "")}" /></div>
 	      <div class="field"><label>Email</label><input name="email" type="email" value="${esc(data.employee.email || "")}" /></div>
 	      <div class="field"><label>Foto / URL</label><input name="photoUrl" value="${esc(data.employee.photo_url || "")}" placeholder="https://..." /></div>
-	      <div class="field"><label>Subir foto</label><input name="photoFile" type="file" accept="image/jpeg,image/png,image/webp" /></div>
+	      <div class="field"><label>Subir foto</label><input name="photoFile" type="file" accept="image/jpeg,image/png,image/webp" /><small class="muted">JPG, PNG o WebP hasta 6 MB.</small></div>
 	      <div class="field"><label>Nueva contrasena</label><input name="password" type="password" placeholder="Dejar vacio para no cambiar" /></div>
 	      <button class="btn primary full" type="submit">${icon("user")} Guardar perfil</button>
     </form>

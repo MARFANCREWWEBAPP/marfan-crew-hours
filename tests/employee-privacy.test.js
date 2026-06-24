@@ -42,6 +42,12 @@ function sensitivePaths(value, forbidden, pathName = "$") {
   return matches;
 }
 
+function largeProfilePngDataUrl(sizeBytes = 1_500_000) {
+  const png = Buffer.alloc(sizeBytes, 0);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png, 0);
+  return `data:image/png;base64,${png.toString("base64")}`;
+}
+
 test("employee portal API never exposes internal economic fields", async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "marfan-employee-privacy-"));
   const port = await freePort();
@@ -147,6 +153,22 @@ test("employee portal API never exposes internal economic fields", async () => {
     assert.equal(invalidEmployeeDocument.status, 400);
     const invalidEmployeeDocumentPayload = await invalidEmployeeDocument.json();
     assert.match(invalidEmployeeDocumentPayload.error, /Archivo no valido/);
+
+    const largePhotoUpdate = await fetch(`${baseUrl}/api/employee/profile`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        phone: "+34600777888",
+        email: "empleado@marfancrew.test",
+        photoDataBase64: largeProfilePngDataUrl()
+      })
+    });
+    assert.equal(largePhotoUpdate.status, 200);
+    const largePhotoPayload = await largePhotoUpdate.json();
+    assert.equal(largePhotoPayload.employee.photo_url.length > 1_000_000, true);
 
 	    const profileUpdate = await fetch(`${baseUrl}/api/employee/profile`, {
 	      method: "PATCH",

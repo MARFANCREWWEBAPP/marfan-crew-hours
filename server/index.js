@@ -28,9 +28,9 @@ const SECURITY_HEADERS = {
 };
 const DEMO_MODE = process.env.APP_DEMO_MODE === "true";
 const DEFAULT_CLOCK_RADIUS_M = 150;
-const MAX_BODY_BYTES = 15_000_000;
+const MAX_BODY_BYTES = bytesFromMbEnv("MAX_BODY_MB", 30);
 const MAX_DOCUMENT_FILE_BYTES = 8_000_000;
-const MAX_PROFILE_PHOTO_BYTES = 1_000_000;
+const MAX_PROFILE_PHOTO_BYTES = bytesFromMbEnv("MAX_PROFILE_PHOTO_MB", 6);
 const MAX_IMPORT_FILE_BYTES = 8_000_000;
 const DOCUMENT_UPLOAD_DIR = path.join(DATA_DIR, "uploads", "documents");
 const ALLOWED_DOCUMENT_MIME_TYPES = new Set([
@@ -98,6 +98,16 @@ const ADMIN_PERMISSION_DEFS = [
 const ADMIN_PERMISSION_KEYS = ADMIN_PERMISSION_DEFS.map(([key]) => key);
 
 fs.mkdirSync(DOCUMENT_UPLOAD_DIR, { recursive: true });
+
+function bytesFromMbEnv(name, fallbackMb) {
+  const value = Number(process.env[name] || fallbackMb);
+  const mb = Number.isFinite(value) && value > 0 ? value : fallbackMb;
+  return Math.round(mb * 1_000_000);
+}
+
+function mbLabel(bytes) {
+  return new Intl.NumberFormat("es-ES", { maximumFractionDigits: 1 }).format(bytes / 1_000_000);
+}
 
 function safeBackupPath(filePath) {
   const resolved = path.resolve(filePath || "");
@@ -5031,7 +5041,7 @@ function normalizeProfilePhoto(body, existingPhotoUrl = "") {
       throw error;
     }
     if (buffer.length > MAX_PROFILE_PHOTO_BYTES) {
-      const error = new Error("Foto demasiado grande. Maximo 1 MB.");
+      const error = new Error(`Foto demasiado grande. Maximo ${mbLabel(MAX_PROFILE_PHOTO_BYTES)} MB.`);
       error.status = 413;
       throw error;
     }
