@@ -2109,6 +2109,40 @@ function recoveryCode() {
   return randomToken().replaceAll("-", "").replaceAll("_", "").slice(0, 16).toUpperCase();
 }
 
+function createPasswordRecoveryCode(actor, account, source = "self", expiresInMinutes = 20) {
+  if (!account?.id) {
+    const error = new Error("Usuario no encontrado");
+    error.status = 404;
+    throw error;
+  }
+  if (!account.active) {
+    const error = new Error("El usuario esta bloqueado o inactivo");
+    error.status = 409;
+    throw error;
+  }
+  const resetCode = recoveryCode();
+  const token = hashPassword(resetCode);
+  const resetId = randomId("rst");
+  const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000).toISOString();
+  transaction(() => {
+    run("UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND used_at IS NULL", [
+      account.id
+    ]);
+    run(
+      `INSERT INTO password_reset_tokens (id, user_id, token_hash, salt, expires_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [resetId, account.id, token.hash, token.salt, expiresAt]
+    );
+    audit(actor, source === "admin" ? "password_recovery_created_by_admin" : "password_recovery_requested", "user", account.id, {
+      requestedAt: new Date().toISOString(),
+      resetId,
+      expiresAt,
+      source
+    });
+  });
+  return { recoveryCode: resetCode, resetId, expiresAt, expiresInMinutes };
+}
+
 function findValidRecoveryToken(code) {
   const tokens = all(
     `SELECT password_reset_tokens.*, users.active
@@ -6131,27 +6165,12 @@ async function handleApi(req, res, url) {
     const rateKey = assertAuthRateLimit(req, "recover", body.identifier);
     const account = findActiveLoginAccount(body.identifier);
     let resetCode = null;
+    let expiresInMinutes = null;
     if (account) {
       clearAuthFailures(req, "recover", body.identifier);
-      resetCode = recoveryCode();
-      const token = hashPassword(resetCode);
-      const resetId = randomId("rst");
-      const expiresAt = new Date(Date.now() + 20 * 60 * 1000).toISOString();
-      transaction(() => {
-        run("UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND used_at IS NULL", [
-          account.id
-        ]);
-        run(
-          `INSERT INTO password_reset_tokens (id, user_id, token_hash, salt, expires_at)
-           VALUES (?, ?, ?, ?, ?)`,
-          [resetId, account.id, token.hash, token.salt, expiresAt]
-        );
-        audit(user, "password_recovery_requested", "user", account.id, {
-          requestedAt: new Date().toISOString(),
-          resetId,
-          expiresAt
-        });
-      });
+      const recovery = createPasswordRecoveryCode(user, account, "self", 20);
+      resetCode = recovery.recoveryCode;
+      expiresInMinutes = recovery.expiresInMinutes;
     } else {
       recordAuthFailure(rateKey);
     }
@@ -6159,7 +6178,7 @@ async function handleApi(req, res, url) {
       ok: true,
       message: "Si el usuario existe, oficina recibira una solicitud de recuperacion.",
       recoveryCode: DEMO_MODE ? resetCode : undefined,
-      expiresInMinutes: DEMO_MODE && resetCode ? 20 : undefined
+      expiresInMinutes: DEMO_MODE && resetCode ? expiresInMinutes : undefined
     });
   }
 
@@ -6716,6 +6735,20 @@ async function handleApi(req, res, url) {
       ok: true,
       revoked: result.revoked,
       currentSessionPreserved: result.currentSessionPreserved
+    });
+  }
+
+  const userAccessCodeMatch = pathname.match(/^\/api\/users\/([^/]+)\/access-code$/);
+  if (userAccessCodeMatch && method === "POST") {
+    requireSuperAdmin(user);
+    const targetId = decodeURIComponent(userAccessCodeMatch[1]);
+    const target = get("SELECT * FROM users WHERE id = ?", [targetId]);
+    if (!target) return sendJson(res, 404, { error: "Usuario no encontrado" });
+    const recovery = createPasswordRecoveryCode(user, target, "admin", 30);
+    return sendJson(res, 200, {
+      ok: true,
+      ...recovery,
+      user: listUsers().find((item) => item.id === targetId)
     });
   }
 

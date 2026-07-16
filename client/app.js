@@ -1289,6 +1289,7 @@ function usersView() {
                         ${isSuper && user.role === "admin" ? `<button class="btn compact" data-user-role="${user.id}" data-next-role="employee">Empleado</button>` : ""}
                         ${isSuper && userIsLocked(user) ? `<button class="btn compact" data-unlock-user="${user.id}">Desbloq.</button>` : ""}
                         ${isSuper && Number(user.activeSessionCount || 0) > 0 && !isSelf ? `<button class="btn compact" data-revoke-sessions="${user.id}">Cerrar sesiones</button>` : ""}
+                        ${isSuper && user.active ? `<button class="btn compact ${user.recoveryPending ? "primary" : ""}" data-access-code-user="${user.id}">Codigo</button>` : ""}
                         ${isSuper ? `<button class="btn compact ${user.recoveryPending ? "primary" : ""}" data-reset-user="${user.id}">${user.recoveryPending ? "Nueva clave" : "Clave"}</button>` : ""}
                         ${isSuper && !isSelf ? `<button class="btn compact ${user.active ? "red" : ""}" data-user-active="${user.id}" data-next-active="${user.active ? "false" : "true"}">${user.active ? "Bloq." : "Act."}</button>` : `<span class="muted">${isSelf ? "Tu usuario" : "Solo lectura"}</span>`}
                       </div>
@@ -1400,6 +1401,7 @@ function auditActionLabel(action) {
     google_calendar_synced: "Google Calendar sincronizado",
     google_calendar_sync_failed: "Error sincronizando Google",
     password_recovery_requested: "Recuperacion solicitada",
+    password_recovery_created_by_admin: "Codigo de acceso generado",
     password_reset_completed: "Contrasena cambiada",
     password_changed_by_user: "Contrasena privada actualizada"
   };
@@ -5330,6 +5332,17 @@ async function handleClick(event) {
     if (!ok) return toast("Operacion cancelada");
     const result = await api(`/api/users/${target.dataset.revokeSessions}/sessions`, { method: "DELETE" });
     toast(`${result.revoked || 0} sesiones cerradas`);
+    return renderAdmin(true);
+  }
+
+  if (target.dataset.accessCodeUser) {
+    const user = (state.data.users || []).find((item) => item.id === target.dataset.accessCodeUser);
+    const ok = window.confirm(`Generar codigo temporal para ${user?.name || "este usuario"}? El codigo anterior quedara invalidado y caduca en 30 minutos.`);
+    if (!ok) return toast("Operacion cancelada");
+    const result = await api(`/api/users/${target.dataset.accessCodeUser}/access-code`, { method: "POST" });
+    const copied = await copyText(result.recoveryCode).catch(() => false);
+    window.alert(`Codigo de acceso para ${result.user?.name || user?.name || "usuario"}:\n\n${result.recoveryCode}\n\nCaduca: ${shortDateTime(result.expiresAt)}\nEl usuario debe entrar en "Tengo codigo de recuperacion" y crear su contrasena privada.`);
+    toast(copied ? "Codigo generado y copiado" : "Codigo generado");
     return renderAdmin(true);
   }
 

@@ -457,6 +457,45 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     });
     assert.equal(newPrivatePasswordLogin.status, 200);
 
+    const accessCodeAdmin = await jsonRequest(baseUrl, "/api/users", {
+      method: "POST",
+      token: superToken,
+      body: {
+        role: "admin",
+        name: "Admin Codigo Acceso",
+        email: "codigo.acceso@marfancrew.test",
+        password: "CodigoBase2026",
+        mustChangePassword: true
+      }
+    });
+    assert.equal(accessCodeAdmin.status, 201);
+    const accessCode = await jsonRequest(baseUrl, `/api/users/${accessCodeAdmin.json.user.id}/access-code`, {
+      method: "POST",
+      token: superToken
+    });
+    assert.equal(accessCode.status, 200);
+    assert.match(accessCode.json.recoveryCode, /^[A-Z0-9]{16}$/);
+    assert.equal(accessCode.json.expiresInMinutes, 30);
+    const usersWithAccessCode = await jsonRequest(baseUrl, "/api/users", { token: superToken });
+    assert.equal(usersWithAccessCode.json.users.find((item) => item.id === accessCodeAdmin.json.user.id).recoveryPending, true);
+    const accessCodeReset = await jsonRequest(baseUrl, "/api/auth/reset-password", {
+      method: "POST",
+      body: {
+        recoveryCode: accessCode.json.recoveryCode,
+        password: "CodigoPrivado2026"
+      }
+    });
+    assert.equal(accessCodeReset.status, 200);
+    const accessCodeLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: { identifier: "codigo.acceso@marfancrew.test", password: "CodigoPrivado2026", mode: "admin" }
+    });
+    assert.equal(accessCodeLogin.status, 200);
+    assert.equal(accessCodeLogin.json.user.mustChangePassword, false);
+    const accessCodeAudit = await jsonRequest(baseUrl, "/api/audit-logs?action=password_recovery_created_by_admin&entity=user", { token: superToken });
+    assert.equal(accessCodeAudit.status, 200);
+    assert.equal(accessCodeAudit.json.logs.some((log) => log.entity_id === accessCodeAdmin.json.user.id), true);
+
 	    const recoveryRequest = await jsonRequest(baseUrl, "/api/auth/recover", {
 	      method: "POST",
 	      body: { identifier: "coordinador@marfancrew.test" }
