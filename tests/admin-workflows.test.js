@@ -338,6 +338,82 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 	    const revokedSessionMe = await jsonRequest(baseUrl, "/api/auth/me", { token: unlockedLogin.json.token });
 	    assert.equal(revokedSessionMe.status, 401);
 
+	    const bulkOne = await jsonRequest(baseUrl, "/api/users", {
+	      method: "POST",
+	      token: superToken,
+	      body: {
+	        role: "admin",
+	        name: "Bulk Operaciones Uno",
+	        email: "bulk.operaciones.uno@marfancrew.test",
+	        password: "Bulk2026A"
+	      }
+	    });
+	    assert.equal(bulkOne.status, 201);
+	    const bulkTwo = await jsonRequest(baseUrl, "/api/users", {
+	      method: "POST",
+	      token: superToken,
+	      body: {
+	        role: "admin",
+	        name: "Bulk Operaciones Dos",
+	        email: "bulk.operaciones.dos@marfancrew.test",
+	        password: "Bulk2026B"
+	      }
+	    });
+	    assert.equal(bulkTwo.status, 201);
+	    const bulkOneLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+	      method: "POST",
+	      body: { identifier: "bulk.operaciones.uno@marfancrew.test", password: "Bulk2026A", mode: "admin" }
+	    });
+	    assert.equal(bulkOneLogin.status, 200);
+	    const bulkTwoLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+	      method: "POST",
+	      body: { identifier: "bulk.operaciones.dos@marfancrew.test", password: "Bulk2026B", mode: "admin" }
+	    });
+	    assert.equal(bulkTwoLogin.status, 200);
+	    const bulkRevoke = await jsonRequest(baseUrl, "/api/users/bulk", {
+	      method: "PATCH",
+	      token: superToken,
+	      body: {
+	        action: "revoke_sessions",
+	        userIds: [bulkOne.json.user.id, bulkTwo.json.user.id]
+	      }
+	    });
+	    assert.equal(bulkRevoke.status, 200);
+	    assert.equal(bulkRevoke.json.updated, 2);
+	    assert.equal(bulkRevoke.json.skipped, 0);
+	    assert.equal((await jsonRequest(baseUrl, "/api/auth/me", { token: bulkOneLogin.json.token })).status, 401);
+	    assert.equal((await jsonRequest(baseUrl, "/api/auth/me", { token: bulkTwoLogin.json.token })).status, 401);
+
+	    const bulkDeactivate = await jsonRequest(baseUrl, "/api/users/bulk", {
+	      method: "PATCH",
+	      token: superToken,
+	      body: {
+	        action: "deactivate",
+	        userIds: [bulkOne.json.user.id, superLogin.json.user.id]
+	      }
+	    });
+	    assert.equal(bulkDeactivate.status, 200);
+	    assert.equal(bulkDeactivate.json.updated, 1);
+	    assert.equal(bulkDeactivate.json.skipped, 1);
+	    const afterBulkDeactivate = await jsonRequest(baseUrl, "/api/users", { token: superToken });
+	    assert.equal(afterBulkDeactivate.json.users.find((item) => item.id === bulkOne.json.user.id).active, false);
+	    assert.equal(afterBulkDeactivate.json.users.find((item) => item.id === superLogin.json.user.id).active, true);
+	    const bulkActivate = await jsonRequest(baseUrl, "/api/users/bulk", {
+	      method: "PATCH",
+	      token: superToken,
+	      body: {
+	        action: "activate",
+	        userIds: [bulkOne.json.user.id]
+	      }
+	    });
+	    assert.equal(bulkActivate.status, 200);
+	    assert.equal(bulkActivate.json.updated, 1);
+	    const afterBulkActivate = await jsonRequest(baseUrl, "/api/users", { token: superToken });
+	    assert.equal(afterBulkActivate.json.users.find((item) => item.id === bulkOne.json.user.id).active, true);
+	    const bulkAudit = await jsonRequest(baseUrl, "/api/audit-logs?action=users_bulk_action&entity=user", { token: superToken });
+	    assert.equal(bulkAudit.status, 200);
+	    assert.equal(bulkAudit.json.logs.some((item) => item.metadata?.action === "activate"), true);
+
 	    const recoveryRequest = await jsonRequest(baseUrl, "/api/auth/recover", {
 	      method: "POST",
 	      body: { identifier: "coordinador@marfancrew.test" }

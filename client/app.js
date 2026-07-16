@@ -25,6 +25,7 @@ const state = {
   recommendations: null,
   reportFilters: { from: "", to: "", clientId: "", employeeId: "", status: "", search: "" },
   userFilters: { search: "", role: "all", security: "all" },
+  selectedUserIds: [],
   searchQuery: "",
   eventSnapshots: {},
   publicConfigLoaded: false,
@@ -142,6 +143,7 @@ const iconPaths = {
   map: "M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3zM9 3v15M15 6v15",
   phone: "M22 16.92v3a2 2 0 0 1-2.18 2A19.8 19.8 0 0 1 3.11 5.18 2 2 0 0 1 5.1 3h3a2 2 0 0 1 2 1.72c.12.86.31 1.7.57 2.5a2 2 0 0 1-.45 2.11L9 10.5a16 16 0 0 0 4.5 4.5l1.17-1.22a2 2 0 0 1 2.11-.45c.8.26 1.64.45 2.5.57A2 2 0 0 1 22 16.92z",
   message: "M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z",
+  mail: "M4 5h16v14H4zM4 7l8 6 8-6",
   home: "M3 11 12 3l9 8v10h-6v-6H9v6H3z",
   user: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8"
 };
@@ -224,6 +226,25 @@ function initials(name) {
     .join("")
     .slice(0, 2)
     .toUpperCase();
+}
+
+function whatsappPhone(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.length === 9 && /^[679]/.test(digits)) return `34${digits}`;
+  return digits;
+}
+
+function contactActions({ phone = "", email = "", name = "MARFAN CREW", compact = false } = {}) {
+  const whatsapp = whatsappPhone(phone);
+  const safeEmail = String(email || "").trim();
+  const subject = `MARFAN CREW - ${name}`;
+  return `
+    <div class="contact-actions ${compact ? "compact" : ""}">
+      <button class="btn ${compact ? "compact" : ""} green" type="button" data-whatsapp="${esc(whatsapp)}" ${whatsapp ? "" : "disabled"} title="${whatsapp ? "Abrir WhatsApp" : "Sin telefono para WhatsApp"}">${icon("message")} WhatsApp</button>
+      <button class="btn ${compact ? "compact" : ""}" type="button" data-email="${esc(safeEmail)}" data-email-subject="${esc(subject)}" ${safeEmail ? "" : "disabled"} title="${safeEmail ? "Enviar email" : "Sin email"}">${icon("mail")} Email</button>
+    </div>
+  `;
 }
 
 function statusTag(status) {
@@ -937,6 +958,43 @@ function userCommandCenter(users, isSuper) {
   `;
 }
 
+function cleanSelectedUserIds(users) {
+  const known = new Set(users.map((user) => user.id));
+  const selected = (state.selectedUserIds || []).filter((id) => known.has(id));
+  if (selected.length !== (state.selectedUserIds || []).length) state.selectedUserIds = selected;
+  return selected;
+}
+
+function userBulkBar(users, visibleUsers, isSuper) {
+  if (!isSuper) return "";
+  const selectedIds = cleanSelectedUserIds(users);
+  const selected = new Set(selectedIds);
+  const visibleIds = visibleUsers.map((user) => user.id);
+  const visibleSelectedCount = visibleIds.filter((id) => selected.has(id)).length;
+  const allVisibleSelected = Boolean(visibleIds.length) && visibleSelectedCount === visibleIds.length;
+  const disabled = selectedIds.length ? "" : "disabled";
+  return `
+    <section class="panel user-bulk-bar">
+      <label class="bulk-select">
+        <input type="checkbox" data-user-select-all ${allVisibleSelected ? "checked" : ""} ${visibleIds.length ? "" : "disabled"} />
+        <span>Seleccionar visibles</span>
+      </label>
+      <div class="bulk-count">
+        <strong>${selectedIds.length}</strong>
+        <span>${selectedIds.length === 1 ? "usuario seleccionado" : "usuarios seleccionados"}</span>
+      </div>
+      <div class="bulk-actions">
+        <button class="btn compact" type="button" data-user-select-attention ${visibleUsers.some(userNeedsAttention) ? "" : "disabled"}>${icon("shield")} Seleccionar alertas</button>
+        <button class="btn compact" type="button" data-user-bulk-action="unlock" ${disabled}>Desbloquear</button>
+        <button class="btn compact" type="button" data-user-bulk-action="revoke_sessions" ${disabled}>Cerrar sesiones</button>
+        <button class="btn compact" type="button" data-user-bulk-action="activate" ${disabled}>Activar</button>
+        <button class="btn compact red" type="button" data-user-bulk-action="deactivate" ${disabled}>Bloquear acceso</button>
+        <button class="btn compact ghost" type="button" data-user-select-clear ${disabled}>Limpiar</button>
+      </div>
+    </section>
+  `;
+}
+
 function usersView() {
   const users = state.data.users || [];
   const visibleUsers = filteredUsers(users);
@@ -967,17 +1025,20 @@ function usersView() {
       ${cardTemplate({ label: "Bloqueados", value: users.length - activeUsers, hint: "Sin acceso", tone: "red" })}
     </section>
     ${userCommandCenter(users, isSuper)}
+    ${userBulkBar(users, visibleUsers, isSuper)}
     <section class="split-grid users-view" style="margin-top:16px">
       <div class="panel">
         <div class="panel-head"><h2>${isSuper ? "Usuarios del sistema" : "Administradores internos"}</h2><span class="muted">${visibleUsers.length}/${users.length}</span></div>
         <div class="table-wrap">
           <table class="data-table users-table">
-            <thead><tr><th>Usuario</th><th>Rol</th><th>Contacto</th><th>Ficha operario</th><th>Permisos</th><th>Seguridad</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <thead><tr>${isSuper ? `<th class="select-col"><span class="sr-only">Seleccion</span></th>` : ""}<th>Usuario</th><th>Rol</th><th>Contacto</th><th>Ficha operario</th><th>Permisos</th><th>Seguridad</th><th>Estado</th><th>Acciones</th></tr></thead>
             <tbody>
               ${visibleUsers.map((user) => {
                 const isSelf = user.id === state.user.id;
+                const selected = (state.selectedUserIds || []).includes(user.id);
                 return `
                   <tr>
+                    ${isSuper ? `<td class="select-col"><input type="checkbox" data-user-select="${esc(user.id)}" ${selected ? "checked" : ""} aria-label="Seleccionar ${esc(user.name)}" /></td>` : ""}
                     <td><strong>${esc(user.name)}</strong><br /><small class="muted">${esc(user.id)}</small></td>
                     <td>${roleTag(user.role)}</td>
                     <td>${esc(user.email || "")}<br /><small class="muted">${esc(user.phone || "")}</small></td>
@@ -1009,7 +1070,7 @@ function usersView() {
                     </td>
                   </tr>
                 `;
-              }).join("") || `<tr><td colspan="8"><div class="empty">No hay usuarios con esos filtros.</div></td></tr>`}
+              }).join("") || `<tr><td colspan="${isSuper ? 9 : 8}"><div class="empty">No hay usuarios con esos filtros.</div></td></tr>`}
             </tbody>
           </table>
         </div>
@@ -1050,6 +1111,10 @@ function auditActionLabel(action) {
     user_updated: "Usuario actualizado",
     user_deactivated: "Usuario bloqueado",
     user_sessions_revoked: "Sesiones cerradas",
+    user_bulk_activated: "Usuario activado en lote",
+    user_bulk_deactivated: "Usuario bloqueado en lote",
+    user_bulk_unlocked: "Usuario desbloqueado en lote",
+    users_bulk_action: "Accion masiva usuarios",
     event_created: "Evento creado",
     event_updated: "Evento actualizado",
     event_closed: "Evento cerrado",
@@ -1985,6 +2050,7 @@ function clientDetail(client) {
         <div class="role-row"><span>Telefono</span><strong>${esc(client.phone || "-")}</strong></div>
         <div class="role-row"><span>Provincia</span><strong>${esc(client.province || "-")}</strong></div>
         <div class="role-row"><span>Direccion</span><strong>${esc(client.address || "-")}</strong></div>
+        ${contactActions({ phone: client.phone, email: client.email, name: client.name })}
       </div>
       <div class="inspector-section">
         <h3>Rentabilidad</h3>
@@ -2049,11 +2115,11 @@ function clientsView() {
         <div class="panel-head"><h2>Clientes activos</h2></div>
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>Cliente</th><th>Contacto</th><th>Email</th><th>Telefono</th><th>Provincia</th><th>Eventos</th><th>Facturacion</th><th></th></tr></thead>
+            <thead><tr><th>Cliente</th><th>Contacto</th><th>Email</th><th>Telefono</th><th>Provincia</th><th>Eventos</th><th>Facturacion</th><th>Acciones</th></tr></thead>
             <tbody>
               ${state.data.clients.map((client) => {
                 const metrics = clientMetrics(client);
-                return `<tr><td><strong>${esc(client.name)}</strong><br /><small class="muted">${esc(client.legal_name || client.tax_id || "")}</small></td><td>${esc(client.contact_name)}</td><td>${esc(client.email)}</td><td>${esc(client.phone)}</td><td>${esc(client.province || "")}</td><td>${metrics.events.length}</td><td>${money(metrics.billing)}</td><td><button class="btn" data-select-client="${client.id}">${icon("search")} Ver</button></td></tr>`;
+                return `<tr><td><strong>${esc(client.name)}</strong><br /><small class="muted">${esc(client.legal_name || client.tax_id || "")}</small></td><td>${esc(client.contact_name)}</td><td>${esc(client.email)}</td><td>${esc(client.phone)}</td><td>${esc(client.province || "")}</td><td>${metrics.events.length}</td><td>${money(metrics.billing)}</td><td><div class="table-actions contact-cell"><button class="btn compact" data-select-client="${client.id}">${icon("search")} Ver</button>${contactActions({ phone: client.phone, email: client.email, name: client.name, compact: true })}</div></td></tr>`;
               }).join("")}
             </tbody>
           </table>
@@ -2207,6 +2273,7 @@ function employeeDetail(employee) {
         <div class="role-row"><span>DNI</span><strong>${esc(employee.dni || "-")}</strong></div>
         <div class="role-row"><span>NSS</span><strong>${esc(employee.social_security_number || "-")}</strong></div>
         <div class="role-row"><span>Banco</span><strong>${esc(employee.bank_account || "-")}</strong></div>
+        ${contactActions({ phone: employee.phone, email: employee.email, name: employee.name })}
       </div>
       <div class="inspector-section">
         <div class="role-row"><span>Tarifa hora</span><strong>${money(employee.hourly_rate)}/h</strong></div>
@@ -2334,9 +2401,9 @@ function employeesView() {
         <div class="panel-head"><h2>Personal activo</h2></div>
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>Operario</th><th>Rol</th><th>Telefono</th><th>Tarifa</th><th>Tallaje</th><th>Skills</th><th>Portal</th><th>Estado</th><th></th></tr></thead>
+            <thead><tr><th>Operario</th><th>Rol</th><th>Telefono</th><th>Tarifa</th><th>Tallaje</th><th>Skills</th><th>Portal</th><th>Estado</th><th>Acciones</th></tr></thead>
             <tbody>
-              ${state.data.employees.map((employee) => `<tr><td><div class="employee-name-cell">${employeeAvatar(employee)}<div><strong>${esc(employee.name)}</strong><br /><small class="muted">${esc(employee.email || employee.dni || "")}</small></div></div></td><td>${esc(employee.role)}</td><td>${esc(employee.phone)}</td><td>${money(employee.hourly_rate)}/h</td><td><small>Camiseta ${esc(employee.shirt_size || "-")} · Pantalon ${esc(employee.pants_size || "-")} · Zapato ${esc(employee.shoe_size || "-")}</small></td><td>${employee.skills.slice(0, 3).map((skill) => `<span class="tag blue">${esc(skill)}</span>`).join(" ")}</td><td>${employee.user_id ? `<span class="tag green">Activo</span>` : `<span class="tag amber">Pendiente</span>`}</td><td>${statusTag(employee.status === "activo" ? "confirmado" : "pendiente")}</td><td><button class="btn" data-select-employee="${employee.id}">${icon("search")} Ver</button></td></tr>`).join("")}
+              ${state.data.employees.map((employee) => `<tr><td><div class="employee-name-cell">${employeeAvatar(employee)}<div><strong>${esc(employee.name)}</strong><br /><small class="muted">${esc(employee.email || employee.dni || "")}</small></div></div></td><td>${esc(employee.role)}</td><td>${esc(employee.phone)}</td><td>${money(employee.hourly_rate)}/h</td><td><small>Camiseta ${esc(employee.shirt_size || "-")} · Pantalon ${esc(employee.pants_size || "-")} · Zapato ${esc(employee.shoe_size || "-")}</small></td><td>${employee.skills.slice(0, 3).map((skill) => `<span class="tag blue">${esc(skill)}</span>`).join(" ")}</td><td>${employee.user_id ? `<span class="tag green">Activo</span>` : `<span class="tag amber">Pendiente</span>`}</td><td>${statusTag(employee.status === "activo" ? "confirmado" : "pendiente")}</td><td><div class="table-actions contact-cell"><button class="btn compact" data-select-employee="${employee.id}">${icon("search")} Ver</button>${contactActions({ phone: employee.phone, email: employee.email, name: employee.name, compact: true })}</div></td></tr>`).join("")}
             </tbody>
           </table>
         </div>
@@ -4487,6 +4554,40 @@ async function handleClick(event) {
     return renderAdmin();
   }
 
+  if (target.dataset.userSelectClear !== undefined) {
+    state.selectedUserIds = [];
+    return renderAdmin();
+  }
+
+  if (target.dataset.userSelectAttention !== undefined) {
+    state.selectedUserIds = filteredUsers(state.data.users || [])
+      .filter(userNeedsAttention)
+      .map((user) => user.id);
+    return renderAdmin();
+  }
+
+  if (target.dataset.userBulkAction) {
+    const selected = cleanSelectedUserIds(state.data.users || []);
+    if (!selected.length) return toast("Selecciona usuarios primero", "error");
+    const labels = {
+      activate: "activar los usuarios seleccionados",
+      deactivate: "bloquear el acceso de los usuarios seleccionados",
+      unlock: "desbloquear login de los usuarios seleccionados",
+      revoke_sessions: "cerrar las sesiones de los usuarios seleccionados"
+    };
+    if (["deactivate", "revoke_sessions"].includes(target.dataset.userBulkAction)) {
+      const ok = window.confirm(`Confirmas ${labels[target.dataset.userBulkAction]}?`);
+      if (!ok) return toast("Operacion cancelada");
+    }
+    const result = await api("/api/users/bulk", {
+      method: "PATCH",
+      body: { action: target.dataset.userBulkAction, userIds: selected }
+    });
+    state.selectedUserIds = [];
+    toast(`${result.updated || 0} actualizados${result.skipped ? `, ${result.skipped} omitidos` : ""}`);
+    return renderAdmin(true);
+  }
+
   if (target.dataset.searchGo) {
     return openGlobalSearchResult(target.dataset.searchGo, target.dataset.searchId);
   }
@@ -5191,6 +5292,13 @@ async function handleClick(event) {
     const phone = String(target.dataset.whatsapp || state.employeeHome?.office?.whatsapp || state.employeeHome?.office?.phone || "34910000000").replace(/\D/g, "");
     window.open(`https://wa.me/${phone}`, "_blank", "noopener");
   }
+
+  if (target.dataset.email !== undefined) {
+    const email = String(target.dataset.email || "").trim();
+    if (!email) return toast("Esta ficha no tiene email", "error");
+    const subject = String(target.dataset.emailSubject || "MARFAN CREW").trim();
+    window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}`;
+  }
 }
 
 function handleInput(event) {
@@ -5229,6 +5337,25 @@ function handleKeydown(event) {
 async function handleChange(event) {
   if (event.target.closest?.("[data-report-filters]")) {
     syncReportFiltersFromDom();
+  }
+  if (event.target.dataset?.userSelect !== undefined) {
+    const selected = new Set(state.selectedUserIds || []);
+    if (event.target.checked) selected.add(event.target.dataset.userSelect);
+    else selected.delete(event.target.dataset.userSelect);
+    state.selectedUserIds = Array.from(selected);
+    await renderAdmin();
+    return;
+  }
+  if (event.target.dataset?.userSelectAll !== undefined) {
+    const visibleIds = filteredUsers(state.data.users || []).map((user) => user.id);
+    const selected = new Set(state.selectedUserIds || []);
+    for (const id of visibleIds) {
+      if (event.target.checked) selected.add(id);
+      else selected.delete(id);
+    }
+    state.selectedUserIds = Array.from(selected);
+    await renderAdmin();
+    return;
   }
   if (event.target.dataset?.userFilter) {
     state.userFilters[event.target.dataset.userFilter] = event.target.value;

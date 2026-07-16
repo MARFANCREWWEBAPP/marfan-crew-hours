@@ -5389,6 +5389,60 @@ function ensureCanChangeUser(actor, targetId, nextRole, nextActive) {
   return target;
 }
 
+function revokeUserSessions(actor, targetId, requestToken) {
+  const currentTokens = targetId === actor.id && requestToken ? sessionTokenCandidates(requestToken) : [];
+  const result = currentTokens.length
+    ? run(
+        `DELETE FROM sessions
+         WHERE user_id = ?
+           AND token NOT IN (${currentTokens.map(() => "?").join(",")})`,
+        [targetId, ...currentTokens]
+      )
+    : run("DELETE FROM sessions WHERE user_id = ?", [targetId]);
+  audit(actor, "user_sessions_revoked", "user", targetId, {
+    revoked: result.changes || 0,
+    currentSessionPreserved: Boolean(currentTokens.length)
+  });
+  return {
+    revoked: result.changes || 0,
+    currentSessionPreserved: Boolean(currentTokens.length)
+  };
+}
+
+function applyBulkUserAction(actor, targetId, action, requestToken) {
+  if (action === "activate" || action === "deactivate") {
+    const nextActive = action === "activate";
+    ensureCanChangeUser(actor, targetId, undefined, nextActive);
+    run("UPDATE users SET active = ? WHERE id = ?", [nextActive ? 1 : 0, targetId]);
+    if (!nextActive) run("DELETE FROM sessions WHERE user_id = ?", [targetId]);
+    audit(actor, nextActive ? "user_bulk_activated" : "user_bulk_deactivated", "user", targetId, {
+      active: nextActive
+    });
+    return { active: nextActive };
+  }
+
+  const target = get("SELECT id FROM users WHERE id = ?", [targetId]);
+  if (!target) {
+    const error = new Error("Usuario no encontrado");
+    error.status = 404;
+    throw error;
+  }
+
+  if (action === "unlock") {
+    clearAccountLoginFailures(targetId);
+    audit(actor, "user_bulk_unlocked", "user", targetId);
+    return { unlocked: true };
+  }
+
+  if (action === "revoke_sessions") {
+    return revokeUserSessions(actor, targetId, requestToken);
+  }
+
+  const error = new Error("Accion masiva no valida");
+  error.status = 400;
+  throw error;
+}
+
 function deliveryNoteRows(event) {
   const allowanceRows = all(
     `SELECT allowances.*, employees.name AS employee_name, employees.role
@@ -6262,6 +6316,54 @@ async function handleApi(req, res, url) {
     return sendJson(res, 201, { user: listUsers().find((item) => item.id === id) });
   }
 
+  if (pathname === "/api/users/bulk" && method === "PATCH") {
+    requireSuperAdmin(user);
+    const body = await readBody(req);
+    const action = String(body.action || "").replace("-", "_");
+    const allowedActions = new Set(["activate", "deactivate", "unlock", "revoke_sessions"]);
+    if (!allowedActions.has(action)) {
+      return sendJson(res, 400, { error: "Accion masiva no valida" });
+    }
+    const userIds = Array.from(new Set((Array.isArray(body.userIds) ? body.userIds : [])
+      .map((id) => String(id || "").trim())
+      .filter(Boolean)))
+      .slice(0, 200);
+    if (!userIds.length) return sendJson(res, 400, { error: "Selecciona al menos un usuario" });
+
+    const requestToken = tokenFromRequest(req);
+    const results = userIds.map((targetId) => {
+      try {
+        return {
+          id: targetId,
+          ok: true,
+          ...applyBulkUserAction(user, targetId, action, requestToken)
+        };
+      } catch (error) {
+        return {
+          id: targetId,
+          ok: false,
+          error: error.message || "No se pudo aplicar la accion"
+        };
+      }
+    });
+    const updated = results.filter((item) => item.ok).length;
+    audit(user, "users_bulk_action", "user", "bulk", {
+      action,
+      total: userIds.length,
+      updated,
+      skipped: userIds.length - updated
+    });
+    return sendJson(res, 200, {
+      ok: true,
+      action,
+      total: userIds.length,
+      updated,
+      skipped: userIds.length - updated,
+      results,
+      users: listUsers()
+    });
+  }
+
   const userMatch = pathname.match(/^\/api\/users\/([^/]+)$/);
   if (userMatch && method === "PATCH") {
     requireSuperAdmin(user);
@@ -6362,24 +6464,11 @@ async function handleApi(req, res, url) {
     const targetId = decodeURIComponent(userSessionsMatch[1]);
     const target = get("SELECT id, name FROM users WHERE id = ?", [targetId]);
     if (!target) return sendJson(res, 404, { error: "Usuario no encontrado" });
-    const token = tokenFromRequest(req);
-    const currentTokens = targetId === user.id && token ? sessionTokenCandidates(token) : [];
-    const result = currentTokens.length
-      ? run(
-          `DELETE FROM sessions
-           WHERE user_id = ?
-             AND token NOT IN (${currentTokens.map(() => "?").join(",")})`,
-          [targetId, ...currentTokens]
-        )
-      : run("DELETE FROM sessions WHERE user_id = ?", [targetId]);
-    audit(user, "user_sessions_revoked", "user", targetId, {
-      revoked: result.changes || 0,
-      currentSessionPreserved: Boolean(currentTokens.length)
-    });
+    const result = revokeUserSessions(user, targetId, tokenFromRequest(req));
     return sendJson(res, 200, {
       ok: true,
-      revoked: result.changes || 0,
-      currentSessionPreserved: Boolean(currentTokens.length)
+      revoked: result.revoked,
+      currentSessionPreserved: result.currentSessionPreserved
     });
   }
 
