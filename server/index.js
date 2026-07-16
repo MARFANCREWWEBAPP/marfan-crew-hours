@@ -69,6 +69,9 @@ const AUTH_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const AUTH_RATE_LIMIT_MAX_FAILURES = 5;
 const ACCOUNT_LOCK_FAILURES = 5;
 const ACCOUNT_LOCK_MS = 15 * 60 * 1000;
+const ADMIN_INACTIVITY_LIMIT_DAYS = 60;
+const ACCESS_REVIEW_LIMIT_DAYS = 90;
+const PASSWORD_ROTATION_LIMIT_DAYS = 180;
 let googleAccessTokenCache = null;
 const googleOauthStates = new Map();
 const authFailureBuckets = new Map();
@@ -98,6 +101,13 @@ const ADMIN_PERMISSION_DEFS = [
   ["imports", "Importaciones"]
 ];
 const ADMIN_PERMISSION_KEYS = ADMIN_PERMISSION_DEFS.map(([key]) => key);
+const ADMIN_PERMISSION_PROFILES = {
+  operations: ["dashboard", "live", "calendar", "events", "clients", "employees", "assignments", "clocking", "incidents", "documents", "imports"],
+  people: ["dashboard", "employees", "availability", "documents", "incidents", "imports", "reports"],
+  finance: ["dashboard", "events", "clients", "finances", "reports"],
+  coordination: ["dashboard", "live", "calendar", "events", "employees", "assignments", "clocking", "incidents"],
+  full_admin: ADMIN_PERMISSION_KEYS
+};
 
 fs.mkdirSync(DOCUMENT_UPLOAD_DIR, { recursive: true });
 
@@ -262,7 +272,9 @@ function currentUser(req) {
     return null;
   }
   if (session.token !== candidates[0]) {
-    run("UPDATE sessions SET token = ? WHERE token = ?", [candidates[0], session.token]);
+    run("UPDATE sessions SET token = ?, last_seen_at = CURRENT_TIMESTAMP WHERE token = ?", [candidates[0], session.token]);
+  } else {
+    run("UPDATE sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token = ?", [session.token]);
   }
   return publicUser(session);
 }
@@ -456,6 +468,58 @@ function listAuditLogs(filters = {}) {
   }));
 }
 
+function listUserActivity(targetId, limit = 80) {
+  const safeLimit = Math.min(Math.max(Number(limit || 80), 1), 200);
+  const logs = all(
+    `SELECT audit_logs.*,
+            users.name AS actor_name,
+            users.email AS actor_email,
+            users.role AS actor_role
+     FROM audit_logs
+     LEFT JOIN users ON users.id = audit_logs.actor_user_id
+     WHERE audit_logs.actor_user_id = ?
+        OR (audit_logs.entity IN ('user', 'session') AND audit_logs.entity_id = ?)
+     ORDER BY audit_logs.created_at DESC
+     LIMIT ?`,
+    [targetId, targetId, safeLimit]
+  ).map((row) => ({
+    id: row.id,
+    actor_user_id: row.actor_user_id,
+    actor_name: row.actor_name || "Sistema",
+    actor_email: row.actor_email || "",
+    actor_role: row.actor_role || "system",
+    action: row.action,
+    entity: row.entity,
+    entity_id: row.entity_id,
+    metadata: jsonField(row.metadata, {}),
+    created_at: row.created_at,
+    origin: row.actor_user_id === targetId ? "actor" : "target"
+  }));
+  const securityActions = new Set([
+    "login_success",
+    "login_failed",
+    "login_blocked",
+    "login_account_locked",
+    "logout",
+    "user_session_revoked",
+    "user_sessions_revoked",
+    "password_recovery_requested",
+    "password_recovery_created_by_admin",
+    "password_reset_completed",
+    "password_changed_by_user",
+    "user_updated"
+  ]);
+  return {
+    logs,
+    summary: {
+      total: logs.length,
+      security: logs.filter((log) => securityActions.has(log.action)).length,
+      actorEvents: logs.filter((log) => log.origin === "actor").length,
+      accountEvents: logs.filter((log) => log.origin === "target").length
+    }
+  };
+}
+
 function eventSnapshotPayload(eventId) {
   const event = eventDetail(eventId);
   if (!event) return null;
@@ -549,6 +613,71 @@ function permissionsFromBody(body, role, fallback) {
   if (!body || body.permissions === undefined) return normalizeAdminPermissions(fallback, role);
   const permissions = body.permissions && typeof body.permissions === "object" ? body.permissions : {};
   return Object.fromEntries(ADMIN_PERMISSION_KEYS.map((key) => [key, permissions[key] !== false]));
+}
+
+function permissionsForProfile(profileId) {
+  const keys = ADMIN_PERMISSION_PROFILES[profileId];
+  if (!keys) {
+    const error = new Error("Perfil de permisos no valido");
+    error.status = 400;
+    throw error;
+  }
+  const allowed = new Set(keys);
+  return Object.fromEntries(ADMIN_PERMISSION_KEYS.map((key) => [key, allowed.has(key)]));
+}
+
+function permissionProfileLabel(profileId) {
+  return {
+    operations: "Operaciones",
+    people: "RRHH",
+    finance: "Finanzas",
+    coordination: "Coordinacion",
+    full_admin: "Todo admin",
+    super_admin: "Acceso total",
+    employee: "Portal empleado",
+    custom: "A medida"
+  }[profileId] || profileId;
+}
+
+function permissionProfileForUser(user) {
+  if (user.role === "super_admin") return { id: "super_admin", label: permissionProfileLabel("super_admin"), custom: false };
+  if (user.role === "employee") return { id: "employee", label: permissionProfileLabel("employee"), custom: false };
+  const permissions = normalizeAdminPermissions(user.permissions || user.permissions_json, user.role);
+  for (const [id, keys] of Object.entries(ADMIN_PERMISSION_PROFILES)) {
+    const allowed = new Set(keys);
+    const matches = ADMIN_PERMISSION_KEYS.every((key) => Boolean(permissions[key]) === allowed.has(key));
+    if (matches) {
+      return { id, label: permissionProfileLabel(id), custom: false };
+    }
+  }
+  return { id: "custom", label: permissionProfileLabel("custom"), custom: true };
+}
+
+function suggestedPermissionProfileForUser(user) {
+  if (user.role !== "admin") return null;
+  const currentProfile = permissionProfileForUser(user);
+  if (!currentProfile.custom) return null;
+  const permissions = normalizeAdminPermissions(user.permissions || user.permissions_json, user.role);
+  const candidates = Object.entries(ADMIN_PERMISSION_PROFILES).map(([id, keys]) => {
+    const allowed = new Set(keys);
+    const added = keys.filter((key) => !permissions[key]).length;
+    const removed = ADMIN_PERMISSION_KEYS.filter((key) => permissions[key] && !allowed.has(key)).length;
+    return {
+      id,
+      label: permissionProfileLabel(id),
+      added,
+      removed,
+      distance: added + removed,
+      size: keys.length
+    };
+  });
+  candidates.sort((left, right) =>
+    left.added - right.added ||
+    left.distance - right.distance ||
+    right.size - left.size ||
+    left.label.localeCompare(right.label)
+  );
+  return candidates[0] || null;
 }
 
 function userHasPermission(user, permission) {
@@ -1410,6 +1539,17 @@ function validateAdminEmployeeContact({ employeeId = "", userId = "", email, pho
     error.status = 409;
     throw error;
   }
+}
+
+function findLinkableEmployeeForUserContact({ email, phone, userId = "" }) {
+  const employee = findDuplicateEmployeeContact({ email, phone });
+  if (!employee) return null;
+  if (employee.user_id && employee.user_id !== userId) {
+    const error = new Error("La ficha de operario coincidente ya tiene usuario vinculado");
+    error.status = 409;
+    throw error;
+  }
+  return employee;
 }
 
 function cleanIncidentType(type) {
@@ -5322,7 +5462,8 @@ function listUsers() {
     `SELECT users.id, users.role, users.name, users.email, users.phone, users.avatar_url, users.active,
             users.last_login_at, users.created_at, users.permissions_json,
             users.failed_login_count, users.locked_until, users.last_failed_login_at, users.password_changed_at,
-            users.must_change_password,
+            users.must_change_password, users.access_reviewed_at, users.access_reviewed_by_user_id,
+            reviewers.name AS access_reviewer_name,
             employees.id AS employee_id, employees.role AS employee_role, employees.status AS employee_status,
             (
               SELECT COUNT(*)
@@ -5365,6 +5506,7 @@ function listUsers() {
             ) AS recovery_expires_at
      FROM users
      LEFT JOIN employees ON employees.user_id = users.id
+     LEFT JOIN users reviewers ON reviewers.id = users.access_reviewed_by_user_id
      ORDER BY CASE users.role WHEN 'super_admin' THEN 1 WHEN 'admin' THEN 2 ELSE 3 END, users.name`
   ).map((row) => ({
     id: row.id,
@@ -5382,6 +5524,9 @@ function listUsers() {
     lastFailedLoginAt: row.last_failed_login_at,
     passwordChangedAt: row.password_changed_at,
     mustChangePassword: Boolean(row.must_change_password),
+    accessReviewedAt: row.access_reviewed_at,
+    accessReviewedByUserId: row.access_reviewed_by_user_id,
+    accessReviewerName: row.access_reviewer_name,
     activeSessionCount: Number(row.active_session_count || 0),
     lastSessionAt: row.last_session_at,
     sessionExpiresAt: row.session_expires_at,
@@ -5393,6 +5538,116 @@ function listUsers() {
     recoveryRequestedAt: row.recovery_requested_at,
     recoveryExpiresAt: row.recovery_expires_at
   }));
+}
+
+function daysSinceTimestamp(value) {
+  const ms = dateValueMs(value);
+  if (!ms) return null;
+  return Math.max(0, Math.floor((Date.now() - ms) / (24 * 60 * 60 * 1000)));
+}
+
+function securityReportRisk(user) {
+  const issues = [];
+  let score = 0;
+  const passwordDays = daysSinceTimestamp(user.passwordChangedAt);
+  const reviewDays = daysSinceTimestamp(user.accessReviewedAt);
+  const activityDays = daysSinceTimestamp(user.lastLoginAt || user.createdAt);
+  const locked = Boolean(user.lockedUntil);
+  const permissionProfile = permissionProfileForUser(user);
+
+  if (!user.active) {
+    issues.push("bloqueado");
+    score += 1;
+  }
+  if (locked) {
+    issues.push("bloqueo login");
+    score += 3;
+  }
+  if (user.mustChangePassword) {
+    issues.push("clave temporal");
+    score += 2;
+  }
+  if (user.role !== "employee" && passwordDays !== null && passwordDays > PASSWORD_ROTATION_LIMIT_DAYS) {
+    issues.push(`clave +${PASSWORD_ROTATION_LIMIT_DAYS}d`);
+    score += 2;
+  }
+  if (user.role !== "employee" && reviewDays === null) {
+    issues.push("revision sin realizar");
+    score += 2;
+  } else if (user.role !== "employee" && reviewDays > ACCESS_REVIEW_LIMIT_DAYS) {
+    issues.push(`revision +${ACCESS_REVIEW_LIMIT_DAYS}d`);
+    score += 2;
+  }
+  if (user.role !== "employee" && user.active && activityDays !== null && activityDays > ADMIN_INACTIVITY_LIMIT_DAYS) {
+    issues.push(`inactividad +${ADMIN_INACTIVITY_LIMIT_DAYS}d`);
+    score += 3;
+  }
+  if (user.role === "employee" && !user.employeeId) {
+    issues.push("empleado sin ficha");
+    score += 2;
+  }
+  if (permissionProfile.custom) {
+    issues.push("permisos a medida");
+    score += 1;
+  }
+  if (!user.email && !user.phone) {
+    issues.push("sin contacto");
+    score += 2;
+  }
+  if (user.recoveryPending) {
+    issues.push("recuperacion pendiente");
+    score += 1;
+  }
+
+  const level = score >= 5 ? "alto" : score >= 2 ? "medio" : "ok";
+  const recommendedAction = (() => {
+    if (locked) return "Desbloquear tras verificar identidad";
+    if (user.role !== "employee" && user.active && activityDays !== null && activityDays > ADMIN_INACTIVITY_LIMIT_DAYS) return "Revisar y bloquear si no procede";
+    if (user.mustChangePassword || (user.role !== "employee" && passwordDays !== null && passwordDays > PASSWORD_ROTATION_LIMIT_DAYS)) return "Forzar cambio de clave";
+    if (user.role !== "employee" && (reviewDays === null || reviewDays > ACCESS_REVIEW_LIMIT_DAYS)) return "Revisar permisos";
+    if (permissionProfile.custom) return "Aplicar perfil estandar";
+    if (user.role === "employee" && !user.employeeId) return "Vincular ficha de operario";
+    if (!user.email && !user.phone) return "Completar contacto";
+    return "Sin accion inmediata";
+  })();
+
+  return { level, score, issues, recommendedAction, passwordDays, reviewDays, activityDays };
+}
+
+function userSecurityReportRows() {
+  return listUsers().map((user) => {
+    const risk = securityReportRisk(user);
+    const permissionProfile = permissionProfileForUser(user);
+    const suggestedProfile = suggestedPermissionProfileForUser(user);
+    return {
+      riesgo: risk.level,
+      puntuacion: risk.score,
+      accion_recomendada: risk.recommendedAction,
+      senales: risk.issues.join(" | "),
+      perfil_permisos: permissionProfile.label,
+      permisos_personalizados: permissionProfile.custom ? "si" : "no",
+      perfil_sugerido: suggestedProfile?.label || "",
+      nombre: user.name,
+      rol: user.role,
+      activo: user.active ? "si" : "no",
+      email: user.email || "",
+      telefono: user.phone || "",
+      sesiones_activas: user.activeSessionCount,
+      ultimo_acceso: user.lastLoginAt || "",
+      dias_sin_uso: risk.activityDays ?? "",
+      clave_cambiada: user.passwordChangedAt || "",
+      dias_clave: risk.passwordDays ?? "",
+      cambio_clave_obligatorio: user.mustChangePassword ? "si" : "no",
+      revision_acceso: user.accessReviewedAt || "",
+      dias_revision: risk.reviewDays ?? "",
+      revisado_por: user.accessReviewerName || "",
+      bloqueo_login_hasta: user.lockedUntil || "",
+      recuperacion_pendiente: user.recoveryPending ? "si" : "no",
+      ficha_operario: user.employeeId || "",
+      estado_operario: user.employeeStatus || "",
+      id_usuario: user.id
+    };
+  }).sort((a, b) => Number(b.puntuacion || 0) - Number(a.puntuacion || 0) || String(a.nombre).localeCompare(String(b.nombre)));
 }
 
 function employeePortalContact(employee) {
@@ -5609,7 +5864,183 @@ function revokeUserSessions(actor, targetId, requestToken) {
   };
 }
 
-function applyBulkUserAction(actor, targetId, action, requestToken) {
+function listUserSessions(targetId, requestToken = "") {
+  const currentTokens = requestToken ? new Set(sessionTokenCandidates(requestToken)) : new Set();
+  return all(
+    `SELECT session_id, expires_at, created_at, ip_address, user_agent, last_seen_at, token
+     FROM sessions
+     WHERE user_id = ?
+       AND datetime(expires_at) > CURRENT_TIMESTAMP
+     ORDER BY datetime(COALESCE(last_seen_at, created_at)) DESC`,
+    [targetId]
+  ).map((session) => ({
+    id: session.session_id,
+    createdAt: session.created_at,
+    lastSeenAt: session.last_seen_at || session.created_at,
+    expiresAt: session.expires_at,
+    ipAddress: session.ip_address || "",
+    userAgent: session.user_agent || "",
+    currentSession: currentTokens.has(session.token)
+  }));
+}
+
+function revokeUserSession(actor, targetId, sessionId, requestToken) {
+  const currentTokens = targetId === actor.id && requestToken ? sessionTokenCandidates(requestToken) : [];
+  const session = get(
+    "SELECT token, session_id FROM sessions WHERE user_id = ? AND session_id = ?",
+    [targetId, sessionId]
+  );
+  if (!session) {
+    const error = new Error("Sesion no encontrada");
+    error.status = 404;
+    throw error;
+  }
+  if (currentTokens.includes(session.token)) {
+    const error = new Error("No puedes cerrar tu sesion actual desde aqui");
+    error.status = 409;
+    throw error;
+  }
+  const result = run("DELETE FROM sessions WHERE user_id = ? AND session_id = ?", [targetId, sessionId]);
+  audit(actor, "user_session_revoked", "user", targetId, {
+    sessionId,
+    revoked: result.changes || 0
+  });
+  return { revoked: result.changes || 0 };
+}
+
+function markUserAccessReviewed(actor, targetId) {
+  const target = get("SELECT id, role FROM users WHERE id = ?", [targetId]);
+  if (!target) {
+    const error = new Error("Usuario no encontrado");
+    error.status = 404;
+    throw error;
+  }
+  if (target.role === "employee") {
+    const error = new Error("La revision de acceso aplica a administradores");
+    error.status = 409;
+    throw error;
+  }
+  run(
+    `UPDATE users
+     SET access_reviewed_at = CURRENT_TIMESTAMP,
+         access_reviewed_by_user_id = ?
+     WHERE id = ?`,
+    [actor.id, targetId]
+  );
+  audit(actor, "user_access_reviewed", "user", targetId, {
+    reviewedBy: actor.id
+  });
+  return { reviewed: true };
+}
+
+function permissionsMatch(left, right) {
+  return ADMIN_PERMISSION_KEYS.every((key) => Boolean(left?.[key]) === Boolean(right?.[key]));
+}
+
+function userAccessReviewInvalidationReasons(target, finalRole, permissions, nextActive) {
+  const reasons = [];
+  if (target.role !== finalRole) reasons.push("role_changed");
+  const previousPermissions = normalizeAdminPermissions(target.permissions_json, target.role);
+  if (!permissionsMatch(previousPermissions, permissions)) reasons.push("permissions_changed");
+  if (nextActive === true && !Boolean(target.active)) reasons.push("reactivated");
+  return reasons;
+}
+
+function invalidateUserAccessReview(actor, targetId, reasons, metadata = {}) {
+  const cleanReasons = Array.from(new Set((reasons || []).filter(Boolean)));
+  if (!cleanReasons.length) return false;
+  const target = get("SELECT id, access_reviewed_at FROM users WHERE id = ?", [targetId]);
+  if (!target?.access_reviewed_at) return false;
+  run(
+    `UPDATE users
+     SET access_reviewed_at = NULL,
+         access_reviewed_by_user_id = NULL
+     WHERE id = ?`,
+    [targetId]
+  );
+  audit(actor, "user_access_review_invalidated", "user", targetId, {
+    reasons: cleanReasons,
+    ...metadata
+  });
+  return true;
+}
+
+function revokeUserSessionsForAccessChange(actor, targetId, reasons, metadata = {}) {
+  const cleanReasons = Array.from(new Set((reasons || []).filter(Boolean)));
+  if (!cleanReasons.length) return { revoked: 0 };
+  const result = run("DELETE FROM sessions WHERE user_id = ?", [targetId]);
+  const revoked = result.changes || 0;
+  if (revoked) {
+    audit(actor, "user_access_sessions_revoked", "user", targetId, {
+      revoked,
+      reasons: cleanReasons,
+      ...metadata
+    });
+  }
+  return { revoked };
+}
+
+function userInactiveForAccess(row) {
+  if (!row || row.role === "employee" || !row.active) return false;
+  const reference = row.last_login_at || row.created_at;
+  if (!reference) return false;
+  const date = new Date(String(reference).replace(" ", "T"));
+  if (Number.isNaN(date.getTime())) return false;
+  return Date.now() - date.getTime() > ADMIN_INACTIVITY_LIMIT_DAYS * 24 * 60 * 60 * 1000;
+}
+
+function deactivateInactiveUserAccess(actor, targetId) {
+  const target = get(
+    "SELECT id, role, active, last_login_at, created_at FROM users WHERE id = ?",
+    [targetId]
+  );
+  if (!target) {
+    const error = new Error("Usuario no encontrado");
+    error.status = 404;
+    throw error;
+  }
+  if (!userInactiveForAccess(target)) {
+    const error = new Error(`Solo se bloquean administradores activos sin uso en ${ADMIN_INACTIVITY_LIMIT_DAYS} dias`);
+    error.status = 409;
+    throw error;
+  }
+  ensureCanChangeUser(actor, targetId, undefined, false);
+  run("UPDATE users SET active = 0 WHERE id = ?", [targetId]);
+  run("DELETE FROM sessions WHERE user_id = ?", [targetId]);
+  audit(actor, "user_inactive_deactivated", "user", targetId, {
+    limitDays: ADMIN_INACTIVITY_LIMIT_DAYS,
+    lastLoginAt: target.last_login_at,
+    createdAt: target.created_at
+  });
+  return { active: false, inactive: true };
+}
+
+function forceUserPasswordChange(actor, targetId) {
+  const target = get("SELECT id, active FROM users WHERE id = ?", [targetId]);
+  if (!target) {
+    const error = new Error("Usuario no encontrado");
+    error.status = 404;
+    throw error;
+  }
+  if (actor.id === targetId) {
+    const error = new Error("No puedes forzar el cambio de clave sobre tu propio usuario desde lote");
+    error.status = 409;
+    throw error;
+  }
+  if (!target.active) {
+    const error = new Error("Solo se aplica a usuarios activos");
+    error.status = 409;
+    throw error;
+  }
+  run("UPDATE users SET must_change_password = 1 WHERE id = ?", [targetId]);
+  const revoked = run("DELETE FROM sessions WHERE user_id = ?", [targetId]);
+  audit(actor, "user_password_change_forced", "user", targetId, {
+    revoked: revoked.changes || 0
+  });
+  return { mustChangePassword: true, revoked: revoked.changes || 0 };
+}
+
+function applyBulkUserAction(actor, targetId, action, requestToken, options = {}) {
   if (action === "activate" || action === "deactivate") {
     const nextActive = action === "activate";
     ensureCanChangeUser(actor, targetId, undefined, nextActive);
@@ -5636,6 +6067,87 @@ function applyBulkUserAction(actor, targetId, action, requestToken) {
 
   if (action === "revoke_sessions") {
     return revokeUserSessions(actor, targetId, requestToken);
+  }
+
+  if (action === "deactivate_inactive") {
+    return deactivateInactiveUserAccess(actor, targetId);
+  }
+
+  if (action === "force_password_change") {
+    return forceUserPasswordChange(actor, targetId);
+  }
+
+  if (action === "permission_profile") {
+    const targetUser = get("SELECT id, role FROM users WHERE id = ?", [targetId]);
+    if (targetUser.role !== "admin") {
+      const error = new Error("Solo se aplica a administradores operativos");
+      error.status = 409;
+      throw error;
+    }
+    const permissions = permissionsForProfile(options.profile);
+    run("UPDATE users SET permissions_json = ? WHERE id = ?", [JSON.stringify(permissions), targetId]);
+    const accessReviewInvalidated = invalidateUserAccessReview(actor, targetId, ["permissions_changed"], {
+      profile: options.profile,
+      source: "bulk_permission_profile"
+    });
+    const accessSessionsRevoked = revokeUserSessionsForAccessChange(actor, targetId, ["permissions_changed"], {
+      profile: options.profile,
+      source: "bulk_permission_profile"
+    }).revoked;
+    audit(actor, "user_bulk_permission_profile_applied", "user", targetId, {
+      profile: options.profile,
+      permissions,
+      accessReviewInvalidated,
+      accessSessionsRevoked
+    });
+    return { profile: options.profile, permissions, accessReviewInvalidated, accessSessionsRevoked };
+  }
+
+  if (action === "suggested_profile") {
+    const targetUser = get("SELECT id, role, active, permissions_json FROM users WHERE id = ?", [targetId]);
+    if (targetUser.role !== "admin" || !targetUser.active) {
+      const error = new Error("Solo se aplica a administradores activos");
+      error.status = 409;
+      throw error;
+    }
+    const suggested = suggestedPermissionProfileForUser(targetUser);
+    if (!suggested) {
+      const error = new Error("El usuario ya tiene un perfil estandar");
+      error.status = 409;
+      throw error;
+    }
+    const permissions = permissionsForProfile(suggested.id);
+    run("UPDATE users SET permissions_json = ? WHERE id = ?", [JSON.stringify(permissions), targetId]);
+    const accessReviewInvalidated = invalidateUserAccessReview(actor, targetId, ["permissions_changed"], {
+      profile: suggested.id,
+      source: "bulk_suggested_profile"
+    });
+    const accessSessionsRevoked = revokeUserSessionsForAccessChange(actor, targetId, ["permissions_changed"], {
+      profile: suggested.id,
+      source: "bulk_suggested_profile"
+    }).revoked;
+    audit(actor, "user_bulk_suggested_permission_profile_applied", "user", targetId, {
+      profile: suggested.id,
+      profileLabel: suggested.label,
+      added: suggested.added,
+      removed: suggested.removed,
+      permissions,
+      accessReviewInvalidated,
+      accessSessionsRevoked
+    });
+    return {
+      profile: suggested.id,
+      profileLabel: suggested.label,
+      added: suggested.added,
+      removed: suggested.removed,
+      permissions,
+      accessReviewInvalidated,
+      accessSessionsRevoked
+    };
+  }
+
+  if (action === "mark_reviewed") {
+    return markUserAccessReviewed(actor, targetId);
   }
 
   const error = new Error("Accion masiva no valida");
@@ -6129,12 +6641,19 @@ async function handleApi(req, res, url) {
     clearAccountLoginFailures(account.id);
 
     const token = randomToken();
+    const sessionId = randomId("ses");
     const days = body.remember ? 30 : 1;
     const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
-    run("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)", [
+    run(
+      `INSERT INTO sessions (token, session_id, user_id, expires_at, ip_address, user_agent, last_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [
       sessionStorageToken(token),
+      sessionId,
       account.id,
-      expiresAt
+      expiresAt,
+      requestIp(req),
+      String(req.headers["user-agent"] || "").slice(0, 300)
     ]);
     run("UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?", [account.id]);
     audit(account, "login_success", "session", account.id, {
@@ -6464,6 +6983,25 @@ async function handleApi(req, res, url) {
     });
   }
 
+  if (pathname === "/api/users/security-report" && method === "GET") {
+    requireSuperAdmin(user);
+    const rows = userSecurityReportRows();
+    const summary = {
+      total: rows.length,
+      high: rows.filter((row) => row.riesgo === "alto").length,
+      medium: rows.filter((row) => row.riesgo === "medio").length,
+      ok: rows.filter((row) => row.riesgo === "ok").length
+    };
+    if (url.searchParams.get("format") === "csv") {
+      audit(user, "users_security_report_exported", "user", "bulk", summary);
+      return send(res, 200, createCsv(rows), {
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": "attachment; filename=usuarios-seguridad.csv"
+      });
+    }
+    return sendJson(res, 200, { summary, rows });
+  }
+
   if (pathname === "/api/audit-logs" && method === "GET") {
     requireSuperAdmin(user);
     const logs = listAuditLogs({
@@ -6501,9 +7039,13 @@ async function handleApi(req, res, url) {
       return sendJson(res, 400, { error: "Nombre, contrasena y email o telefono son obligatorios" });
     }
     const safePassword = validateNewPassword(body.password);
-    validateUserContact({ email, phone });
+    const linkableEmployee = role === "employee"
+      ? findLinkableEmployeeForUserContact({ email, phone })
+      : null;
+    validateUserContact({ email, phone, employeeId: linkableEmployee?.id || "" });
     const credentials = hashPassword(safePassword);
     const id = randomId("usr");
+    const createdEmployeeId = role === "employee" && !linkableEmployee ? randomId("emp") : null;
     const mustChangePassword = body.mustChangePassword === true || body.mustChangePassword === "true";
     const permissions = user.role === "super_admin"
       ? permissionsFromBody(body, role)
@@ -6526,30 +7068,48 @@ async function handleApi(req, res, url) {
       );
 
       if (role === "employee") {
-        const employeeId = randomId("emp");
-        run(
-          `INSERT INTO employees
-            (id, user_id, name, role, phone, email, city, lat, lng, hourly_rate, diet_rate, skills, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            employeeId,
-            id,
-            body.name,
-            body.employeeRole || "Montaje",
-            phone || "",
-            email || "",
-            body.city || "",
-            Number(body.lat || 40.4168),
-            Number(body.lng || -3.7038),
-            Number(body.hourlyRate || 15),
-            Number(body.dietRate || 0),
-            JSON.stringify(body.skills || []),
-            "Creado desde usuarios Super Admin"
-          ]
-        );
+        if (linkableEmployee) {
+          run(
+            `UPDATE employees
+             SET user_id = ?, name = ?, email = ?, phone = ?
+             WHERE id = ?`,
+            [id, body.name, email || "", phone || "", linkableEmployee.id]
+          );
+          audit(user, "user_employee_profile_linked", "employee", linkableEmployee.id, {
+            userId: id,
+            mode: "user_created"
+          });
+        } else {
+          run(
+            `INSERT INTO employees
+              (id, user_id, name, role, phone, email, city, lat, lng, hourly_rate, diet_rate, skills, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              createdEmployeeId,
+              id,
+              body.name,
+              body.employeeRole || "Montaje",
+              phone || "",
+              email || "",
+              body.city || "",
+              Number(body.lat || 40.4168),
+              Number(body.lng || -3.7038),
+              Number(body.hourlyRate || 15),
+              Number(body.dietRate || 0),
+              JSON.stringify(body.skills || []),
+              "Creado desde usuarios Super Admin"
+            ]
+          );
+        }
       }
 
-      audit(user, "user_created", "user", id, { role, permissions, mustChangePassword });
+      audit(user, "user_created", "user", id, {
+        role,
+        permissions,
+        mustChangePassword,
+        employeeLinked: Boolean(linkableEmployee),
+        employeeId: linkableEmployee?.id || createdEmployeeId || ""
+      });
     });
     return sendJson(res, 201, { user: listUsers().find((item) => item.id === id) });
   }
@@ -6558,10 +7118,22 @@ async function handleApi(req, res, url) {
     requireSuperAdmin(user);
     const body = await readBody(req);
     const action = String(body.action || "").replace("-", "_");
-    const allowedActions = new Set(["activate", "deactivate", "unlock", "revoke_sessions"]);
+    const allowedActions = new Set([
+      "activate",
+      "deactivate",
+      "unlock",
+      "revoke_sessions",
+      "permission_profile",
+      "suggested_profile",
+      "mark_reviewed",
+      "deactivate_inactive",
+      "force_password_change"
+    ]);
     if (!allowedActions.has(action)) {
       return sendJson(res, 400, { error: "Accion masiva no valida" });
     }
+    const profile = action === "permission_profile" ? String(body.profile || "") : "";
+    if (action === "permission_profile") permissionsForProfile(profile);
     const userIds = Array.from(new Set((Array.isArray(body.userIds) ? body.userIds : [])
       .map((id) => String(id || "").trim())
       .filter(Boolean)))
@@ -6574,7 +7146,7 @@ async function handleApi(req, res, url) {
         return {
           id: targetId,
           ok: true,
-          ...applyBulkUserAction(user, targetId, action, requestToken)
+          ...applyBulkUserAction(user, targetId, action, requestToken, { profile })
         };
       } catch (error) {
         return {
@@ -6587,6 +7159,7 @@ async function handleApi(req, res, url) {
     const updated = results.filter((item) => item.ok).length;
     audit(user, "users_bulk_action", "user", "bulk", {
       action,
+      profile,
       total: userIds.length,
       updated,
       skipped: userIds.length - updated
@@ -6594,6 +7167,7 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, {
       ok: true,
       action,
+      profile,
       total: userIds.length,
       updated,
       skipped: userIds.length - updated,
@@ -6628,16 +7202,20 @@ async function handleApi(req, res, url) {
     const finalRole = role || target.role;
     const permissions = permissionsFromBody(body, finalRole, target.permissions_json);
     const linkedEmployee = get("SELECT id FROM employees WHERE user_id = ?", [targetId]);
-    const createdEmployeeId = finalRole === "employee" && !linkedEmployee ? randomId("emp") : null;
     const nextEmail = body.email === undefined ? cleanContactEmail(target.email) : cleanContactEmail(body.email);
     const nextPhone = body.phone === undefined ? cleanContactPhone(target.phone) : cleanContactPhone(body.phone);
     const nextName = body.name ?? target.name;
     if (!nextEmail && !nextPhone) {
       return sendJson(res, 400, { error: "Email o telefono obligatorio" });
     }
+    const linkableEmployee = finalRole === "employee" && !linkedEmployee
+      ? findLinkableEmployeeForUserContact({ email: nextEmail, phone: nextPhone, userId: targetId })
+      : null;
+    const createdEmployeeId = finalRole === "employee" && !linkedEmployee && !linkableEmployee ? randomId("emp") : null;
+    const reviewInvalidationReasons = userAccessReviewInvalidationReasons(target, finalRole, permissions, nextActive);
     validateUserContact({
       userId: targetId,
-      employeeId: linkedEmployee?.id || "",
+      employeeId: linkedEmployee?.id || linkableEmployee?.id || "",
       email: nextEmail,
       phone: nextPhone
     });
@@ -6674,26 +7252,39 @@ async function handleApi(req, res, url) {
       );
 
       if (finalRole === "employee" && !linkedEmployee) {
-        run(
-          `INSERT INTO employees
-            (id, user_id, name, role, phone, email, city, lat, lng, hourly_rate, diet_rate, skills, notes)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            createdEmployeeId,
-            targetId,
-            nextName,
-            body.employeeRole || "Montaje",
-            nextPhone || "",
-            nextEmail || "",
-            body.city || "",
-            Number(body.lat || 40.4168),
-            Number(body.lng || -3.7038),
-            Number(body.hourlyRate || 15),
-            Number(body.dietRate || 0),
-            JSON.stringify(body.skills || []),
-            "Ficha creada al cambiar permisos desde Super Admin"
-          ]
-        );
+        if (linkableEmployee) {
+          run(
+            `UPDATE employees
+             SET user_id = ?, name = ?, email = ?, phone = ?
+             WHERE id = ?`,
+            [targetId, nextName, nextEmail || "", nextPhone || "", linkableEmployee.id]
+          );
+          audit(user, "user_employee_profile_linked", "employee", linkableEmployee.id, {
+            userId: targetId,
+            mode: "role_changed"
+          });
+        } else {
+          run(
+            `INSERT INTO employees
+              (id, user_id, name, role, phone, email, city, lat, lng, hourly_rate, diet_rate, skills, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              createdEmployeeId,
+              targetId,
+              nextName,
+              body.employeeRole || "Montaje",
+              nextPhone || "",
+              nextEmail || "",
+              body.city || "",
+              Number(body.lat || 40.4168),
+              Number(body.lng || -3.7038),
+              Number(body.hourlyRate || 15),
+              Number(body.dietRate || 0),
+              JSON.stringify(body.skills || []),
+              "Ficha creada al cambiar permisos desde Super Admin"
+            ]
+          );
+        }
       } else if (linkedEmployee) {
         run(
           `UPDATE employees
@@ -6710,6 +7301,18 @@ async function handleApi(req, res, url) {
           targetId
         ]);
       }
+      const accessReviewInvalidated = invalidateUserAccessReview(user, targetId, reviewInvalidationReasons, {
+        previousRole: target.role,
+        role: finalRole,
+        source: "user_update"
+      });
+      const accessSessionsRevoked = nextActive === false || password
+        ? 0
+        : revokeUserSessionsForAccessChange(user, targetId, reviewInvalidationReasons, {
+            previousRole: target.role,
+            role: finalRole,
+            source: "user_update"
+          }).revoked;
       audit(user, "user_updated", "user", targetId, {
         role: finalRole,
         active: nextActive === undefined ? Boolean(target.active) : nextActive,
@@ -6717,14 +7320,38 @@ async function handleApi(req, res, url) {
         mustChangePassword: nextMustChangePassword,
         unlocked: unlock,
         permissions,
-        employeeSynced: Boolean(linkedEmployee || createdEmployeeId),
-        employeeId: linkedEmployee?.id || createdEmployeeId || ""
+        accessReviewInvalidated,
+        accessSessionsRevoked,
+        employeeSynced: Boolean(linkedEmployee || linkableEmployee || createdEmployeeId),
+        employeeId: linkedEmployee?.id || linkableEmployee?.id || createdEmployeeId || ""
       });
     });
     return sendJson(res, 200, { user: listUsers().find((item) => item.id === targetId) });
   }
 
+  const userAccessReviewMatch = pathname.match(/^\/api\/users\/([^/]+)\/access-review$/);
+  if (userAccessReviewMatch && method === "POST") {
+    requireSuperAdmin(user);
+    const targetId = decodeURIComponent(userAccessReviewMatch[1]);
+    markUserAccessReviewed(user, targetId);
+    return sendJson(res, 200, {
+      ok: true,
+      user: listUsers().find((item) => item.id === targetId)
+    });
+  }
+
   const userSessionsMatch = pathname.match(/^\/api\/users\/([^/]+)\/sessions$/);
+  if (userSessionsMatch && method === "GET") {
+    requireSuperAdmin(user);
+    const targetId = decodeURIComponent(userSessionsMatch[1]);
+    const target = get("SELECT id, name FROM users WHERE id = ?", [targetId]);
+    if (!target) return sendJson(res, 404, { error: "Usuario no encontrado" });
+    return sendJson(res, 200, {
+      user: listUsers().find((item) => item.id === targetId),
+      sessions: listUserSessions(targetId, tokenFromRequest(req, { allowCookie: true }))
+    });
+  }
+
   if (userSessionsMatch && method === "DELETE") {
     requireSuperAdmin(user);
     const targetId = decodeURIComponent(userSessionsMatch[1]);
@@ -6735,6 +7362,34 @@ async function handleApi(req, res, url) {
       ok: true,
       revoked: result.revoked,
       currentSessionPreserved: result.currentSessionPreserved
+    });
+  }
+
+  const userSessionMatch = pathname.match(/^\/api\/users\/([^/]+)\/sessions\/([^/]+)$/);
+  if (userSessionMatch && method === "DELETE") {
+    requireSuperAdmin(user);
+    const targetId = decodeURIComponent(userSessionMatch[1]);
+    const sessionId = decodeURIComponent(userSessionMatch[2]);
+    const target = get("SELECT id, name FROM users WHERE id = ?", [targetId]);
+    if (!target) return sendJson(res, 404, { error: "Usuario no encontrado" });
+    const result = revokeUserSession(user, targetId, sessionId, tokenFromRequest(req, { allowCookie: true }));
+    return sendJson(res, 200, {
+      ok: true,
+      ...result,
+      sessions: listUserSessions(targetId, tokenFromRequest(req, { allowCookie: true }))
+    });
+  }
+
+  const userActivityMatch = pathname.match(/^\/api\/users\/([^/]+)\/activity$/);
+  if (userActivityMatch && method === "GET") {
+    requireSuperAdmin(user);
+    const targetId = decodeURIComponent(userActivityMatch[1]);
+    const target = get("SELECT id, name FROM users WHERE id = ?", [targetId]);
+    if (!target) return sendJson(res, 404, { error: "Usuario no encontrado" });
+    const activity = listUserActivity(targetId, url.searchParams.get("limit"));
+    return sendJson(res, 200, {
+      user: listUsers().find((item) => item.id === targetId),
+      ...activity
     });
   }
 

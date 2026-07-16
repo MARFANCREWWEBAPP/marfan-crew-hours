@@ -985,7 +985,7 @@ button:disabled {
 
 .user-attention-strip {
   display: grid;
-  grid-template-columns: repeat(6, minmax(110px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 10px;
 }
 
@@ -1045,6 +1045,74 @@ button:disabled {
 
 .attention-tile.active span {
   color: var(--blue);
+}
+
+.user-ops-board {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.ops-board-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.ops-board-head > div {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.ops-board-head strong {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.ops-board-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.ops-row {
+  min-height: 64px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+  padding: 9px;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 6px 9px;
+  align-items: center;
+}
+
+.ops-row.needs-work {
+  border-color: rgba(245, 158, 11, 0.36);
+  background: #fffdf8;
+}
+
+.ops-row strong {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.ops-row small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+  min-width: 0;
+}
+
+.ops-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .user-portal-health {
@@ -1114,6 +1182,18 @@ button:disabled {
   font-size: 11px;
 }
 
+.permission-summary {
+  display: inline-grid;
+  gap: 4px;
+  align-items: start;
+}
+
+.permission-summary small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 780;
+}
+
 .user-bulk-bar {
   margin-top: 12px;
   padding: 12px 14px;
@@ -1168,6 +1248,113 @@ button:disabled {
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
+}
+
+.bulk-profile-action {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.bulk-profile-action select {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.user-session-panel {
+  margin-top: 12px;
+  padding: 14px;
+}
+
+.user-activity-panel {
+  margin-top: 12px;
+  padding: 14px;
+}
+
+.activity-summary {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.activity-summary span {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+  padding: 7px 9px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.activity-summary strong {
+  color: var(--ink);
+}
+
+.activity-list {
+  display: grid;
+  gap: 8px;
+}
+
+.activity-row {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: minmax(128px, auto) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.activity-row strong,
+.activity-row small {
+  display: block;
+}
+
+.activity-row small {
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+.session-list {
+  display: grid;
+  gap: 8px;
+}
+
+.session-row {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.session-row strong,
+.session-row small {
+  display: block;
+}
+
+.session-row small {
+  margin-top: 2px;
+}
+
+.session-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
 }
 
 .select-col {
@@ -2967,6 +3154,18 @@ button:disabled {
 
   .user-portal-health .btn {
     width: 100%;
+  }
+
+  .session-row {
+    grid-template-columns: 1fr;
+  }
+
+  .activity-row {
+    grid-template-columns: 1fr;
+  }
+
+  .session-actions {
+    justify-content: flex-start;
   }
 
   .bulk-actions {

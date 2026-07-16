@@ -266,6 +266,94 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 	    assert.equal(superLogin.status, 200);
 	    const superToken = superLogin.json.token;
 
+	    const existingEmployeeProfile = await jsonRequest(baseUrl, "/api/employees", {
+	      method: "POST",
+	      token: superToken,
+	      body: {
+	        name: "Operario Ficha Existente",
+	        role: "Montaje",
+	        email: "ficha.existente@marfancrew.test",
+	        phone: "+34 600 111 901",
+	        portalAccess: false
+	      }
+	    });
+	    assert.equal(existingEmployeeProfile.status, 201);
+	    assert.equal(existingEmployeeProfile.json.employee.user_id, null);
+	    const linkedEmployeeUser = await jsonRequest(baseUrl, "/api/users", {
+	      method: "POST",
+	      token: superToken,
+	      body: {
+	        role: "employee",
+	        name: "Operario Ficha Existente",
+	        email: "ficha.existente@marfancrew.test",
+	        phone: "+34 600 111 901",
+	        password: "Vinculo2026",
+	        mustChangePassword: true
+	      }
+	    });
+	    assert.equal(linkedEmployeeUser.status, 201);
+	    assert.equal(linkedEmployeeUser.json.user.role, "employee");
+	    assert.equal(linkedEmployeeUser.json.user.employeeId, existingEmployeeProfile.json.employee.id);
+	    const employeesAfterUserLink = await jsonRequest(baseUrl, "/api/employees", { token: superToken });
+	    assert.equal(
+	      employeesAfterUserLink.json.employees.filter((employee) => employee.email === "ficha.existente@marfancrew.test").length,
+	      1
+	    );
+	    assert.equal(
+	      employeesAfterUserLink.json.employees.find((employee) => employee.id === existingEmployeeProfile.json.employee.id).user_id,
+	      linkedEmployeeUser.json.user.id
+	    );
+
+	    const conversionEmployeeProfile = await jsonRequest(baseUrl, "/api/employees", {
+	      method: "POST",
+	      token: superToken,
+	      body: {
+	        name: "Operario Conversion Existente",
+	        role: "Runner",
+	        email: "conversion.existente@marfancrew.test",
+	        phone: "+34 600 111 902",
+	        portalAccess: false
+	      }
+	    });
+	    assert.equal(conversionEmployeeProfile.status, 201);
+	    const adminToConvert = await jsonRequest(baseUrl, "/api/users", {
+	      method: "POST",
+	      token: superToken,
+	      body: {
+	        role: "admin",
+	        name: "Admin A Convertir",
+	        email: "admin.convertir@marfancrew.test",
+	        password: "Convertir2026"
+	      }
+	    });
+	    assert.equal(adminToConvert.status, 201);
+	    const convertedEmployeeUser = await jsonRequest(baseUrl, `/api/users/${adminToConvert.json.user.id}`, {
+	      method: "PATCH",
+	      token: superToken,
+	      body: {
+	        role: "employee",
+	        name: "Operario Conversion Existente",
+	        email: "conversion.existente@marfancrew.test",
+	        phone: "+34 600 111 902"
+	      }
+	    });
+	    assert.equal(convertedEmployeeUser.status, 200);
+	    assert.equal(convertedEmployeeUser.json.user.role, "employee");
+	    assert.equal(convertedEmployeeUser.json.user.employeeId, conversionEmployeeProfile.json.employee.id);
+	    const employeesAfterRoleLink = await jsonRequest(baseUrl, "/api/employees", { token: superToken });
+	    assert.equal(
+	      employeesAfterRoleLink.json.employees.filter((employee) => employee.email === "conversion.existente@marfancrew.test").length,
+	      1
+	    );
+	    assert.equal(
+	      employeesAfterRoleLink.json.employees.find((employee) => employee.id === conversionEmployeeProfile.json.employee.id).user_id,
+	      adminToConvert.json.user.id
+	    );
+	    const employeeLinkAudit = await jsonRequest(baseUrl, "/api/audit-logs?action=user_employee_profile_linked&entity=employee", { token: superToken });
+	    assert.equal(employeeLinkAudit.status, 200);
+	    assert.equal(employeeLinkAudit.json.logs.some((item) => item.entity_id === existingEmployeeProfile.json.employee.id), true);
+	    assert.equal(employeeLinkAudit.json.logs.some((item) => item.entity_id === conversionEmployeeProfile.json.employee.id), true);
+
 	    const lockoutAdmin = await jsonRequest(baseUrl, "/api/users", {
 	      method: "POST",
 	      token: superToken,
@@ -318,6 +406,10 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 
 	    const unlockedLogin = await jsonRequest(baseUrl, "/api/auth/login", {
 	      method: "POST",
+	      headers: {
+	        "user-agent": "MARFAN Test Browser",
+	        "x-forwarded-for": "203.0.113.10"
+	      },
 	      body: {
 	        identifier: "bloqueo.seguridad@marfancrew.test",
 	        password: "Lockout2026",
@@ -329,14 +421,32 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 	    const lockoutWithSession = usersWithSession.json.users.find((item) => item.id === lockoutAdmin.json.user.id);
 	    assert.equal(lockoutWithSession.activeSessionCount >= 1, true);
 
-	    const revokedSessions = await jsonRequest(baseUrl, `/api/users/${lockoutAdmin.json.user.id}/sessions`, {
+	    const listedSessions = await jsonRequest(baseUrl, `/api/users/${lockoutAdmin.json.user.id}/sessions`, {
+	      token: superToken
+	    });
+	    assert.equal(listedSessions.status, 200);
+	    assert.equal(listedSessions.json.sessions.length >= 1, true);
+	    const lockoutSession = listedSessions.json.sessions[0];
+	    assert.ok(lockoutSession.id);
+	    assert.equal(lockoutSession.ipAddress, "203.0.113.10");
+	    assert.match(lockoutSession.userAgent, /MARFAN Test Browser/);
+	    assert.ok(lockoutSession.lastSeenAt);
+
+	    const revokedSession = await jsonRequest(baseUrl, `/api/users/${lockoutAdmin.json.user.id}/sessions/${lockoutSession.id}`, {
 	      method: "DELETE",
 	      token: superToken
 	    });
-	    assert.equal(revokedSessions.status, 200);
-	    assert.equal(revokedSessions.json.revoked >= 1, true);
+	    assert.equal(revokedSession.status, 200);
+	    assert.equal(revokedSession.json.revoked, 1);
 	    const revokedSessionMe = await jsonRequest(baseUrl, "/api/auth/me", { token: unlockedLogin.json.token });
 	    assert.equal(revokedSessionMe.status, 401);
+	    const lockoutActivity = await jsonRequest(baseUrl, `/api/users/${lockoutAdmin.json.user.id}/activity`, {
+	      token: superToken
+	    });
+	    assert.equal(lockoutActivity.status, 200);
+	    assert.equal(lockoutActivity.json.summary.security >= 2, true);
+	    assert.equal(lockoutActivity.json.logs.some((log) => log.action === "login_success"), true);
+	    assert.equal(lockoutActivity.json.logs.some((log) => log.action === "user_session_revoked"), true);
 
 	    const bulkOne = await jsonRequest(baseUrl, "/api/users", {
 	      method: "POST",
@@ -410,9 +520,222 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 	    assert.equal(bulkActivate.json.updated, 1);
 	    const afterBulkActivate = await jsonRequest(baseUrl, "/api/users", { token: superToken });
 	    assert.equal(afterBulkActivate.json.users.find((item) => item.id === bulkOne.json.user.id).active, true);
+	    const bulkPermissionProfile = await jsonRequest(baseUrl, "/api/users/bulk", {
+	      method: "PATCH",
+	      token: superToken,
+	      body: {
+	        action: "permission_profile",
+	        profile: "people",
+	        userIds: [bulkOne.json.user.id, bulkTwo.json.user.id, superLogin.json.user.id]
+	      }
+	    });
+	    assert.equal(bulkPermissionProfile.status, 200);
+	    assert.equal(bulkPermissionProfile.json.updated, 2);
+	    assert.equal(bulkPermissionProfile.json.skipped, 1);
+	    const afterBulkPermissions = await jsonRequest(baseUrl, "/api/users", { token: superToken });
+	    const bulkOnePermissions = afterBulkPermissions.json.users.find((item) => item.id === bulkOne.json.user.id).permissions;
+	    const bulkTwoPermissions = afterBulkPermissions.json.users.find((item) => item.id === bulkTwo.json.user.id).permissions;
+	    assert.equal(bulkOnePermissions.employees, true);
+	    assert.equal(bulkOnePermissions.documents, true);
+	    assert.equal(bulkOnePermissions.finances, false);
+	    assert.deepEqual(bulkOnePermissions, bulkTwoPermissions);
 	    const bulkAudit = await jsonRequest(baseUrl, "/api/audit-logs?action=users_bulk_action&entity=user", { token: superToken });
 	    assert.equal(bulkAudit.status, 200);
-	    assert.equal(bulkAudit.json.logs.some((item) => item.metadata?.action === "activate"), true);
+	    assert.equal(bulkAudit.json.logs.some((item) => item.metadata?.action === "permission_profile" && item.metadata?.profile === "people"), true);
+
+	    const accessReview = await jsonRequest(baseUrl, `/api/users/${bulkOne.json.user.id}/access-review`, {
+	      method: "POST",
+	      token: superToken
+	    });
+	    assert.equal(accessReview.status, 200);
+	    assert.ok(accessReview.json.user.accessReviewedAt);
+	    assert.equal(accessReview.json.user.accessReviewedByUserId, superLogin.json.user.id);
+
+	    const bulkOneAccessChangeLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+	      method: "POST",
+	      body: { identifier: "bulk.operaciones.uno@marfancrew.test", password: "Bulk2026A", mode: "admin" }
+	    });
+	    assert.equal(bulkOneAccessChangeLogin.status, 200);
+	    const permissionChangeInvalidatesReview = await jsonRequest(baseUrl, `/api/users/${bulkOne.json.user.id}`, {
+	      method: "PATCH",
+	      token: superToken,
+	      body: {
+	        permissions: {
+	          dashboard: true,
+	          events: true,
+	          clients: true,
+	          employees: false,
+	          documents: false,
+	          finances: true,
+	          reports: true
+	        }
+	      }
+	    });
+	    assert.equal(permissionChangeInvalidatesReview.status, 200);
+	    assert.equal(permissionChangeInvalidatesReview.json.user.accessReviewedAt, null);
+	    assert.equal((await jsonRequest(baseUrl, "/api/auth/me", { token: bulkOneAccessChangeLogin.json.token })).status, 401);
+
+	    const bulkAccessReview = await jsonRequest(baseUrl, "/api/users/bulk", {
+	      method: "PATCH",
+	      token: superToken,
+	      body: {
+	        action: "mark_reviewed",
+	        userIds: [bulkTwo.json.user.id, superLogin.json.user.id]
+	      }
+	    });
+	    assert.equal(bulkAccessReview.status, 200);
+	    assert.equal(bulkAccessReview.json.updated, 2);
+	    assert.equal(bulkAccessReview.json.skipped, 0);
+	    const reviewedUsers = await jsonRequest(baseUrl, "/api/users", { token: superToken });
+	    assert.ok(reviewedUsers.json.users.find((item) => item.id === bulkTwo.json.user.id).accessReviewedAt);
+	    assert.ok(reviewedUsers.json.users.find((item) => item.id === superLogin.json.user.id).accessReviewedAt);
+	    const accessReviewAudit = await jsonRequest(baseUrl, "/api/audit-logs?action=user_access_reviewed&entity=user", { token: superToken });
+	    assert.equal(accessReviewAudit.status, 200);
+	    assert.equal(accessReviewAudit.json.logs.some((item) => item.entity_id === bulkOne.json.user.id), true);
+	    assert.equal(accessReviewAudit.json.logs.some((item) => item.entity_id === bulkTwo.json.user.id), true);
+
+	    const bulkTwoAccessChangeLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+	      method: "POST",
+	      body: { identifier: "bulk.operaciones.dos@marfancrew.test", password: "Bulk2026B", mode: "admin" }
+	    });
+	    assert.equal(bulkTwoAccessChangeLogin.status, 200);
+	    const bulkProfileInvalidatesReview = await jsonRequest(baseUrl, "/api/users/bulk", {
+	      method: "PATCH",
+	      token: superToken,
+	      body: {
+	        action: "permission_profile",
+	        profile: "finance",
+	        userIds: [bulkTwo.json.user.id]
+	      }
+	    });
+	    assert.equal(bulkProfileInvalidatesReview.status, 200);
+	    assert.equal(bulkProfileInvalidatesReview.json.updated, 1);
+	    assert.equal((await jsonRequest(baseUrl, "/api/auth/me", { token: bulkTwoAccessChangeLogin.json.token })).status, 401);
+	    const afterReviewInvalidation = await jsonRequest(baseUrl, "/api/users", { token: superToken });
+	    assert.equal(afterReviewInvalidation.json.users.find((item) => item.id === bulkTwo.json.user.id).accessReviewedAt, null);
+	    const reviewInvalidationAudit = await jsonRequest(baseUrl, "/api/audit-logs?action=user_access_review_invalidated&entity=user", { token: superToken });
+	    assert.equal(reviewInvalidationAudit.status, 200);
+	    assert.equal(reviewInvalidationAudit.json.logs.some((item) => item.entity_id === bulkOne.json.user.id && item.metadata?.reasons?.includes("permissions_changed")), true);
+	    assert.equal(reviewInvalidationAudit.json.logs.some((item) => item.entity_id === bulkTwo.json.user.id && item.metadata?.source === "bulk_permission_profile"), true);
+	    const accessSessionAudit = await jsonRequest(baseUrl, "/api/audit-logs?action=user_access_sessions_revoked&entity=user", { token: superToken });
+	    assert.equal(accessSessionAudit.status, 200);
+	    assert.equal(accessSessionAudit.json.logs.some((item) => item.entity_id === bulkOne.json.user.id && item.metadata?.revoked >= 1), true);
+	    assert.equal(accessSessionAudit.json.logs.some((item) => item.entity_id === bulkTwo.json.user.id && item.metadata?.source === "bulk_permission_profile"), true);
+
+	    const inactiveAdmin = await jsonRequest(baseUrl, "/api/users", {
+	      method: "POST",
+	      token: superToken,
+	      body: {
+	        role: "admin",
+	        name: "Admin Inactivo Historico",
+	        email: "admin.inactivo@marfancrew.test",
+	        password: "Inactive2026"
+	      }
+	    });
+	    assert.equal(inactiveAdmin.status, 201);
+	    const inactivityDb = new DatabaseSync(path.join(tmp, "marfan.sqlite"));
+	    inactivityDb
+	      .prepare("UPDATE users SET last_login_at = datetime('now', '-90 days') WHERE id = ?")
+	      .run(inactiveAdmin.json.user.id);
+	    inactivityDb.close();
+	    const deactivateInactive = await jsonRequest(baseUrl, "/api/users/bulk", {
+	      method: "PATCH",
+	      token: superToken,
+	      body: {
+	        action: "deactivate_inactive",
+	        userIds: [inactiveAdmin.json.user.id, bulkOne.json.user.id, superLogin.json.user.id]
+	      }
+	    });
+	    assert.equal(deactivateInactive.status, 200);
+	    assert.equal(deactivateInactive.json.updated, 1);
+	    assert.equal(deactivateInactive.json.skipped, 2);
+	    const afterDeactivateInactive = await jsonRequest(baseUrl, "/api/users", { token: superToken });
+	    assert.equal(afterDeactivateInactive.json.users.find((item) => item.id === inactiveAdmin.json.user.id).active, false);
+	    assert.equal(afterDeactivateInactive.json.users.find((item) => item.id === bulkOne.json.user.id).active, true);
+	    assert.equal(afterDeactivateInactive.json.users.find((item) => item.id === superLogin.json.user.id).active, true);
+	    const deactivateInactiveAudit = await jsonRequest(baseUrl, "/api/audit-logs?action=user_inactive_deactivated&entity=user", { token: superToken });
+	    assert.equal(deactivateInactiveAudit.status, 200);
+	    assert.equal(deactivateInactiveAudit.json.logs.some((item) => item.entity_id === inactiveAdmin.json.user.id), true);
+
+	    const passwordRotationLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+	      method: "POST",
+	      body: { identifier: "bulk.operaciones.uno@marfancrew.test", password: "Bulk2026A", mode: "admin" }
+	    });
+	    assert.equal(passwordRotationLogin.status, 200);
+	    const forcePasswordChange = await jsonRequest(baseUrl, "/api/users/bulk", {
+	      method: "PATCH",
+	      token: superToken,
+	      body: {
+	        action: "force_password_change",
+	        userIds: [bulkOne.json.user.id, inactiveAdmin.json.user.id, superLogin.json.user.id]
+	      }
+	    });
+	    assert.equal(forcePasswordChange.status, 200);
+	    assert.equal(forcePasswordChange.json.updated, 1);
+	    assert.equal(forcePasswordChange.json.skipped, 2);
+	    assert.equal((await jsonRequest(baseUrl, "/api/auth/me", { token: passwordRotationLogin.json.token })).status, 401);
+	    const afterForcedPasswordChange = await jsonRequest(baseUrl, "/api/users", { token: superToken });
+	    assert.equal(afterForcedPasswordChange.json.users.find((item) => item.id === bulkOne.json.user.id).mustChangePassword, true);
+	    assert.equal(afterForcedPasswordChange.json.users.find((item) => item.id === inactiveAdmin.json.user.id).mustChangePassword, false);
+	    const forcedPasswordAudit = await jsonRequest(baseUrl, "/api/audit-logs?action=user_password_change_forced&entity=user", { token: superToken });
+	    assert.equal(forcedPasswordAudit.status, 200);
+	    assert.equal(forcedPasswordAudit.json.logs.some((item) => item.entity_id === bulkOne.json.user.id), true);
+
+	    const securityReport = await jsonRequest(baseUrl, "/api/users/security-report", { token: superToken });
+	    assert.equal(securityReport.status, 200);
+	    assert.ok(securityReport.json.summary.total >= 1);
+	    const forcedPasswordReportRow = securityReport.json.rows.find((item) => item.id_usuario === bulkOne.json.user.id);
+	    assert.equal(forcedPasswordReportRow.cambio_clave_obligatorio, "si");
+	    assert.match(forcedPasswordReportRow.accion_recomendada, /clave/i);
+	    assert.equal(forcedPasswordReportRow.permisos_personalizados, "si");
+	    assert.equal(forcedPasswordReportRow.perfil_permisos, "A medida");
+	    assert.equal(forcedPasswordReportRow.perfil_sugerido, "Finanzas");
+	    const financeProfileReportRow = securityReport.json.rows.find((item) => item.id_usuario === bulkTwo.json.user.id);
+	    assert.equal(financeProfileReportRow.perfil_permisos, "Finanzas");
+	    assert.equal(financeProfileReportRow.permisos_personalizados, "no");
+	    const securityReportCsv = await fetch(`${baseUrl}/api/users/security-report?format=csv`, {
+	      headers: { authorization: `Bearer ${superToken}` }
+	    });
+	    assert.equal(securityReportCsv.status, 200);
+	    assert.match(securityReportCsv.headers.get("content-type") || "", /text\/csv/);
+	    const securityReportCsvText = await securityReportCsv.text();
+	    assert.match(securityReportCsvText, /riesgo;puntuacion;accion_recomendada/);
+	    assert.match(securityReportCsvText, /perfil_permisos;permisos_personalizados/);
+	    assert.match(securityReportCsvText, /bulk\.operaciones\.uno@marfancrew\.test/);
+	    const securityReportAudit = await jsonRequest(baseUrl, "/api/audit-logs?action=users_security_report_exported&entity=user", { token: superToken });
+	    assert.equal(securityReportAudit.status, 200);
+	    assert.equal(securityReportAudit.json.logs.some((item) => item.entity_id === "bulk"), true);
+
+	    const suggestedProfileLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+	      method: "POST",
+	      body: { identifier: "bulk.operaciones.uno@marfancrew.test", password: "Bulk2026A", mode: "admin" }
+	    });
+	    assert.equal(suggestedProfileLogin.status, 200);
+	    const suggestedProfile = await jsonRequest(baseUrl, "/api/users/bulk", {
+	      method: "PATCH",
+	      token: superToken,
+	      body: {
+	        action: "suggested_profile",
+	        userIds: [bulkOne.json.user.id, inactiveAdmin.json.user.id, superLogin.json.user.id]
+	      }
+	    });
+	    assert.equal(suggestedProfile.status, 200);
+	    assert.equal(suggestedProfile.json.updated, 1);
+	    assert.equal(suggestedProfile.json.skipped, 2);
+	    const suggestedProfileResult = suggestedProfile.json.results.find((item) => item.id === bulkOne.json.user.id);
+	    assert.equal(suggestedProfileResult.profile, "finance");
+	    assert.equal(suggestedProfileResult.profileLabel, "Finanzas");
+	    assert.equal((await jsonRequest(baseUrl, "/api/auth/me", { token: suggestedProfileLogin.json.token })).status, 401);
+	    const afterSuggestedProfile = await jsonRequest(baseUrl, "/api/users", { token: superToken });
+	    const bulkOneSuggestedPermissions = afterSuggestedProfile.json.users.find((item) => item.id === bulkOne.json.user.id).permissions;
+	    assert.equal(bulkOneSuggestedPermissions.finances, true);
+	    assert.equal(bulkOneSuggestedPermissions.reports, true);
+	    assert.equal(bulkOneSuggestedPermissions.clients, true);
+	    assert.equal(bulkOneSuggestedPermissions.employees, false);
+	    assert.equal(bulkOneSuggestedPermissions.live, false);
+	    const suggestedProfileAudit = await jsonRequest(baseUrl, "/api/audit-logs?action=user_bulk_suggested_permission_profile_applied&entity=user", { token: superToken });
+	    assert.equal(suggestedProfileAudit.status, 200);
+	    assert.equal(suggestedProfileAudit.json.logs.some((item) => item.entity_id === bulkOne.json.user.id && item.metadata?.profile === "finance"), true);
 
     const temporaryPasswordAdmin = await jsonRequest(baseUrl, "/api/users", {
       method: "POST",
@@ -652,9 +975,15 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     });
     assert.equal(unrestrictedAdmin.status, 200);
     assert.equal(unrestrictedAdmin.json.user.permissions.clients, true);
+    assert.equal((await jsonRequest(baseUrl, "/api/auth/me", { token: restrictedToken })).status, 401);
+    const unrestrictedLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: { identifier: "eventos.sin.clientes@marfancrew.test", password: "admin123", mode: "admin" }
+    });
+    assert.equal(unrestrictedLogin.status, 200);
     const allowedClientCreate = await jsonRequest(baseUrl, "/api/clients", {
       method: "POST",
-      token: restrictedToken,
+      token: unrestrictedLogin.json.token,
       body: { name: "Cliente permitido permisos", legalName: "Cliente permitido permisos SL" }
     });
     assert.equal(allowedClientCreate.status, 201);

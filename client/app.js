@@ -26,6 +26,8 @@ const state = {
   reportFilters: { from: "", to: "", clientId: "", employeeId: "", status: "", search: "" },
   userFilters: { search: "", role: "all", security: "all" },
   selectedUserIds: [],
+  userSessions: null,
+  userActivity: null,
   searchQuery: "",
   eventSnapshots: {},
   publicConfigLoaded: false,
@@ -136,6 +138,7 @@ const iconPaths = {
   search: "M21 21l-4.35-4.35M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16",
   logout: "M10 17l5-5-5-5M15 12H3M21 3v18h-7",
   plus: "M12 5v14M5 12h14",
+  close: "M6 6l12 12M18 6 6 18",
   refresh: "M20 12a8 8 0 1 1-2.34-5.66M20 4v6h-6",
   save: "M5 3h12l2 2v16H5zM8 3v6h8V3M8 21v-7h8v7",
   copy: "M8 8h10v12H8zM6 16H4V4h10v2",
@@ -954,11 +957,57 @@ function permissionPresetButtons(compact = false) {
   `;
 }
 
+function permissionProfileForUser(user) {
+  if (user.role === "super_admin") return { id: "super_admin", label: "Acceso total", tone: "red" };
+  if (user.role === "employee") return { id: "employee", label: "Portal empleado", tone: "blue" };
+  for (const [id, profile] of Object.entries(permissionProfiles)) {
+    const enabled = new Set(profile.keys);
+    const matches = adminPermissionDefs.every(([key]) => permissionEnabled(user.permissions, key) === enabled.has(key));
+    if (matches) return { id, label: profile.label, tone: id === "full_admin" ? "red" : "blue" };
+  }
+  return { id: "custom", label: "A medida", tone: "amber" };
+}
+
+function userHasCustomPermissions(user) {
+  return user.active && user.role === "admin" && permissionProfileForUser(user).id === "custom";
+}
+
+function suggestedPermissionProfileForUser(user) {
+  if (user.role !== "admin" || permissionProfileForUser(user).id !== "custom") return null;
+  const candidates = Object.entries(permissionProfiles).map(([id, profile]) => {
+    const enabled = new Set(profile.keys);
+    const added = profile.keys.filter((key) => !permissionEnabled(user.permissions, key)).length;
+    const removed = adminPermissionDefs.filter(([key]) => permissionEnabled(user.permissions, key) && !enabled.has(key)).length;
+    return {
+      id,
+      label: profile.label,
+      added,
+      removed,
+      distance: added + removed,
+      size: profile.keys.length
+    };
+  });
+  candidates.sort((left, right) =>
+    left.added - right.added ||
+    left.distance - right.distance ||
+    right.size - left.size ||
+    left.label.localeCompare(right.label)
+  );
+  return candidates[0] || null;
+}
+
 function permissionSummary(user) {
   if (user.role === "super_admin") return `<span class="tag red">Acceso total</span>`;
   if (user.role === "employee") return `<span class="muted">Portal empleado</span>`;
   const active = adminPermissionDefs.filter(([key]) => permissionEnabled(user.permissions, key));
-  return `<span class="tag blue">${active.length}/${adminPermissionDefs.length} modulos</span>`;
+  const profile = permissionProfileForUser(user);
+  const suggested = profile.id === "custom" ? suggestedPermissionProfileForUser(user) : null;
+  return `
+    <div class="permission-summary">
+      <span class="tag ${profile.tone}">${esc(profile.label)}</span>
+      <small>${active.length}/${adminPermissionDefs.length} modulos${suggested ? ` · sugerido ${esc(suggested.label)}` : ""}</small>
+    </div>
+  `;
 }
 
 function userRecoveryStatus(user) {
@@ -983,6 +1032,14 @@ function userPasswordStale(user) {
   return user.role !== "employee" && olderThanDays(user.passwordChangedAt, 180);
 }
 
+function userAccessReviewStale(user) {
+  return user.role !== "employee" && olderThanDays(user.accessReviewedAt, 90);
+}
+
+function userInactiveRisk(user) {
+  return user.active && user.role !== "employee" && olderThanDays(user.lastLoginAt || user.createdAt, 60);
+}
+
 function activePermissionCount(user) {
   return adminPermissionDefs.filter(([key]) => permissionEnabled(user.permissions, key)).length;
 }
@@ -992,9 +1049,12 @@ function userQualityFlags(user) {
   if (!user.email && !user.phone) flags.push({ label: "Sin contacto", tone: "red" });
   if (user.role === "employee" && !user.employeeId) flags.push({ label: "Empleado sin ficha", tone: "amber" });
   if (user.mustChangePassword) flags.push({ label: "Clave temporal", tone: "amber" });
+  if (userAccessReviewStale(user)) flags.push({ label: "Revision pendiente", tone: "amber" });
+  if (userInactiveRisk(user)) flags.push({ label: "Sin uso +60d", tone: "red" });
   if (user.role === "admin" && activePermissionCount(user) >= adminPermissionDefs.length - 2) {
     flags.push({ label: "Permisos amplios", tone: "amber" });
   }
+  if (userHasCustomPermissions(user)) flags.push({ label: "Permisos a medida", tone: "blue" });
   if (user.role !== "employee" && !user.lastLoginAt) flags.push({ label: "Sin primer acceso", tone: "blue" });
   return flags;
 }
@@ -1004,7 +1064,7 @@ function userHasQualityIssues(user) {
 }
 
 function userNeedsAttention(user) {
-  return !user.active || userIsLocked(user) || user.recoveryPending || userPasswordStale(user) || userHasQualityIssues(user);
+  return !user.active || userIsLocked(user) || user.recoveryPending || userPasswordStale(user) || userAccessReviewStale(user) || userInactiveRisk(user) || userHasQualityIssues(user);
 }
 
 function employeePortalHealth(users = [], employees = []) {
@@ -1064,6 +1124,85 @@ function userPortalHealthPanel(users, isSuper) {
   `;
 }
 
+function userOperationsHealthPanel(users, isSuper) {
+  if (!isSuper) return "";
+  const workflows = [
+    {
+      tone: "amber",
+      tag: "Clave",
+      count: users.filter((user) => user.active && userPasswordStale(user)).length,
+      label: "Rotacion pendiente",
+      filter: "stale",
+      select: "userSelectStalePasswords"
+    },
+    {
+      tone: "amber",
+      tag: "Revision",
+      count: users.filter((user) => user.active && userAccessReviewStale(user)).length,
+      label: "Accesos sin validar",
+      filter: "review",
+      select: "userSelectReviewPending"
+    },
+    {
+      tone: "red",
+      tag: "Inactividad",
+      count: users.filter(userInactiveRisk).length,
+      label: "Administradores sin uso",
+      filter: "inactive_risk",
+      select: "userSelectInactiveRisk"
+    },
+    {
+      tone: "amber",
+      tag: "Perfil",
+      count: users.filter(userHasCustomPermissions).length,
+      label: "Permisos a medida",
+      filter: "permission_custom",
+      select: "userSelectCustomPermissions"
+    },
+    {
+      tone: "blue",
+      tag: "Sesion",
+      count: users.filter((user) => Number(user.activeSessionCount || 0) > 0).length,
+      label: "Sesiones abiertas",
+      filter: "sessions",
+      select: "userSelectActiveSessions"
+    },
+    {
+      tone: "red",
+      tag: "Contacto",
+      count: users.filter((user) => !user.email && !user.phone).length,
+      label: "Fichas incompletas",
+      filter: "quality",
+      select: "userSelectMissingContact"
+    }
+  ];
+  const total = workflows.reduce((sum, item) => sum + item.count, 0);
+  return `
+    <div class="user-ops-board">
+      <div class="ops-board-head">
+        <div>
+          <span class="tag ${total ? "amber" : "green"}">Salud usuarios</span>
+          <strong>${total}</strong>
+        </div>
+        <button class="btn compact" type="button" data-users-security-report>${icon("download")} Informe</button>
+      </div>
+      <div class="ops-board-list">
+        ${workflows.map((item) => `
+          <div class="ops-row ${item.count ? "needs-work" : ""}">
+            <span class="tag ${item.tone}">${esc(item.tag)}</span>
+            <strong>${item.count}</strong>
+            <small>${esc(item.label)}</small>
+            <div class="ops-actions">
+              <button class="btn compact" type="button" data-user-security-filter="${esc(item.filter)}" ${item.count ? "" : "disabled"}>Ver</button>
+              <button class="btn compact ghost" type="button" data-${item.select.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)} ${item.count ? "" : "disabled"}>Seleccionar</button>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
 function userSecuritySummary(user) {
   const locked = userIsLocked(user);
   const sessions = Number(user.activeSessionCount || 0);
@@ -1075,6 +1214,7 @@ function userSecuritySummary(user) {
       ${qualityFlags.map((flag) => `<span class="tag ${flag.tone}">${esc(flag.label)}</span>`).join("")}
       <small>Ultimo acceso: ${esc(shortDateTime(user.lastLoginAt))}</small>
       <small>Clave: ${esc(shortDateTime(user.passwordChangedAt))}</small>
+      <small>Revision: ${esc(shortDateTime(user.accessReviewedAt))}${user.accessReviewerName ? ` · ${esc(user.accessReviewerName)}` : ""}</small>
       ${Number(user.failedLoginCount || 0) ? `<small>Fallos recientes: ${esc(user.failedLoginCount)}</small>` : ""}
     </div>
   `;
@@ -1119,6 +1259,9 @@ function filteredUsers(users) {
       (filters.security === "locked" && userIsLocked(user)) ||
       (filters.security === "recovery" && user.recoveryPending) ||
       (filters.security === "temporary" && user.mustChangePassword) ||
+      (filters.security === "review" && userAccessReviewStale(user)) ||
+      (filters.security === "inactive_risk" && userInactiveRisk(user)) ||
+      (filters.security === "permission_custom" && userHasCustomPermissions(user)) ||
       (filters.security === "sessions" && Number(user.activeSessionCount || 0) > 0) ||
       (filters.security === "stale" && userPasswordStale(user)) ||
       (filters.security === "quality" && userHasQualityIssues(user));
@@ -1134,6 +1277,8 @@ function userCommandCenter(users, isSuper) {
   const locked = users.filter(userIsLocked);
   const recovery = users.filter((user) => user.recoveryPending);
   const temporary = users.filter((user) => user.mustChangePassword);
+  const review = users.filter(userAccessReviewStale);
+  const inactiveRisk = users.filter(userInactiveRisk);
   const stale = users.filter(userPasswordStale);
   const quality = users.filter(userHasQualityIssues);
   return `
@@ -1161,6 +1306,9 @@ function userCommandCenter(users, isSuper) {
             <option value="locked" ${filters.security === "locked" ? "selected" : ""}>Bloqueos login</option>
             <option value="recovery" ${filters.security === "recovery" ? "selected" : ""}>Recuperaciones</option>
             <option value="temporary" ${filters.security === "temporary" ? "selected" : ""}>Clave temporal</option>
+            <option value="review" ${filters.security === "review" ? "selected" : ""}>Revision pendiente</option>
+            <option value="inactive_risk" ${filters.security === "inactive_risk" ? "selected" : ""}>Inactividad</option>
+            <option value="permission_custom" ${filters.security === "permission_custom" ? "selected" : ""}>Permisos a medida</option>
             <option value="sessions" ${filters.security === "sessions" ? "selected" : ""}>Sesiones activas</option>
             <option value="stale" ${filters.security === "stale" ? "selected" : ""}>Clave antigua</option>
             <option value="quality" ${filters.security === "quality" ? "selected" : ""}>Calidad de cuenta</option>
@@ -1173,9 +1321,12 @@ function userCommandCenter(users, isSuper) {
         <button class="attention-tile ${locked.length ? "hot" : ""} ${filters.security === "locked" ? "active" : ""}" type="button" data-user-security-filter="locked" aria-pressed="${filters.security === "locked"}"><span>${locked.length}</span><strong>Bloqueos</strong></button>
         <button class="attention-tile ${recovery.length ? "hot" : ""} ${filters.security === "recovery" ? "active" : ""}" type="button" data-user-security-filter="recovery" aria-pressed="${filters.security === "recovery"}"><span>${recovery.length}</span><strong>Recuperacion</strong></button>
         <button class="attention-tile ${temporary.length ? "hot" : ""} ${filters.security === "temporary" ? "active" : ""}" type="button" data-user-security-filter="temporary" aria-pressed="${filters.security === "temporary"}"><span>${temporary.length}</span><strong>Clave temporal</strong></button>
+        <button class="attention-tile ${review.length ? "hot" : ""} ${filters.security === "review" ? "active" : ""}" type="button" data-user-security-filter="review" aria-pressed="${filters.security === "review"}"><span>${review.length}</span><strong>Revision</strong></button>
+        <button class="attention-tile ${inactiveRisk.length ? "hot" : ""} ${filters.security === "inactive_risk" ? "active" : ""}" type="button" data-user-security-filter="inactive_risk" aria-pressed="${filters.security === "inactive_risk"}"><span>${inactiveRisk.length}</span><strong>Inactividad</strong></button>
         <button class="attention-tile ${stale.length ? "hot" : ""} ${filters.security === "stale" ? "active" : ""}" type="button" data-user-security-filter="stale" aria-pressed="${filters.security === "stale"}"><span>${stale.length}</span><strong>Clave antigua</strong></button>
         <button class="attention-tile ${quality.length ? "hot" : ""} ${filters.security === "quality" ? "active" : ""}" type="button" data-user-security-filter="quality" aria-pressed="${filters.security === "quality"}"><span>${quality.length}</span><strong>Calidad ficha</strong></button>
       </div>
+      ${userOperationsHealthPanel(users, isSuper)}
       ${userPortalHealthPanel(users, isSuper)}
     </section>
   `;
@@ -1208,11 +1359,97 @@ function userBulkBar(users, visibleUsers, isSuper) {
       </div>
       <div class="bulk-actions">
         <button class="btn compact" type="button" data-user-select-attention ${visibleUsers.some(userNeedsAttention) ? "" : "disabled"}>${icon("shield")} Seleccionar alertas</button>
+        <button class="btn compact" type="button" data-user-select-stale-passwords ${visibleUsers.some((user) => user.active && userPasswordStale(user)) ? "" : "disabled"}>${icon("key")} Seleccionar claves antiguas</button>
+        <div class="bulk-profile-action">
+          <select data-user-bulk-profile ${disabled}>
+            ${Object.entries(permissionProfiles).map(([id, profile]) => `<option value="${esc(id)}">${esc(profile.label)}</option>`).join("")}
+          </select>
+          <button class="btn compact" type="button" data-user-bulk-action="permission_profile" ${disabled}>Aplicar perfil</button>
+        </div>
+        <button class="btn compact" type="button" data-user-bulk-action="suggested_profile" ${disabled}>Aplicar sugerido</button>
         <button class="btn compact" type="button" data-user-bulk-action="unlock" ${disabled}>Desbloquear</button>
+        <button class="btn compact" type="button" data-user-bulk-action="force_password_change" ${disabled}>Forzar cambio clave</button>
+        <button class="btn compact" type="button" data-user-bulk-action="mark_reviewed" ${disabled}>Marcar revisado</button>
+        <button class="btn compact red" type="button" data-user-bulk-action="deactivate_inactive" ${disabled}>Bloquear inactivos</button>
         <button class="btn compact" type="button" data-user-bulk-action="revoke_sessions" ${disabled}>Cerrar sesiones</button>
         <button class="btn compact" type="button" data-user-bulk-action="activate" ${disabled}>Activar</button>
         <button class="btn compact red" type="button" data-user-bulk-action="deactivate" ${disabled}>Bloquear acceso</button>
         <button class="btn compact ghost" type="button" data-user-select-clear ${disabled}>Limpiar</button>
+      </div>
+    </section>
+  `;
+}
+
+function userSessionsPanel() {
+  const panel = state.userSessions;
+  if (!panel?.userId) return "";
+  const user = (state.data.users || []).find((item) => item.id === panel.userId) || panel.user || {};
+  const sessions = panel.sessions || [];
+  return `
+    <section class="panel user-session-panel">
+      <div class="panel-head">
+        <div>
+          <h2>Sesiones activas</h2>
+          <p class="muted">${esc(user.name || "Usuario")} · ${sessions.length} abiertas</p>
+        </div>
+        <div class="filters-row">
+          <button class="btn compact" type="button" data-user-sessions="${esc(panel.userId)}">${icon("refresh")} Actualizar</button>
+          <button class="btn compact ghost" type="button" data-close-user-sessions>${icon("close")} Cerrar</button>
+        </div>
+      </div>
+      <div class="session-list">
+        ${sessions.map((session) => `
+          <div class="session-row">
+            <div>
+              <strong>${esc(shortDevice(session.userAgent) || "Dispositivo")}</strong>
+              <small class="muted">${esc(session.ipAddress || "IP no registrada")}</small>
+              <small>Ultimo uso: ${esc(shortDateTime(session.lastSeenAt))} · Caduca: ${esc(shortDateTime(session.expiresAt))}</small>
+            </div>
+            <div class="session-actions">
+              ${session.currentSession ? `<span class="tag green">Sesion actual</span>` : `<button class="btn compact red" type="button" data-revoke-session="${esc(session.id)}" data-session-user="${esc(panel.userId)}">Cerrar sesion</button>`}
+            </div>
+          </div>
+        `).join("") || `<div class="empty">Sin sesiones activas.</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function userActivityPanel() {
+  const panel = state.userActivity;
+  if (!panel?.userId) return "";
+  const user = (state.data.users || []).find((item) => item.id === panel.userId) || panel.user || {};
+  const logs = panel.logs || [];
+  const summary = panel.summary || {};
+  return `
+    <section class="panel user-activity-panel">
+      <div class="panel-head">
+        <div>
+          <h2>Actividad de usuario</h2>
+          <p class="muted">${esc(user.name || "Usuario")} · ${esc(user.email || user.phone || user.id || "")}</p>
+        </div>
+        <div class="filters-row">
+          <button class="btn compact" type="button" data-user-activity="${esc(panel.userId)}">${icon("refresh")} Actualizar</button>
+          <button class="btn compact ghost" type="button" data-close-user-activity>${icon("close")} Cerrar</button>
+        </div>
+      </div>
+      <div class="activity-summary">
+        <span><strong>${esc(summary.total || 0)}</strong> eventos</span>
+        <span><strong>${esc(summary.security || 0)}</strong> seguridad</span>
+        <span><strong>${esc(summary.actorEvents || 0)}</strong> acciones propias</span>
+        <span><strong>${esc(summary.accountEvents || 0)}</strong> cambios de cuenta</span>
+      </div>
+      <div class="activity-list">
+        ${logs.map((log) => `
+          <div class="activity-row">
+            <span class="tag ${auditTone(log.action)}">${esc(auditActionLabel(log.action))}</span>
+            <div>
+              <strong>${esc(shortDateTime(log.created_at))}</strong>
+              <small class="muted">${esc(log.actor_name || "Sistema")} · ${esc(log.entity)}:${esc(log.entity_id)}</small>
+              <small>${esc(auditMetadata(log.metadata))}</small>
+            </div>
+          </div>
+        `).join("") || `<div class="empty">Sin actividad registrada.</div>`}
       </div>
     </section>
   `;
@@ -1229,6 +1466,7 @@ function usersView() {
   const activeSessions = users.reduce((sum, user) => sum + Number(user.activeSessionCount || 0), 0);
   const lockedUsers = users.filter(userIsLocked).length;
   const qualityUsers = users.filter(userHasQualityIssues).length;
+  const inactiveRiskUsers = users.filter(userInactiveRisk).length;
   const attentionUsers = users.filter(userNeedsAttention).length;
   return `
     <div class="page-head">
@@ -1237,6 +1475,7 @@ function usersView() {
         <p>Alta de usuarios, sesiones activas, bloqueos de seguridad y permisos de gestion.</p>
       </div>
       <div class="filters-row">
+        ${isSuper ? `<button class="btn" type="button" data-users-security-report>${icon("download")} Informe seguridad</button>` : ""}
         <span class="tag ${isSuper ? "red" : "blue"}">${isSuper ? "Super Admin" : "Admin"}</span>
         <span class="muted">${activeUsers} usuarios activos</span>
       </div>
@@ -1246,11 +1485,13 @@ function usersView() {
       ${cardTemplate({ label: "Administradores", value: admins, hint: "Gestionan la empresa", tone: "blue" })}
       ${isSuper ? cardTemplate({ label: "Empleados", value: employees, hint: "Portal operario", tone: "ink" }) : ""}
       ${isSuper ? cardTemplate({ label: "Sesiones", value: activeSessions, hint: "Abiertas ahora", tone: activeSessions ? "blue" : "green" }) : ""}
-      ${isSuper ? cardTemplate({ label: "Atencion usuarios", value: attentionUsers, hint: `${lockedUsers} bloqueos · ${recoveries} recuperaciones · ${qualityUsers} calidad`, tone: attentionUsers ? "amber" : "green" }) : ""}
+      ${isSuper ? cardTemplate({ label: "Atencion usuarios", value: attentionUsers, hint: `${lockedUsers} bloqueos · ${recoveries} recuperaciones · ${inactiveRiskUsers} inactivos · ${qualityUsers} calidad`, tone: attentionUsers ? "amber" : "green" }) : ""}
       ${cardTemplate({ label: "Bloqueados", value: users.length - activeUsers, hint: "Sin acceso", tone: "red" })}
     </section>
     ${userCommandCenter(users, isSuper)}
     ${userBulkBar(users, visibleUsers, isSuper)}
+    ${userSessionsPanel()}
+    ${userActivityPanel()}
     <section class="split-grid users-view" style="margin-top:16px">
       <div class="panel">
         <div class="panel-head"><h2>${isSuper ? "Usuarios del sistema" : "Administradores internos"}</h2><span class="muted">${visibleUsers.length}/${users.length}</span></div>
@@ -1288,6 +1529,9 @@ function usersView() {
                         ${isSuper && user.role === "employee" ? `<button class="btn compact" data-user-role="${user.id}" data-next-role="admin">Admin</button>` : ""}
                         ${isSuper && user.role === "admin" ? `<button class="btn compact" data-user-role="${user.id}" data-next-role="employee">Empleado</button>` : ""}
                         ${isSuper && userIsLocked(user) ? `<button class="btn compact" data-unlock-user="${user.id}">Desbloq.</button>` : ""}
+                        ${isSuper ? `<button class="btn compact" data-user-activity="${user.id}">Actividad</button>` : ""}
+                        ${isSuper && user.role !== "employee" ? `<button class="btn compact ${userAccessReviewStale(user) ? "primary" : ""}" data-review-user="${user.id}">Revisar</button>` : ""}
+                        ${isSuper && Number(user.activeSessionCount || 0) > 0 ? `<button class="btn compact" data-user-sessions="${user.id}">Sesiones</button>` : ""}
                         ${isSuper && Number(user.activeSessionCount || 0) > 0 && !isSelf ? `<button class="btn compact" data-revoke-sessions="${user.id}">Cerrar sesiones</button>` : ""}
                         ${isSuper && user.active ? `<button class="btn compact ${user.recoveryPending ? "primary" : ""}" data-access-code-user="${user.id}">Codigo</button>` : ""}
                         ${isSuper ? `<button class="btn compact ${user.recoveryPending ? "primary" : ""}" data-reset-user="${user.id}">${user.recoveryPending ? "Nueva clave" : "Clave"}</button>` : ""}
@@ -1348,11 +1592,21 @@ function auditActionLabel(action) {
     user_created: "Usuario creado",
     user_updated: "Usuario actualizado",
     user_deactivated: "Usuario bloqueado",
+    user_employee_profile_linked: "Ficha de operario vinculada",
     user_sessions_revoked: "Sesiones cerradas",
+    user_session_revoked: "Sesion cerrada",
+    user_access_reviewed: "Acceso revisado",
+    user_access_review_invalidated: "Revision de acceso invalidada",
+    user_access_sessions_revoked: "Sesiones cerradas por cambio de acceso",
+    user_inactive_deactivated: "Usuario bloqueado por inactividad",
+    user_password_change_forced: "Cambio de clave forzado",
     user_bulk_activated: "Usuario activado en lote",
     user_bulk_deactivated: "Usuario bloqueado en lote",
     user_bulk_unlocked: "Usuario desbloqueado en lote",
+    user_bulk_permission_profile_applied: "Perfil de permisos aplicado",
+    user_bulk_suggested_permission_profile_applied: "Perfil sugerido aplicado",
     users_bulk_action: "Accion masiva usuarios",
+    users_security_report_exported: "Informe seguridad usuarios exportado",
     employee_portals_repaired: "Portal de operarios saneado",
     event_created: "Evento creado",
     event_updated: "Evento actualizado",
@@ -4917,6 +5171,48 @@ async function handleClick(event) {
     return renderAdmin();
   }
 
+  if (target.dataset.userSelectStalePasswords !== undefined) {
+    state.selectedUserIds = filteredUsers(state.data.users || [])
+      .filter((user) => user.active && userPasswordStale(user))
+      .map((user) => user.id);
+    return renderAdmin();
+  }
+
+  if (target.dataset.userSelectReviewPending !== undefined) {
+    state.selectedUserIds = filteredUsers(state.data.users || [])
+      .filter((user) => user.active && userAccessReviewStale(user))
+      .map((user) => user.id);
+    return renderAdmin();
+  }
+
+  if (target.dataset.userSelectInactiveRisk !== undefined) {
+    state.selectedUserIds = filteredUsers(state.data.users || [])
+      .filter(userInactiveRisk)
+      .map((user) => user.id);
+    return renderAdmin();
+  }
+
+  if (target.dataset.userSelectCustomPermissions !== undefined) {
+    state.selectedUserIds = filteredUsers(state.data.users || [])
+      .filter(userHasCustomPermissions)
+      .map((user) => user.id);
+    return renderAdmin();
+  }
+
+  if (target.dataset.userSelectActiveSessions !== undefined) {
+    state.selectedUserIds = filteredUsers(state.data.users || [])
+      .filter((user) => Number(user.activeSessionCount || 0) > 0)
+      .map((user) => user.id);
+    return renderAdmin();
+  }
+
+  if (target.dataset.userSelectMissingContact !== undefined) {
+    state.selectedUserIds = filteredUsers(state.data.users || [])
+      .filter((user) => !user.email && !user.phone)
+      .map((user) => user.id);
+    return renderAdmin();
+  }
+
   if (target.dataset.userBulkAction) {
     const selected = cleanSelectedUserIds(state.data.users || []);
     if (!selected.length) return toast("Selecciona usuarios primero", "error");
@@ -4924,18 +5220,45 @@ async function handleClick(event) {
       activate: "activar los usuarios seleccionados",
       deactivate: "bloquear el acceso de los usuarios seleccionados",
       unlock: "desbloquear login de los usuarios seleccionados",
-      revoke_sessions: "cerrar las sesiones de los usuarios seleccionados"
+      revoke_sessions: "cerrar las sesiones de los usuarios seleccionados",
+      permission_profile: "aplicar un perfil de permisos",
+      suggested_profile: "aplicar el perfil sugerido a usuarios con permisos a medida",
+      mark_reviewed: "marcar los accesos seleccionados como revisados",
+      deactivate_inactive: "bloquear solo administradores inactivos",
+      force_password_change: "forzar cambio de clave y cerrar sesiones"
     };
-    if (["deactivate", "revoke_sessions"].includes(target.dataset.userBulkAction)) {
+    const profile = target.dataset.userBulkAction === "permission_profile"
+      ? target.closest(".user-bulk-bar")?.querySelector("[data-user-bulk-profile]")?.value || "operations"
+      : "";
+    if (target.dataset.userBulkAction === "permission_profile") {
+      const profileLabel = permissionProfiles[profile]?.label || profile;
+      const ok = window.confirm(`Aplicar perfil "${profileLabel}" a los usuarios seleccionados? Solo se actualizaran administradores operativos.`);
+      if (!ok) return toast("Operacion cancelada");
+    }
+    if (target.dataset.userBulkAction === "suggested_profile") {
+      const ok = window.confirm("Aplicar el perfil sugerido a los administradores seleccionados con permisos a medida? Se cerraran sus sesiones y quedaran pendientes de revision.");
+      if (!ok) return toast("Operacion cancelada");
+    }
+    if (["deactivate", "revoke_sessions", "deactivate_inactive", "force_password_change"].includes(target.dataset.userBulkAction)) {
       const ok = window.confirm(`Confirmas ${labels[target.dataset.userBulkAction]}?`);
       if (!ok) return toast("Operacion cancelada");
     }
     const result = await api("/api/users/bulk", {
       method: "PATCH",
-      body: { action: target.dataset.userBulkAction, userIds: selected }
+      body: { action: target.dataset.userBulkAction, userIds: selected, profile }
     });
     state.selectedUserIds = [];
     toast(`${result.updated || 0} actualizados${result.skipped ? `, ${result.skipped} omitidos` : ""}`);
+    return renderAdmin(true);
+  }
+
+  if (target.dataset.reviewUser) {
+    const user = (state.data.users || []).find((item) => item.id === target.dataset.reviewUser);
+    if (!user || user.role === "employee") return toast("Solo aplica a administradores", "error");
+    const ok = window.confirm(`Marcar como revisado el acceso de ${user.name}?`);
+    if (!ok) return toast("Operacion cancelada");
+    await api(`/api/users/${target.dataset.reviewUser}/access-review`, { method: "POST" });
+    toast("Acceso revisado");
     return renderAdmin(true);
   }
 
@@ -5326,6 +5649,51 @@ async function handleClick(event) {
     return renderAdmin(true);
   }
 
+  if (target.dataset.userActivity) {
+    const result = await api(`/api/users/${target.dataset.userActivity}/activity`);
+    state.userActivity = {
+      userId: target.dataset.userActivity,
+      user: result.user,
+      logs: result.logs || [],
+      summary: result.summary || {}
+    };
+    return renderAdmin();
+  }
+
+  if (target.dataset.closeUserActivity !== undefined) {
+    state.userActivity = null;
+    return renderAdmin();
+  }
+
+  if (target.dataset.userSessions) {
+    const result = await api(`/api/users/${target.dataset.userSessions}/sessions`);
+    state.userSessions = {
+      userId: target.dataset.userSessions,
+      user: result.user,
+      sessions: result.sessions || []
+    };
+    return renderAdmin();
+  }
+
+  if (target.dataset.closeUserSessions !== undefined) {
+    state.userSessions = null;
+    return renderAdmin();
+  }
+
+  if (target.dataset.revokeSession) {
+    const user = (state.data.users || []).find((item) => item.id === target.dataset.sessionUser);
+    const ok = window.confirm(`Cerrar esta sesion de ${user?.name || "este usuario"}?`);
+    if (!ok) return toast("Operacion cancelada");
+    const result = await api(`/api/users/${target.dataset.sessionUser}/sessions/${target.dataset.revokeSession}`, { method: "DELETE" });
+    state.userSessions = {
+      userId: target.dataset.sessionUser,
+      user,
+      sessions: result.sessions || []
+    };
+    toast(`${result.revoked || 0} sesion cerrada`);
+    return renderAdmin(true);
+  }
+
   if (target.dataset.revokeSessions) {
     const user = (state.data.users || []).find((item) => item.id === target.dataset.revokeSessions);
     const ok = window.confirm(`Cerrar todas las sesiones de ${user?.name || "este usuario"}?`);
@@ -5506,6 +5874,11 @@ async function handleClick(event) {
   if (target.dataset.auditCsv !== undefined) {
     const csv = await api("/api/audit-logs?format=csv");
     return download("marfan-auditoria.csv", csv, "text/csv");
+  }
+
+  if (target.dataset.usersSecurityReport !== undefined) {
+    const csv = await api("/api/users/security-report?format=csv");
+    return download("marfan-usuarios-seguridad.csv", csv, "text/csv");
   }
 
   if (target.dataset.snapshotJson) {

@@ -597,6 +597,33 @@ const migrations = [
       ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0;
       CREATE INDEX IF NOT EXISTS idx_users_must_change_password ON users(must_change_password);
     `
+  },
+  {
+    version: 20,
+    name: "session-device-audit",
+    sql: `
+      ALTER TABLE sessions ADD COLUMN session_id TEXT;
+      ALTER TABLE sessions ADD COLUMN ip_address TEXT;
+      ALTER TABLE sessions ADD COLUMN user_agent TEXT;
+      ALTER TABLE sessions ADD COLUMN last_seen_at TEXT;
+
+      UPDATE sessions
+         SET session_id = COALESCE(session_id, 'ses_' || lower(hex(randomblob(12)))),
+             last_seen_at = COALESCE(last_seen_at, created_at, CURRENT_TIMESTAMP);
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
+      CREATE INDEX IF NOT EXISTS idx_sessions_user_expires ON sessions(user_id, expires_at);
+    `
+  },
+  {
+    version: 21,
+    name: "user-access-review",
+    sql: `
+      ALTER TABLE users ADD COLUMN access_reviewed_at TEXT;
+      ALTER TABLE users ADD COLUMN access_reviewed_by_user_id TEXT;
+
+      CREATE INDEX IF NOT EXISTS idx_users_access_reviewed_at ON users(access_reviewed_at);
+    `
   }
 ];
 
