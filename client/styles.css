@@ -882,6 +882,115 @@ button:disabled {
   padding: 10px 8px;
 }
 
+.user-command-center {
+  margin-top: 16px;
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+  overflow: visible;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.98)),
+    var(--surface);
+}
+
+.user-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.35fr) minmax(150px, 0.65fr) minmax(180px, 0.8fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.user-filter-grid .field {
+  margin-bottom: 0;
+}
+
+.user-filter-grid .btn {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.user-attention-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.attention-tile {
+  min-height: 74px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  display: grid;
+  gap: 5px;
+  align-content: center;
+  text-align: left;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.attention-tile:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(16, 24, 40, 0.08);
+}
+
+.attention-tile:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(10, 115, 232, 0.16);
+}
+
+.attention-tile span {
+  color: var(--ink);
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.attention-tile strong {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.15;
+  text-transform: uppercase;
+}
+
+.attention-tile.hot {
+  border-left: 4px solid var(--amber);
+  background: #fffaf0;
+}
+
+.attention-tile.hot span {
+  color: var(--amber);
+}
+
+.attention-tile.active {
+  border-color: rgba(10, 115, 232, 0.55);
+  background: #f8fbff;
+  box-shadow: 0 0 0 3px rgba(10, 115, 232, 0.11);
+}
+
+.attention-tile.active span {
+  color: var(--blue);
+}
+
+.permission-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 10px;
+}
+
+.permission-presets.compact {
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.permission-presets.compact .btn {
+  min-height: 30px;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+
 .permission-editor {
   display: grid;
   gap: 6px;
@@ -2557,6 +2666,10 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .user-filter-grid {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+
   .agenda-row {
     grid-template-columns: 1fr;
     align-items: stretch;
@@ -2612,6 +2725,10 @@ button:disabled {
     grid-template-columns: repeat(2, minmax(140px, 1fr));
   }
 
+  .user-attention-strip {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+
   .live-kpis {
     grid-template-columns: repeat(2, minmax(110px, 1fr));
   }
@@ -2656,6 +2773,11 @@ button:disabled {
   .mobile-grid,
   .cards-grid,
   .demo-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .user-filter-grid,
+  .user-attention-strip {
     grid-template-columns: 1fr;
   }
 

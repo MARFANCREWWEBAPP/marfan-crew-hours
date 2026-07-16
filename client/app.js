@@ -24,6 +24,7 @@ const state = {
   draggedEventId: null,
   recommendations: null,
   reportFilters: { from: "", to: "", clientId: "", employeeId: "", status: "", search: "" },
+  userFilters: { search: "", role: "all", security: "all" },
   searchQuery: "",
   eventSnapshots: {},
   publicConfigLoaded: false,
@@ -71,6 +72,34 @@ const adminPermissionDefs = [
   ["backups", "Backups"],
   ["imports", "Importaciones"]
 ];
+
+const permissionProfiles = {
+  operations: {
+    label: "Operaciones",
+    hint: "Eventos, equipo y live",
+    keys: ["dashboard", "live", "calendar", "events", "clients", "employees", "assignments", "clocking", "incidents", "documents", "imports"]
+  },
+  people: {
+    label: "RRHH",
+    hint: "Operarios y docs",
+    keys: ["dashboard", "employees", "availability", "documents", "incidents", "imports", "reports"]
+  },
+  finance: {
+    label: "Finanzas",
+    hint: "Clientes e informes",
+    keys: ["dashboard", "events", "clients", "finances", "reports"]
+  },
+  coordination: {
+    label: "Coordinacion",
+    hint: "Calendario y asignaciones",
+    keys: ["dashboard", "live", "calendar", "events", "employees", "assignments", "clocking", "incidents"]
+  },
+  full_admin: {
+    label: "Todo admin",
+    hint: "Todos los modulos",
+    keys: adminPermissionDefs.map(([key]) => key)
+  }
+};
 
 const statusMeta = {
   completo: ["Completo", "green"],
@@ -781,6 +810,16 @@ function permissionChecklist(permissions = {}, compact = false) {
   `;
 }
 
+function permissionPresetButtons(compact = false) {
+  return `
+    <div class="permission-presets ${compact ? "compact" : ""}">
+      ${Object.entries(permissionProfiles).map(([id, profile]) => `
+        <button class="btn compact" type="button" data-permission-preset="${esc(id)}" title="${esc(profile.hint)}">${esc(profile.label)}</button>
+      `).join("")}
+    </div>
+  `;
+}
+
 function permissionSummary(user) {
   if (user.role === "super_admin") return `<span class="tag red">Acceso total</span>`;
   if (user.role === "employee") return `<span class="muted">Portal empleado</span>`;
@@ -799,12 +838,28 @@ function userIsLocked(user) {
   return Boolean(user.lockedUntil && new Date(user.lockedUntil).getTime() > Date.now());
 }
 
+function olderThanDays(value, days) {
+  if (!value) return true;
+  const date = new Date(String(value).replace(" ", "T"));
+  if (Number.isNaN(date.getTime())) return false;
+  return Date.now() - date.getTime() > days * 24 * 60 * 60 * 1000;
+}
+
+function userPasswordStale(user) {
+  return user.role !== "employee" && olderThanDays(user.passwordChangedAt, 180);
+}
+
+function userNeedsAttention(user) {
+  return !user.active || userIsLocked(user) || user.recoveryPending || userPasswordStale(user);
+}
+
 function userSecuritySummary(user) {
   const locked = userIsLocked(user);
   const sessions = Number(user.activeSessionCount || 0);
   return `
     <div class="security-stack">
       ${locked ? `<span class="tag red">Bloqueado hasta ${esc(shortDateTime(user.lockedUntil))}</span>` : `<span class="tag ${sessions ? "green" : "blue"}">${sessions} sesion${sessions === 1 ? "" : "es"} activa${sessions === 1 ? "" : "s"}</span>`}
+      ${userPasswordStale(user) ? `<span class="tag amber">Clave antigua</span>` : ""}
       <small>Ultimo acceso: ${esc(shortDateTime(user.lastLoginAt))}</small>
       <small>Clave: ${esc(shortDateTime(user.passwordChangedAt))}</small>
       ${Number(user.failedLoginCount || 0) ? `<small>Fallos recientes: ${esc(user.failedLoginCount)}</small>` : ""}
@@ -812,8 +867,79 @@ function userSecuritySummary(user) {
   `;
 }
 
+function filteredUsers(users) {
+  const filters = state.userFilters || { search: "", role: "all", security: "all" };
+  const query = searchableText(filters.search || "").trim();
+  return users.filter((user) => {
+    const roleOk =
+      filters.role === "all" ||
+      (filters.role === "admins" && user.role !== "employee") ||
+      (filters.role === "employees" && user.role === "employee") ||
+      (filters.role === "super_admin" && user.role === "super_admin") ||
+      (filters.role === "inactive" && !user.active);
+    if (!roleOk) return false;
+    const securityOk =
+      filters.security === "all" ||
+      (filters.security === "attention" && userNeedsAttention(user)) ||
+      (filters.security === "locked" && userIsLocked(user)) ||
+      (filters.security === "recovery" && user.recoveryPending) ||
+      (filters.security === "sessions" && Number(user.activeSessionCount || 0) > 0) ||
+      (filters.security === "stale" && userPasswordStale(user));
+    if (!securityOk) return false;
+    if (!query) return true;
+    return searchableText(user.name, user.email, user.phone, user.id, user.role, user.employeeRole, user.employeeStatus).includes(query);
+  });
+}
+
+function userCommandCenter(users, isSuper) {
+  const filters = state.userFilters || { search: "", role: "all", security: "all" };
+  const attention = users.filter(userNeedsAttention);
+  const locked = users.filter(userIsLocked);
+  const recovery = users.filter((user) => user.recoveryPending);
+  const stale = users.filter(userPasswordStale);
+  return `
+    <section class="panel user-command-center">
+      <div class="user-filter-grid">
+        <div class="field">
+          <label>Buscar usuario</label>
+          <input data-user-filter="search" value="${esc(filters.search || "")}" placeholder="Nombre, email, telefono, rol..." />
+        </div>
+        <div class="field">
+          <label>Rol</label>
+          <select data-user-filter="role">
+            <option value="all" ${filters.role === "all" ? "selected" : ""}>Todos</option>
+            <option value="admins" ${filters.role === "admins" ? "selected" : ""}>Administradores</option>
+            ${isSuper ? `<option value="employees" ${filters.role === "employees" ? "selected" : ""}>Empleados</option>` : ""}
+            <option value="super_admin" ${filters.role === "super_admin" ? "selected" : ""}>Super admin</option>
+            <option value="inactive" ${filters.role === "inactive" ? "selected" : ""}>Bloqueados</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Seguridad</label>
+          <select data-user-filter="security">
+            <option value="all" ${filters.security === "all" ? "selected" : ""}>Todo</option>
+            <option value="attention" ${filters.security === "attention" ? "selected" : ""}>Requiere atencion</option>
+            <option value="locked" ${filters.security === "locked" ? "selected" : ""}>Bloqueos login</option>
+            <option value="recovery" ${filters.security === "recovery" ? "selected" : ""}>Recuperaciones</option>
+            <option value="sessions" ${filters.security === "sessions" ? "selected" : ""}>Sesiones activas</option>
+            <option value="stale" ${filters.security === "stale" ? "selected" : ""}>Clave antigua</option>
+          </select>
+        </div>
+        <button class="btn" type="button" data-user-filter-reset>${icon("refresh")} Limpiar</button>
+      </div>
+      <div class="user-attention-strip">
+        <button class="attention-tile ${attention.length ? "hot" : ""} ${filters.security === "attention" ? "active" : ""}" type="button" data-user-security-filter="attention" aria-pressed="${filters.security === "attention"}"><span>${attention.length}</span><strong>Atencion</strong></button>
+        <button class="attention-tile ${locked.length ? "hot" : ""} ${filters.security === "locked" ? "active" : ""}" type="button" data-user-security-filter="locked" aria-pressed="${filters.security === "locked"}"><span>${locked.length}</span><strong>Bloqueos</strong></button>
+        <button class="attention-tile ${recovery.length ? "hot" : ""} ${filters.security === "recovery" ? "active" : ""}" type="button" data-user-security-filter="recovery" aria-pressed="${filters.security === "recovery"}"><span>${recovery.length}</span><strong>Recuperacion</strong></button>
+        <button class="attention-tile ${stale.length ? "hot" : ""} ${filters.security === "stale" ? "active" : ""}" type="button" data-user-security-filter="stale" aria-pressed="${filters.security === "stale"}"><span>${stale.length}</span><strong>Clave antigua</strong></button>
+      </div>
+    </section>
+  `;
+}
+
 function usersView() {
   const users = state.data.users || [];
+  const visibleUsers = filteredUsers(users);
   const isSuper = state.user?.role === "super_admin";
   const activeUsers = users.filter((user) => user.active).length;
   const admins = users.filter((user) => user.role !== "employee" && user.active).length;
@@ -840,14 +966,15 @@ function usersView() {
       ${isSuper ? cardTemplate({ label: "Alertas acceso", value: lockedUsers + recoveries, hint: `${lockedUsers} bloqueos · ${recoveries} recuperaciones`, tone: lockedUsers + recoveries ? "amber" : "green" }) : ""}
       ${cardTemplate({ label: "Bloqueados", value: users.length - activeUsers, hint: "Sin acceso", tone: "red" })}
     </section>
+    ${userCommandCenter(users, isSuper)}
     <section class="split-grid users-view" style="margin-top:16px">
       <div class="panel">
-        <div class="panel-head"><h2>${isSuper ? "Usuarios del sistema" : "Administradores internos"}</h2></div>
+        <div class="panel-head"><h2>${isSuper ? "Usuarios del sistema" : "Administradores internos"}</h2><span class="muted">${visibleUsers.length}/${users.length}</span></div>
         <div class="table-wrap">
           <table class="data-table users-table">
             <thead><tr><th>Usuario</th><th>Rol</th><th>Contacto</th><th>Ficha operario</th><th>Permisos</th><th>Seguridad</th><th>Estado</th><th>Acciones</th></tr></thead>
             <tbody>
-              ${users.map((user) => {
+              ${visibleUsers.map((user) => {
                 const isSelf = user.id === state.user.id;
                 return `
                   <tr>
@@ -861,6 +988,7 @@ function usersView() {
                           ${permissionSummary(user)}
                           <details>
                             <summary>Editar</summary>
+                            ${permissionPresetButtons(true)}
                             ${permissionChecklist(user.permissions, true)}
                             <button class="btn compact primary" type="submit">${icon("check")} Guardar</button>
                           </details>
@@ -881,7 +1009,7 @@ function usersView() {
                     </td>
                   </tr>
                 `;
-              }).join("")}
+              }).join("") || `<tr><td colspan="8"><div class="empty">No hay usuarios con esos filtros.</div></td></tr>`}
             </tbody>
           </table>
         </div>
@@ -895,6 +1023,7 @@ function usersView() {
         <div class="field"><label>Contrasena temporal</label><input name="password" type="password" minlength="8" autocomplete="new-password" placeholder="Minimo 8, letras y numeros" required /></div>
         ${isSuper ? `<div class="inspector-section">
           <h3>Permisos del administrador</h3>
+          ${permissionPresetButtons()}
           ${permissionChecklist()}
         </div>` : ""}
         ${isSuper ? `<div class="inspector-section">
@@ -3907,6 +4036,24 @@ function permissionsFromForm(form) {
   ]));
 }
 
+function permissionMapForProfile(profileId) {
+  const profile = permissionProfiles[profileId] || permissionProfiles.operations;
+  const enabled = new Set(profile.keys || []);
+  return Object.fromEntries(adminPermissionDefs.map(([key]) => [key, enabled.has(key)]));
+}
+
+function applyPermissionPreset(button) {
+  const form = button.closest("form");
+  if (!form) return;
+  const permissions = permissionMapForProfile(button.dataset.permissionPreset);
+  for (const [key, value] of Object.entries(permissions)) {
+    const input = form.querySelector(`[name=perm_${key}]`);
+    if (input) input.checked = value;
+  }
+  const profile = permissionProfiles[button.dataset.permissionPreset];
+  toast(`Perfil aplicado: ${profile?.label || "Operaciones"}`);
+}
+
 function eventRequirementsFromForm(form) {
   return Array.from(form.querySelectorAll("[data-role-count]"))
     .map((input) => ({
@@ -4322,6 +4469,21 @@ async function handleClick(event) {
     state.view = target.dataset.nav;
     state.recommendations = null;
     state.searchQuery = "";
+    return renderAdmin();
+  }
+
+  if (target.dataset.permissionPreset) {
+    applyPermissionPreset(target);
+    return;
+  }
+
+  if (target.dataset.userFilterReset !== undefined) {
+    state.userFilters = { search: "", role: "all", security: "all" };
+    return renderAdmin();
+  }
+
+  if (target.dataset.userSecurityFilter) {
+    state.userFilters.security = target.dataset.userSecurityFilter;
     return renderAdmin();
   }
 
@@ -5036,6 +5198,11 @@ function handleInput(event) {
   if (target?.closest?.("[data-report-filters]")) {
     syncReportFiltersFromDom();
   }
+  if (target?.dataset?.userFilter === "search") {
+    state.userFilters.search = target.value;
+    renderAdmin();
+    return;
+  }
   const eventBuilder = target?.closest?.("[data-event-builder]");
   if (eventBuilder) updateEventDraftSummary(eventBuilder);
   if (!target?.dataset || target.dataset.search === undefined) return;
@@ -5062,6 +5229,11 @@ function handleKeydown(event) {
 async function handleChange(event) {
   if (event.target.closest?.("[data-report-filters]")) {
     syncReportFiltersFromDom();
+  }
+  if (event.target.dataset?.userFilter) {
+    state.userFilters[event.target.dataset.userFilter] = event.target.value;
+    await renderAdmin();
+    return;
   }
   const eventBuilder = event.target.closest?.("[data-event-builder]");
   if (eventBuilder) updateEventDraftSummary(eventBuilder);
