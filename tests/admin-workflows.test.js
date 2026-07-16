@@ -414,6 +414,49 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 	    assert.equal(bulkAudit.status, 200);
 	    assert.equal(bulkAudit.json.logs.some((item) => item.metadata?.action === "activate"), true);
 
+    const temporaryPasswordAdmin = await jsonRequest(baseUrl, "/api/users", {
+      method: "POST",
+      token: superToken,
+      body: {
+        role: "admin",
+        name: "Admin Clave Temporal",
+        email: "clave.temporal@marfancrew.test",
+        password: "Temporal2026",
+        mustChangePassword: true
+      }
+    });
+    assert.equal(temporaryPasswordAdmin.status, 201);
+    assert.equal(temporaryPasswordAdmin.json.user.mustChangePassword, true);
+    const temporaryPasswordLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: { identifier: "clave.temporal@marfancrew.test", password: "Temporal2026", mode: "admin" }
+    });
+    assert.equal(temporaryPasswordLogin.status, 200);
+    assert.equal(temporaryPasswordLogin.json.user.mustChangePassword, true);
+    const changedOwnPassword = await jsonRequest(baseUrl, "/api/auth/change-password", {
+      method: "POST",
+      token: temporaryPasswordLogin.json.token,
+      body: {
+        currentPassword: "Temporal2026",
+        password: "Privada2026"
+      }
+    });
+    assert.equal(changedOwnPassword.status, 200);
+    assert.equal(changedOwnPassword.json.user.mustChangePassword, false);
+    const temporaryPasswordMe = await jsonRequest(baseUrl, "/api/auth/me", { token: temporaryPasswordLogin.json.token });
+    assert.equal(temporaryPasswordMe.status, 200);
+    assert.equal(temporaryPasswordMe.json.user.mustChangePassword, false);
+    const oldTemporaryPasswordLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: { identifier: "clave.temporal@marfancrew.test", password: "Temporal2026", mode: "admin" }
+    });
+    assert.equal(oldTemporaryPasswordLogin.status, 401);
+    const newPrivatePasswordLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: { identifier: "clave.temporal@marfancrew.test", password: "Privada2026", mode: "admin" }
+    });
+    assert.equal(newPrivatePasswordLogin.status, 200);
+
 	    const recoveryRequest = await jsonRequest(baseUrl, "/api/auth/recover", {
 	      method: "POST",
 	      body: { identifier: "coordinador@marfancrew.test" }
@@ -595,6 +638,46 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.ok(leader.json.employee.user_id);
     assert.equal(leader.json.portalAccess.created, true);
 
+    const syncedPortalEmployee = await jsonRequest(baseUrl, "/api/employees", {
+      method: "POST",
+      token,
+      body: {
+        name: "Operaria Datos Duplicados",
+        phone: "+34 600 111 010",
+        email: "datos.duplicados@marfancrew.test",
+        role: "Montaje",
+        portalAccess: true
+      }
+    });
+    assert.equal(syncedPortalEmployee.status, 201);
+    assert.ok(syncedPortalEmployee.json.employee.user_id);
+    const syncedUserPatch = await jsonRequest(baseUrl, `/api/users/${syncedPortalEmployee.json.employee.user_id}`, {
+      method: "PATCH",
+      token: superToken,
+      body: {
+        name: "Operaria Datos Sincronizados",
+        phone: "+34 600 111 011",
+        email: "datos.sincronizados@marfancrew.test"
+      }
+    });
+    assert.equal(syncedUserPatch.status, 200);
+    assert.equal(syncedUserPatch.json.user.name, "Operaria Datos Sincronizados");
+    assert.equal(syncedUserPatch.json.user.email, "datos.sincronizados@marfancrew.test");
+    const syncedEmployees = await jsonRequest(baseUrl, "/api/employees", { token });
+    const syncedEmployee = syncedEmployees.json.employees.find((item) => item.id === syncedPortalEmployee.json.employee.id);
+    assert.equal(syncedEmployee.name, "Operaria Datos Sincronizados");
+    assert.equal(syncedEmployee.phone, "600111011");
+    assert.equal(syncedEmployee.email, "datos.sincronizados@marfancrew.test");
+    const syncedLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: {
+        identifier: "datos.sincronizados@marfancrew.test",
+        password: "600111010",
+        mode: "employee"
+      }
+    });
+    assert.equal(syncedLogin.status, 200);
+
     const legacyPhonePasswordEmployee = await jsonRequest(baseUrl, "/api/employees", {
       method: "POST",
       token,
@@ -612,6 +695,44 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
       body: { identifier: "600111009", password: "600111009", mode: "employee" }
     });
     assert.equal(legacyPhonePasswordLogin.status, 200);
+
+    const portalRepairEmployee = await jsonRequest(baseUrl, "/api/employees", {
+      method: "POST",
+      token,
+      body: {
+        name: "Operaria Portal Saneado",
+        phone: "+34 600 111 012",
+        email: "portal.saneado@marfancrew.test",
+        role: "Montaje",
+        portalAccess: false
+      }
+    });
+    assert.equal(portalRepairEmployee.status, 201);
+    assert.equal(Boolean(portalRepairEmployee.json.employee.user_id), false);
+    const portalRepair = await jsonRequest(baseUrl, "/api/users/employee-portals/repair", {
+      method: "PATCH",
+      token: superToken
+    });
+    assert.equal(portalRepair.status, 200);
+    assert.equal(portalRepair.json.created >= 1, true);
+    assert.equal(portalRepair.json.results.some((item) =>
+      item.employeeId === portalRepairEmployee.json.employee.id &&
+      item.action === "created" &&
+      item.userId
+    ), true);
+    const portalRepairEmployees = await jsonRequest(baseUrl, "/api/employees", { token });
+    const repairedEmployee = portalRepairEmployees.json.employees.find((item) => item.id === portalRepairEmployee.json.employee.id);
+    assert.ok(repairedEmployee.user_id);
+    const repairedPortalLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: { identifier: "600111012", password: "600111012", mode: "employee" }
+    });
+    assert.equal(repairedPortalLogin.status, 200);
+    const portalRepairAudit = await jsonRequest(baseUrl, "/api/audit-logs?action=employee_portals_repaired&entity=user", {
+      token: superToken
+    });
+    assert.equal(portalRepairAudit.status, 200);
+    assert.equal(portalRepairAudit.json.logs.some((log) => log.entity_id === "bulk"), true);
 
     const leaderPortalLogin = await jsonRequest(baseUrl, "/api/auth/login", {
       method: "POST",

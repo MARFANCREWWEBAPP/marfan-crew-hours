@@ -206,6 +206,20 @@ button {
   margin: 0;
 }
 
+.password-change-card {
+  display: grid;
+  gap: 14px;
+}
+
+.password-change-card h2,
+.password-change-card p {
+  margin: 0;
+}
+
+.password-change-card .tag {
+  justify-self: start;
+}
+
 .recovery-code {
   border: 1px solid var(--line-soft);
   border-radius: 8px;
@@ -335,6 +349,10 @@ button {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.security-toggle {
+  margin-top: 10px;
 }
 
 .btn {
@@ -967,7 +985,7 @@ button:disabled {
 
 .user-attention-strip {
   display: grid;
-  grid-template-columns: repeat(5, minmax(116px, 1fr));
+  grid-template-columns: repeat(6, minmax(110px, 1fr));
   gap: 10px;
 }
 
@@ -1027,6 +1045,55 @@ button:disabled {
 
 .attention-tile.active span {
   color: var(--blue);
+}
+
+.user-portal-health {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 14px;
+  display: grid;
+  grid-template-columns: minmax(190px, auto) minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+}
+
+.portal-health-main {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 3px 10px;
+  align-items: center;
+}
+
+.portal-health-main strong {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.portal-health-main small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.portal-health-metrics {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.portal-health-metrics span {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+  padding: 7px 9px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.portal-health-metrics strong {
+  color: var(--ink);
 }
 
 .permission-presets {
@@ -2289,6 +2356,57 @@ button:disabled {
   align-items: flex-start;
 }
 
+.service-location-action {
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+  padding: 12px 0;
+  margin: 4px 0 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.service-location-title {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.service-location-title > .icon {
+  color: var(--green);
+  flex: 0 0 auto;
+  margin-top: 3px;
+}
+
+.service-location-title span,
+.service-location-title strong,
+.service-location-title small {
+  display: block;
+}
+
+.service-location-title span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.service-location-title strong {
+  margin-top: 2px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.service-location-title small {
+  margin-top: 3px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.map-action-button {
+  min-height: 50px;
+  border-radius: 12px;
+}
+
 .map-preview {
   height: 132px;
   border: 1px solid var(--line);
@@ -2840,6 +2958,15 @@ button:disabled {
 
   .user-bulk-bar {
     grid-template-columns: 1fr;
+  }
+
+  .user-portal-health {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .user-portal-health .btn {
+    width: 100%;
   }
 
   .bulk-actions {

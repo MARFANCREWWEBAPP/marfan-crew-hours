@@ -165,6 +165,17 @@ function esc(value) {
     .replaceAll("'", "&#039;");
 }
 
+function normalizedHttpUrl(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed);
+    return ["http:", "https:"].includes(parsed.protocol) ? parsed.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
 function money(value) {
   return new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(Number(value || 0));
 }
@@ -236,6 +247,21 @@ function whatsappPhone(value) {
   if (!digits) return "";
   if (digits.length === 9 && /^[679]/.test(digits)) return `34${digits}`;
   return digits;
+}
+
+function phoneLoginKey(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length < 9) return "";
+  const withoutPrefix = digits.startsWith("0034")
+    ? digits.slice(4)
+    : digits.startsWith("34") && digits.length > 9
+      ? digits.slice(2)
+      : digits;
+  return withoutPrefix.length >= 9 ? withoutPrefix.slice(-9) : "";
+}
+
+function contactEmailKey(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
 function contactActions({ phone = "", email = "", name = "MARFAN CREW", compact = false } = {}) {
@@ -463,6 +489,38 @@ function recoveryPanel() {
   `;
 }
 
+function passwordChangeView() {
+  root.innerHTML = `
+    <main class="login-page password-change-page">
+      <section class="login-brand">
+        ${loginIdentity()}
+      </section>
+      <section class="login-panel">
+        <form class="login-card password-change-card" data-form="password-change">
+          <span class="tag amber">Clave temporal</span>
+          <h2>Actualiza tu contrasena</h2>
+          <p>Para proteger el acceso de ${esc(state.user?.name || "tu usuario")}, crea una clave privada antes de continuar.</p>
+          <div class="field">
+            <label>Contrasena actual</label>
+            <input name="currentPassword" type="password" autocomplete="current-password" required />
+          </div>
+          <div class="field">
+            <label>Nueva contrasena</label>
+            <input name="password" type="password" minlength="8" autocomplete="new-password" required />
+          </div>
+          <div class="field">
+            <label>Repetir nueva contrasena</label>
+            <input name="confirmPassword" type="password" minlength="8" autocomplete="new-password" required />
+          </div>
+          <button class="btn primary full" type="submit">${icon("shield")} Guardar y continuar</button>
+          <button class="btn ghost full" type="button" data-logout>${icon("logout")} Salir</button>
+        </form>
+      </section>
+    </main>
+  `;
+  queueMicrotask(() => window.scrollTo(0, 0));
+}
+
 function brand() {
   return `
     <div class="brand-mark">
@@ -505,6 +563,7 @@ async function loadPublicConfig(force = false) {
 
 async function renderApp(force = false) {
   if (!state.user) return renderLogin();
+  if (state.user.mustChangePassword) return passwordChangeView();
   if (state.user.role === "employee") {
     await renderEmployee(force);
   } else {
@@ -932,6 +991,7 @@ function userQualityFlags(user) {
   const flags = [];
   if (!user.email && !user.phone) flags.push({ label: "Sin contacto", tone: "red" });
   if (user.role === "employee" && !user.employeeId) flags.push({ label: "Empleado sin ficha", tone: "amber" });
+  if (user.mustChangePassword) flags.push({ label: "Clave temporal", tone: "amber" });
   if (user.role === "admin" && activePermissionCount(user) >= adminPermissionDefs.length - 2) {
     flags.push({ label: "Permisos amplios", tone: "amber" });
   }
@@ -945,6 +1005,63 @@ function userHasQualityIssues(user) {
 
 function userNeedsAttention(user) {
   return !user.active || userIsLocked(user) || user.recoveryPending || userPasswordStale(user) || userHasQualityIssues(user);
+}
+
+function employeePortalHealth(users = [], employees = []) {
+  const userById = new Map(users.map((user) => [user.id, user]));
+  const activeEmployees = employees.filter((employee) => employee.status === "activo");
+  const withoutPortal = activeEmployees.filter((employee) => !employee.user_id);
+  const creatable = withoutPortal.filter((employee) => phoneLoginKey(employee.phone));
+  const blockedByContact = withoutPortal.length - creatable.length;
+  const orphanUsers = users.filter((user) => user.role === "employee" && !user.employeeId);
+  const desynced = employees.filter((employee) => {
+    if (!employee.user_id) return false;
+    const user = userById.get(employee.user_id);
+    if (!user) return true;
+    const employeeEmail = contactEmailKey(employee.email);
+    const employeePhone = phoneLoginKey(employee.phone);
+    if (!employeeEmail && !employeePhone) return Boolean(user.active) !== (employee.status === "activo");
+    return (
+      user.role !== "employee" ||
+      String(user.name || "") !== String(employee.name || "") ||
+      contactEmailKey(user.email) !== employeeEmail ||
+      phoneLoginKey(user.phone) !== employeePhone ||
+      Boolean(user.active) !== (employee.status === "activo")
+    );
+  });
+  const actionable = creatable.length + orphanUsers.length + desynced.length;
+  return {
+    activeEmployees: activeEmployees.length,
+    withoutPortal: withoutPortal.length,
+    creatable: creatable.length,
+    blockedByContact,
+    orphanUsers: orphanUsers.length,
+    desynced: desynced.length,
+    actionable,
+    ok: actionable === 0 && blockedByContact === 0
+  };
+}
+
+function userPortalHealthPanel(users, isSuper) {
+  if (!isSuper) return "";
+  const health = employeePortalHealth(users, state.data.employees || []);
+  const disabled = health.actionable ? "" : "disabled";
+  return `
+    <div class="user-portal-health">
+      <div class="portal-health-main">
+        <span class="tag ${health.ok ? "green" : health.actionable ? "amber" : "blue"}">Portal operarios</span>
+        <strong>${health.actionable}</strong>
+        <small>${health.actionable ? "acciones automaticas disponibles" : "sin reparaciones automaticas"}</small>
+      </div>
+      <div class="portal-health-metrics">
+        <span><strong>${health.withoutPortal}</strong> sin portal</span>
+        <span><strong>${health.orphanUsers}</strong> usuarios sin ficha</span>
+        <span><strong>${health.desynced}</strong> desincronizados</span>
+        <span><strong>${health.blockedByContact}</strong> sin telefono</span>
+      </div>
+      <button class="btn primary" type="button" data-repair-employee-portals ${disabled}>${icon("shield")} Sanear portal</button>
+    </div>
+  `;
 }
 
 function userSecuritySummary(user) {
@@ -1001,6 +1118,7 @@ function filteredUsers(users) {
       (filters.security === "attention" && userNeedsAttention(user)) ||
       (filters.security === "locked" && userIsLocked(user)) ||
       (filters.security === "recovery" && user.recoveryPending) ||
+      (filters.security === "temporary" && user.mustChangePassword) ||
       (filters.security === "sessions" && Number(user.activeSessionCount || 0) > 0) ||
       (filters.security === "stale" && userPasswordStale(user)) ||
       (filters.security === "quality" && userHasQualityIssues(user));
@@ -1015,6 +1133,7 @@ function userCommandCenter(users, isSuper) {
   const attention = users.filter(userNeedsAttention);
   const locked = users.filter(userIsLocked);
   const recovery = users.filter((user) => user.recoveryPending);
+  const temporary = users.filter((user) => user.mustChangePassword);
   const stale = users.filter(userPasswordStale);
   const quality = users.filter(userHasQualityIssues);
   return `
@@ -1041,6 +1160,7 @@ function userCommandCenter(users, isSuper) {
             <option value="attention" ${filters.security === "attention" ? "selected" : ""}>Requiere atencion</option>
             <option value="locked" ${filters.security === "locked" ? "selected" : ""}>Bloqueos login</option>
             <option value="recovery" ${filters.security === "recovery" ? "selected" : ""}>Recuperaciones</option>
+            <option value="temporary" ${filters.security === "temporary" ? "selected" : ""}>Clave temporal</option>
             <option value="sessions" ${filters.security === "sessions" ? "selected" : ""}>Sesiones activas</option>
             <option value="stale" ${filters.security === "stale" ? "selected" : ""}>Clave antigua</option>
             <option value="quality" ${filters.security === "quality" ? "selected" : ""}>Calidad de cuenta</option>
@@ -1052,9 +1172,11 @@ function userCommandCenter(users, isSuper) {
         <button class="attention-tile ${attention.length ? "hot" : ""} ${filters.security === "attention" ? "active" : ""}" type="button" data-user-security-filter="attention" aria-pressed="${filters.security === "attention"}"><span>${attention.length}</span><strong>Atencion</strong></button>
         <button class="attention-tile ${locked.length ? "hot" : ""} ${filters.security === "locked" ? "active" : ""}" type="button" data-user-security-filter="locked" aria-pressed="${filters.security === "locked"}"><span>${locked.length}</span><strong>Bloqueos</strong></button>
         <button class="attention-tile ${recovery.length ? "hot" : ""} ${filters.security === "recovery" ? "active" : ""}" type="button" data-user-security-filter="recovery" aria-pressed="${filters.security === "recovery"}"><span>${recovery.length}</span><strong>Recuperacion</strong></button>
+        <button class="attention-tile ${temporary.length ? "hot" : ""} ${filters.security === "temporary" ? "active" : ""}" type="button" data-user-security-filter="temporary" aria-pressed="${filters.security === "temporary"}"><span>${temporary.length}</span><strong>Clave temporal</strong></button>
         <button class="attention-tile ${stale.length ? "hot" : ""} ${filters.security === "stale" ? "active" : ""}" type="button" data-user-security-filter="stale" aria-pressed="${filters.security === "stale"}"><span>${stale.length}</span><strong>Clave antigua</strong></button>
         <button class="attention-tile ${quality.length ? "hot" : ""} ${filters.security === "quality" ? "active" : ""}" type="button" data-user-security-filter="quality" aria-pressed="${filters.security === "quality"}"><span>${quality.length}</span><strong>Calidad ficha</strong></button>
       </div>
+      ${userPortalHealthPanel(users, isSuper)}
     </section>
   `;
 }
@@ -1195,6 +1317,7 @@ function usersView() {
             </div>
           </div>
           <small class="muted">Recomendada: clave temporal generada y enviada por canal seguro.</small>
+          <label class="toggle-row security-toggle"><input name="mustChangePassword" type="checkbox" checked /> Obligar cambio en el primer acceso</label>
         </div>
         ${isSuper ? `<div class="inspector-section">
           <h3>Permisos del administrador</h3>
@@ -1229,6 +1352,7 @@ function auditActionLabel(action) {
     user_bulk_deactivated: "Usuario bloqueado en lote",
     user_bulk_unlocked: "Usuario desbloqueado en lote",
     users_bulk_action: "Accion masiva usuarios",
+    employee_portals_repaired: "Portal de operarios saneado",
     event_created: "Evento creado",
     event_updated: "Evento actualizado",
     event_closed: "Evento cerrado",
@@ -1276,7 +1400,8 @@ function auditActionLabel(action) {
     google_calendar_synced: "Google Calendar sincronizado",
     google_calendar_sync_failed: "Error sincronizando Google",
     password_recovery_requested: "Recuperacion solicitada",
-    password_reset_completed: "Contrasena cambiada"
+    password_reset_completed: "Contrasena cambiada",
+    password_changed_by_user: "Contrasena privada actualizada"
   };
   return labels[action] || action;
 }
@@ -3625,7 +3750,8 @@ function employeeHomeView(data) {
   if (!service) return `<div class="mobile-card"><h2>Sin servicios proximos</h2><p class="muted">Tu calendario esta libre.</p></div>`;
   const docAlerts = data.documents.filter((doc) => doc.status !== "vigente");
   const clockMeta = employeeClockMeta(service);
-  const gpsReady = employeeServiceHasGps(service);
+  const serviceLocationLabel = employeeServiceLocationLabel(service);
+  const serviceLocationDetail = employeeServiceLocationParts(service).find((part) => part !== serviceLocationLabel) || "";
   return `
     <article class="service-card">
       <div class="row-between"><strong class="muted">MI PROXIMO SERVICIO</strong>${employeeServiceStatusTag(service)}</div>
@@ -3634,8 +3760,9 @@ function employeeHomeView(data) {
       <div class="service-meta">
         <div class="meta-row">${icon("calendar")}<span>${shortDate(service.date)}</span></div>
         <div class="meta-row">${icon("clock")}<span>${esc(service.start_time)} - ${esc(service.end_time)} (${hoursBetweenClient(service.start_time, service.end_time)}h)</span></div>
-        <div class="meta-row">${icon("map")}<span><strong>${esc(service.location)}</strong><br /><small class="muted">${esc(service.address || "")}</small></span></div>
+        <div class="meta-row">${icon("map")}<span><strong>${esc(serviceLocationLabel)}</strong><br /><small class="muted">${esc(serviceLocationDetail)}</small></span></div>
       </div>
+      ${employeeLocationAction(service)}
       <div class="event-reference">
         <div><span>Estado</span><strong>${esc(assignmentStatusLabel(service.assignment_status))}</strong></div>
         <div><span>Rol asignado</span><strong>${esc(service.assignment_role || data.employee.role)}</strong></div>
@@ -3653,10 +3780,6 @@ function employeeHomeView(data) {
     <div class="quick-actions">
       ${employeeClockActionButton(service, "entrada", true)}
       ${employeeClockActionButton(service, "salida")}
-      ${gpsReady
-        ? `<button data-open-maps="${service.lat},${service.lng}">${icon("map")} Abrir Maps</button>`
-        : `<button disabled>${icon("map")} Maps pendiente</button>`}
-      ${service.google_maps_url ? `<button data-open-url="${esc(service.google_maps_url)}">${icon("map")} Recinto</button>` : ""}
       <button data-call-office="${esc(data.office?.phone || "")}">${icon("phone")} Llamar oficina</button>
       <button data-whatsapp="${esc(data.office?.whatsapp || data.office?.phone || "")}">${icon("message")} WhatsApp</button>
     </div>
@@ -3683,6 +3806,24 @@ function employeeHomeView(data) {
 	  `;
 	}
 
+function employeeServiceLocationParts(service) {
+  return [service?.address, service?.location]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .filter((part) => !part.toLowerCase().includes("ubicacion pendiente"));
+}
+
+function employeeServiceHasTextLocation(service) {
+  return employeeServiceLocationParts(service).length > 0;
+}
+
+function employeeServiceLocationLabel(service) {
+  return [service?.location, service?.address]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .filter((part) => !part.toLowerCase().includes("ubicacion pendiente"))[0] || "Ubicacion pendiente";
+}
+
 function employeeServiceHasGps(service) {
   const lat = Number(service?.lat);
   const lng = Number(service?.lng);
@@ -3693,6 +3834,45 @@ function employeeServiceHasGps(service) {
   const locationText = `${service?.location || ""} ${service?.address || ""}`.toLowerCase();
   if (!source && locationText.includes("ubicacion pendiente")) return false;
   return true;
+}
+
+function employeeServiceMapQuery(service) {
+  if (!service) return "";
+  if (employeeServiceHasGps(service)) return `${Number(service.lat)},${Number(service.lng)}`;
+  if (!employeeServiceHasTextLocation(service)) return "";
+  return [...new Set([...employeeServiceLocationParts(service), service.client_name].filter(Boolean))].join(", ");
+}
+
+function employeeServiceMapsUrl(service) {
+  const storedUrl = normalizedHttpUrl(service?.google_maps_url);
+  if (storedUrl) return storedUrl;
+  const query = employeeServiceMapQuery(service);
+  return query ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}` : "";
+}
+
+function employeeLocationAction(service) {
+  const mapsUrl = employeeServiceMapsUrl(service);
+  const locationLabel = employeeServiceLocationLabel(service);
+  const detail = [...new Set([service?.address, service?.client_name]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .filter((part) => part !== locationLabel)
+    .filter((part) => !part.toLowerCase().includes("ubicacion pendiente")))].join(" · ");
+  return `
+    <div class="service-location-action">
+      <div class="service-location-title">
+        ${icon("map")}
+        <div>
+          <span>Ubicacion del servicio</span>
+          <strong>${esc(locationLabel)}</strong>
+          ${detail ? `<small>${esc(detail)}</small>` : ""}
+        </div>
+      </div>
+      ${mapsUrl
+        ? `<button class="btn green full map-action-button" type="button" data-open-url="${esc(mapsUrl)}">${icon("map")} Abrir Google Maps</button>`
+        : `<button class="btn full map-action-button" type="button" disabled>${icon("map")} Ubicacion pendiente</button>`}
+    </div>
+  `;
 }
 
 function employeeChecklistCard(service) {
@@ -4069,15 +4249,18 @@ function employeeDocumentsView(data) {
 }
 
 function employeeServiceItem(service) {
+  const mapsUrl = employeeServiceMapsUrl(service);
+  const locationLabel = employeeServiceLocationLabel(service);
   return `
     <div class="mobile-list-item service-list-item">
       <div>
         <strong>${esc(service.name)}</strong>
         <small class="muted">${esc(service.client_name)} · ${shortDate(service.date)}</small>
-        <small>${esc(service.start_time)} - ${esc(service.end_time)} · ${esc(service.location)}</small>
+        <small>${esc(service.start_time)} - ${esc(service.end_time)} · ${esc(locationLabel)}</small>
       </div>
       <div class="doc-actions">
         ${employeeServiceStatusTag(service)}
+        ${mapsUrl ? `<button class="btn compact green" type="button" data-open-url="${esc(mapsUrl)}">${icon("map")} Maps</button>` : `<button class="btn compact" type="button" disabled>${icon("map")} Maps</button>`}
         ${employeeConfirmButton(service, true)}
       </div>
     </div>
@@ -4395,6 +4578,20 @@ async function handleSubmit(event) {
       toast("Contrasena actualizada");
       return renderLogin();
     }
+    if (type === "password-change") {
+      const body = formData(form);
+      if (body.password !== body.confirmPassword) throw new Error("Las contrasenas no coinciden");
+      const result = await api("/api/auth/change-password", {
+        method: "POST",
+        body: {
+          currentPassword: body.currentPassword,
+          password: body.password
+        }
+      });
+      state.user = result.user;
+      toast("Contrasena privada guardada");
+      return renderApp(true);
+    }
     if (type === "event") {
       const body = formData(form);
       body.requirements = eventRequirementsFromForm(form);
@@ -4497,6 +4694,7 @@ async function handleSubmit(event) {
       const body = formData(form);
       body.skills = String(body.skills || "").split(",").map((item) => item.trim()).filter(Boolean);
       body.permissions = permissionsFromForm(form);
+      body.mustChangePassword = Boolean(form.querySelector("[name=mustChangePassword]")?.checked);
       await api("/api/users", { method: "POST", body });
       toast("Usuario creado");
       await renderAdmin(true);
@@ -4736,6 +4934,14 @@ async function handleClick(event) {
     });
     state.selectedUserIds = [];
     toast(`${result.updated || 0} actualizados${result.skipped ? `, ${result.skipped} omitidos` : ""}`);
+    return renderAdmin(true);
+  }
+
+  if (target.dataset.repairEmployeePortals !== undefined) {
+    const ok = window.confirm("Sanear portal de operarios? Se crearan accesos solo para operarios activos con telefono valido, se vincularan usuarios empleado compatibles y se sincronizaran datos. No cambia contrasenas existentes.");
+    if (!ok) return toast("Operacion cancelada");
+    const result = await api("/api/users/employee-portals/repair", { method: "PATCH" });
+    toast(`${result.created || 0} creados · ${result.linked || 0} vinculados · ${result.synced || 0} sincronizados${result.conflicts ? ` · ${result.conflicts} conflictos` : ""}`);
     return renderAdmin(true);
   }
 
@@ -5136,7 +5342,7 @@ async function handleClick(event) {
     }
     await api(`/api/users/${target.dataset.resetUser}`, {
       method: "PATCH",
-      body: { password }
+      body: { password, mustChangePassword: true }
     });
     await copyText(password).catch(() => false);
     toast("Contrasena temporal actualizada y copiada");
@@ -5429,10 +5635,14 @@ async function handleClick(event) {
 
   if (target.dataset.openMaps) {
     window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(target.dataset.openMaps)}`, "_blank", "noopener");
+    return;
   }
 
   if (target.dataset.openUrl) {
-    window.open(target.dataset.openUrl, "_blank", "noopener");
+    const safeUrl = normalizedHttpUrl(target.dataset.openUrl);
+    if (!safeUrl) return toast("Enlace no valido", "error");
+    window.open(safeUrl, "_blank", "noopener");
+    return;
   }
 
   if (target.dataset.callOffice !== undefined) {

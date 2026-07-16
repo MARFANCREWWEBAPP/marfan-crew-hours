@@ -26,7 +26,7 @@ test("new installations create schema and seed data once", () => {
 
   assert.equal(users, 4);
   assert.equal(events, 7);
-  assert.equal(migrations, 18);
+  assert.equal(migrations, 19);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('employees') WHERE name = 'shirt_size'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('documents') WHERE name = 'storage_path'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('delivery_notes') WHERE name = 'signature_image'").count, 1);
@@ -46,6 +46,7 @@ test("new installations create schema and seed data once", () => {
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('users') WHERE name = 'failed_login_count'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('users') WHERE name = 'locked_until'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('users') WHERE name = 'password_changed_at'").count, 1);
+  assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('users') WHERE name = 'must_change_password'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('incidents') WHERE name = 'resolution_note'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('clients') WHERE name = 'archived_at'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('employees') WHERE name = 'archived_at'").count, 1);

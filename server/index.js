@@ -629,7 +629,8 @@ function publicUser(row) {
     phone: row.phone,
     avatarUrl: row.avatar_url,
     permissions: normalizeAdminPermissions(row.permissions_json, row.role),
-    active: Boolean(row.active)
+    active: Boolean(row.active),
+    mustChangePassword: Boolean(row.must_change_password)
   };
 }
 
@@ -1824,8 +1825,8 @@ function ensureEmployeePortalUser({ name, email, phone, defaultPassword }) {
   const credentials = hashPassword(validateEmployeePortalPassword(fallbackPassword));
   const userId = randomId("usr");
   run(
-    `INSERT INTO users (id, role, name, email, phone, password_hash, salt, active, password_changed_at)
-     VALUES (?, 'employee', ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, 1, CURRENT_TIMESTAMP)`,
+    `INSERT INTO users (id, role, name, email, phone, password_hash, salt, active, password_changed_at, must_change_password)
+     VALUES (?, 'employee', ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, 1, CURRENT_TIMESTAMP, 1)`,
     [userId, name, cleanEmail, cleanPhone, credentials.hash, credentials.salt]
   );
   return { userId, created: true };
@@ -5287,6 +5288,7 @@ function listUsers() {
     `SELECT users.id, users.role, users.name, users.email, users.phone, users.avatar_url, users.active,
             users.last_login_at, users.created_at, users.permissions_json,
             users.failed_login_count, users.locked_until, users.last_failed_login_at, users.password_changed_at,
+            users.must_change_password,
             employees.id AS employee_id, employees.role AS employee_role, employees.status AS employee_status,
             (
               SELECT COUNT(*)
@@ -5345,6 +5347,7 @@ function listUsers() {
     lockedUntil: accountLockedUntil(row),
     lastFailedLoginAt: row.last_failed_login_at,
     passwordChangedAt: row.password_changed_at,
+    mustChangePassword: Boolean(row.must_change_password),
     activeSessionCount: Number(row.active_session_count || 0),
     lastSessionAt: row.last_session_at,
     sessionExpiresAt: row.session_expires_at,
@@ -5356,6 +5359,169 @@ function listUsers() {
     recoveryRequestedAt: row.recovery_requested_at,
     recoveryExpiresAt: row.recovery_expires_at
   }));
+}
+
+function employeePortalContact(employee) {
+  return {
+    email: cleanContactEmail(employee.email),
+    phone: cleanContactPhone(employee.phone),
+    phoneKey: phoneLoginKey(employee.phone)
+  };
+}
+
+function employeePortalNeedsSync(user, employee, contact) {
+  const shouldBeActive = employee.status === "activo";
+  return (
+    user.role !== "employee" ||
+    String(user.name || "") !== String(employee.name || "") ||
+    cleanContactEmail(user.email) !== contact.email ||
+    cleanContactPhone(user.phone) !== contact.phone ||
+    Boolean(user.active) !== shouldBeActive
+  );
+}
+
+function syncEmployeePortalUser(userId, employee, contact) {
+  const active = employee.status === "activo";
+  run(
+    `UPDATE users
+     SET role = 'employee', name = ?, email = NULLIF(?, ''), phone = NULLIF(?, ''), active = ?
+     WHERE id = ?`,
+    [employee.name, contact.email || "", contact.phone || "", active ? 1 : 0, userId]
+  );
+  if (!active) run("DELETE FROM sessions WHERE user_id = ?", [userId]);
+}
+
+function employeeLinkedToUser(userId, excludeEmployeeId) {
+  return get(
+    "SELECT id, name FROM employees WHERE user_id = ? AND id != ? AND archived_at IS NULL LIMIT 1",
+    [userId, excludeEmployeeId]
+  );
+}
+
+function repairEmployeePortals(actor) {
+  const summary = {
+    checked: 0,
+    created: 0,
+    linked: 0,
+    synced: 0,
+    deactivated: 0,
+    skipped: 0,
+    conflicts: 0,
+    results: []
+  };
+  const record = (employee, action, detail = "", userId = "") => {
+    summary.results.push({
+      employeeId: employee.id,
+      employeeName: employee.name,
+      userId,
+      action,
+      detail
+    });
+  };
+
+  const employees = all("SELECT * FROM employees WHERE archived_at IS NULL ORDER BY name").map(parseEmployee);
+  transaction(() => {
+    for (const employee of employees) {
+      summary.checked += 1;
+      const contact = employeePortalContact(employee);
+
+      if (employee.user_id) {
+        const linkedUser = get("SELECT * FROM users WHERE id = ?", [employee.user_id]);
+        if (!linkedUser) {
+          summary.conflicts += 1;
+          record(employee, "conflict", "La ficha apunta a un usuario inexistente", employee.user_id);
+          continue;
+        }
+        if (linkedUser.role !== "employee") {
+          summary.conflicts += 1;
+          record(employee, "conflict", "La ficha esta vinculada a un usuario administrador", linkedUser.id);
+          continue;
+        }
+        if (!contact.email && !contact.phone) {
+          if (employee.status !== "activo" && linkedUser.active) {
+            run("UPDATE users SET active = 0 WHERE id = ?", [linkedUser.id]);
+            run("DELETE FROM sessions WHERE user_id = ?", [linkedUser.id]);
+            summary.synced += 1;
+            summary.deactivated += 1;
+            record(employee, "synced", "Usuario desactivado por estado del operario, sin tocar contacto", linkedUser.id);
+          } else {
+            summary.skipped += 1;
+            record(employee, "skipped", "Ficha vinculada sin email ni telefono; contacto de usuario conservado", linkedUser.id);
+          }
+          continue;
+        }
+        const duplicate = findDuplicateUserContact({ email: contact.email, phone: contact.phone, excludeUserId: linkedUser.id });
+        if (duplicate) {
+          summary.conflicts += 1;
+          record(employee, "conflict", "Otro usuario ya usa el email o telefono del operario", linkedUser.id);
+          continue;
+        }
+        if (employeePortalNeedsSync(linkedUser, employee, contact)) {
+          syncEmployeePortalUser(linkedUser.id, employee, contact);
+          summary.synced += 1;
+          if (employee.status !== "activo" && linkedUser.active) summary.deactivated += 1;
+          record(employee, "synced", "Usuario de portal sincronizado con la ficha", linkedUser.id);
+        } else {
+          record(employee, "ok", "Portal correcto", linkedUser.id);
+        }
+        continue;
+      }
+
+      if (employee.status !== "activo") {
+        summary.skipped += 1;
+        record(employee, "skipped", "Operario no activo");
+        continue;
+      }
+      if (!contact.phoneKey) {
+        summary.skipped += 1;
+        record(employee, "skipped", "Telefono obligatorio para crear acceso automatico");
+        continue;
+      }
+
+      const candidate = findImportedUser(contact.email, contact.phone);
+      if (candidate) {
+        if (candidate.role !== "employee") {
+          summary.conflicts += 1;
+          record(employee, "conflict", "El contacto pertenece a un administrador", candidate.id);
+          continue;
+        }
+        const alreadyLinked = employeeLinkedToUser(candidate.id, employee.id);
+        if (alreadyLinked) {
+          summary.conflicts += 1;
+          record(employee, "conflict", `Usuario ya vinculado a ${alreadyLinked.name}`, candidate.id);
+          continue;
+        }
+        syncEmployeePortalUser(candidate.id, employee, contact);
+        run("UPDATE employees SET user_id = ? WHERE id = ?", [candidate.id, employee.id]);
+        summary.linked += 1;
+        record(employee, "linked", "Usuario empleado existente vinculado a la ficha", candidate.id);
+        continue;
+      }
+
+      const credentials = hashPassword(validateEmployeePortalPassword(contact.phoneKey));
+      const userId = randomId("usr");
+      run(
+        `INSERT INTO users (id, role, name, email, phone, password_hash, salt, active, password_changed_at, must_change_password)
+         VALUES (?, 'employee', ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, 1, CURRENT_TIMESTAMP, 1)`,
+        [userId, employee.name, contact.email || "", contact.phone || "", credentials.hash, credentials.salt]
+      );
+      run("UPDATE employees SET user_id = ? WHERE id = ?", [userId, employee.id]);
+      summary.created += 1;
+      record(employee, "created", "Portal creado con telefono como clave temporal", userId);
+    }
+
+    audit(actor, "employee_portals_repaired", "user", "bulk", {
+      checked: summary.checked,
+      created: summary.created,
+      linked: summary.linked,
+      synced: summary.synced,
+      deactivated: summary.deactivated,
+      skipped: summary.skipped,
+      conflicts: summary.conflicts
+    });
+  });
+
+  return summary;
 }
 
 function ensureCanChangeUser(actor, targetId, nextRole, nextActive) {
@@ -6019,6 +6185,7 @@ async function handleApi(req, res, url) {
         `UPDATE users
          SET password_hash = ?, salt = ?
              , password_changed_at = CURRENT_TIMESTAMP,
+             must_change_password = 0,
              failed_login_count = 0,
              locked_until = NULL,
              last_failed_login_at = NULL
@@ -6033,6 +6200,56 @@ async function handleApi(req, res, url) {
       });
     });
     return sendJson(res, 200, { ok: true, message: "Contrasena actualizada. Ya puedes iniciar sesion." });
+  }
+
+  if (pathname === "/api/auth/change-password" && method === "POST") {
+    requireUser(user);
+    const body = await readBody(req);
+    const currentPassword = String(body.currentPassword || "");
+    const nextPassword = validateNewPassword(body.password || "");
+    const account = get("SELECT * FROM users WHERE id = ?", [user.id]);
+    if (!account || !verifyPassword(currentPassword, account.salt, account.password_hash)) {
+      recordAccountLoginFailure(req, account, "change_password_bad_current");
+      return sendJson(res, 400, { error: "Contrasena actual incorrecta" });
+    }
+    if (verifyPassword(nextPassword, account.salt, account.password_hash)) {
+      return sendJson(res, 400, { error: "La nueva contrasena debe ser distinta" });
+    }
+    const credentials = hashPassword(nextPassword);
+    const currentToken = tokenFromRequest(req, { allowCookie: true });
+    const currentTokens = currentToken ? sessionTokenCandidates(currentToken) : [];
+    transaction(() => {
+      run(
+        `UPDATE users
+         SET password_hash = ?,
+             salt = ?,
+             password_changed_at = CURRENT_TIMESTAMP,
+             must_change_password = 0,
+             failed_login_count = 0,
+             locked_until = NULL,
+             last_failed_login_at = NULL
+         WHERE id = ?`,
+        [credentials.hash, credentials.salt, user.id]
+      );
+      if (currentTokens.length) {
+        run(
+          `DELETE FROM sessions
+           WHERE user_id = ?
+             AND token NOT IN (${currentTokens.map(() => "?").join(",")})`,
+          [user.id, ...currentTokens]
+        );
+      } else {
+        run("DELETE FROM sessions WHERE user_id = ?", [user.id]);
+      }
+      audit(user, "password_changed_by_user", "user", user.id, {
+        forced: Boolean(account.must_change_password),
+        otherSessionsClosed: true
+      });
+    });
+    return sendJson(res, 200, {
+      ok: true,
+      user: publicUser({ ...account, must_change_password: 0 })
+    });
   }
 
   if (pathname === "/api/auth/me" && method === "GET") {
@@ -6268,13 +6485,14 @@ async function handleApi(req, res, url) {
     validateUserContact({ email, phone });
     const credentials = hashPassword(safePassword);
     const id = randomId("usr");
+    const mustChangePassword = body.mustChangePassword === true || body.mustChangePassword === "true";
     const permissions = user.role === "super_admin"
       ? permissionsFromBody(body, role)
       : normalizeAdminPermissions(null, role);
     transaction(() => {
       run(
-        `INSERT INTO users (id, role, name, email, phone, password_hash, salt, permissions_json, active, password_changed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`,
+        `INSERT INTO users (id, role, name, email, phone, password_hash, salt, permissions_json, active, password_changed_at, must_change_password)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, ?)`,
         [
           id,
           role,
@@ -6283,7 +6501,8 @@ async function handleApi(req, res, url) {
           phone || null,
           credentials.hash,
           credentials.salt,
-          JSON.stringify(permissions)
+          JSON.stringify(permissions),
+          mustChangePassword ? 1 : 0
         ]
       );
 
@@ -6311,7 +6530,7 @@ async function handleApi(req, res, url) {
         );
       }
 
-      audit(user, "user_created", "user", id, { role, permissions });
+      audit(user, "user_created", "user", id, { role, permissions, mustChangePassword });
     });
     return sendJson(res, 201, { user: listUsers().find((item) => item.id === id) });
   }
@@ -6364,6 +6583,16 @@ async function handleApi(req, res, url) {
     });
   }
 
+  if (pathname === "/api/users/employee-portals/repair" && method === "PATCH") {
+    requireSuperAdmin(user);
+    const summary = repairEmployeePortals(user);
+    return sendJson(res, 200, {
+      ok: true,
+      ...summary,
+      users: listUsers()
+    });
+  }
+
   const userMatch = pathname.match(/^\/api\/users\/([^/]+)$/);
   if (userMatch && method === "PATCH") {
     requireSuperAdmin(user);
@@ -6374,11 +6603,16 @@ async function handleApi(req, res, url) {
     const unlock = body.unlock === true || body.unlock === "true";
     const target = ensureCanChangeUser(user, targetId, role, nextActive);
     const password = body.password ? hashPassword(validateNewPassword(body.password)) : null;
+    const nextMustChangePassword = password
+      ? !(body.mustChangePassword === false || body.mustChangePassword === "false")
+      : null;
     const finalRole = role || target.role;
     const permissions = permissionsFromBody(body, finalRole, target.permissions_json);
     const linkedEmployee = get("SELECT id FROM employees WHERE user_id = ?", [targetId]);
+    const createdEmployeeId = finalRole === "employee" && !linkedEmployee ? randomId("emp") : null;
     const nextEmail = body.email === undefined ? cleanContactEmail(target.email) : cleanContactEmail(body.email);
     const nextPhone = body.phone === undefined ? cleanContactPhone(target.phone) : cleanContactPhone(body.phone);
+    const nextName = body.name ?? target.name;
     if (!nextEmail && !nextPhone) {
       return sendJson(res, 400, { error: "Email o telefono obligatorio" });
     }
@@ -6395,6 +6629,7 @@ async function handleApi(req, res, url) {
              password_hash = COALESCE(?, password_hash),
              salt = COALESCE(?, salt),
              password_changed_at = CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE password_changed_at END,
+             must_change_password = CASE WHEN ? IS NOT NULL THEN ? ELSE must_change_password END,
              failed_login_count = CASE WHEN ? IS NOT NULL THEN 0 ELSE failed_login_count END,
              locked_until = CASE WHEN ? IS NOT NULL THEN NULL ELSE locked_until END,
              last_failed_login_at = CASE WHEN ? IS NOT NULL THEN NULL ELSE last_failed_login_at END,
@@ -6402,13 +6637,15 @@ async function handleApi(req, res, url) {
          WHERE id = ?`,
         [
           finalRole,
-          body.name ?? target.name,
+          nextName,
           nextEmail,
           nextPhone,
           nextActive === undefined ? target.active : (nextActive ? 1 : 0),
           password?.hash || null,
           password?.salt || null,
           password?.hash || null,
+          nextMustChangePassword === null ? null : 1,
+          nextMustChangePassword ? 1 : 0,
           password?.hash || null,
           password?.hash || null,
           password?.hash || null,
@@ -6421,11 +6658,11 @@ async function handleApi(req, res, url) {
         run(
           `INSERT INTO employees
             (id, user_id, name, role, phone, email, city, lat, lng, hourly_rate, diet_rate, skills, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            randomId("emp"),
+            createdEmployeeId,
             targetId,
-            body.name ?? target.name,
+            nextName,
             body.employeeRole || "Montaje",
             nextPhone || "",
             nextEmail || "",
@@ -6437,6 +6674,13 @@ async function handleApi(req, res, url) {
             JSON.stringify(body.skills || []),
             "Ficha creada al cambiar permisos desde Super Admin"
           ]
+        );
+      } else if (linkedEmployee) {
+        run(
+          `UPDATE employees
+           SET name = ?, email = ?, phone = ?
+           WHERE id = ?`,
+          [nextName, nextEmail || "", nextPhone || "", linkedEmployee.id]
         );
       }
 
@@ -6451,8 +6695,11 @@ async function handleApi(req, res, url) {
         role: finalRole,
         active: nextActive === undefined ? Boolean(target.active) : nextActive,
         passwordChanged: Boolean(password),
+        mustChangePassword: nextMustChangePassword,
         unlocked: unlock,
-        permissions
+        permissions,
+        employeeSynced: Boolean(linkedEmployee || createdEmployeeId),
+        employeeId: linkedEmployee?.id || createdEmployeeId || ""
       });
     });
     return sendJson(res, 200, { user: listUsers().find((item) => item.id === targetId) });
@@ -7158,6 +7405,7 @@ async function handleApi(req, res, url) {
                password_hash = COALESCE(?, password_hash),
                salt = COALESCE(?, salt),
                password_changed_at = CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE password_changed_at END,
+               must_change_password = CASE WHEN ? IS NOT NULL THEN 1 ELSE must_change_password END,
                failed_login_count = CASE WHEN ? IS NOT NULL THEN 0 ELSE failed_login_count END,
                locked_until = CASE WHEN ? IS NOT NULL THEN NULL ELSE locked_until END,
                last_failed_login_at = CASE WHEN ? IS NOT NULL THEN NULL ELSE last_failed_login_at END
@@ -7169,6 +7417,7 @@ async function handleApi(req, res, url) {
             nextStatus === "activo" ? 1 : 0,
             portalCredentials?.hash || null,
             portalCredentials?.salt || null,
+            portalCredentials?.hash || null,
             portalCredentials?.hash || null,
             portalCredentials?.hash || null,
             portalCredentials?.hash || null,
@@ -8238,6 +8487,7 @@ async function handleApi(req, res, url) {
              password_hash = COALESCE(?, password_hash),
              salt = COALESCE(?, salt),
              password_changed_at = CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE password_changed_at END,
+             must_change_password = CASE WHEN ? IS NOT NULL THEN 0 ELSE must_change_password END,
              failed_login_count = CASE WHEN ? IS NOT NULL THEN 0 ELSE failed_login_count END,
              locked_until = CASE WHEN ? IS NOT NULL THEN NULL ELSE locked_until END,
              last_failed_login_at = CASE WHEN ? IS NOT NULL THEN NULL ELSE last_failed_login_at END
@@ -8247,6 +8497,7 @@ async function handleApi(req, res, url) {
           email,
           password?.hash || null,
           password?.salt || null,
+          password?.hash || null,
           password?.hash || null,
           password?.hash || null,
           password?.hash || null,

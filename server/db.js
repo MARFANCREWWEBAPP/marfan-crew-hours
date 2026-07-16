@@ -589,6 +589,14 @@ const migrations = [
 
       CREATE INDEX IF NOT EXISTS idx_users_locked_until ON users(locked_until);
     `
+  },
+  {
+    version: 19,
+    name: "user-temporary-password-state",
+    sql: `
+      ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0;
+      CREATE INDEX IF NOT EXISTS idx_users_must_change_password ON users(must_change_password);
+    `
   }
 ];
 
