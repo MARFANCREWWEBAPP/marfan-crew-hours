@@ -138,6 +138,9 @@ const iconPaths = {
   plus: "M12 5v14M5 12h14",
   refresh: "M20 12a8 8 0 1 1-2.34-5.66M20 4v6h-6",
   save: "M5 3h12l2 2v16H5zM8 3v6h8V3M8 21v-7h8v7",
+  copy: "M8 8h10v12H8zM6 16H4V4h10v2",
+  eye: "M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6",
+  key: "M21 2l-2 2M13.5 10.5 19 5M11 13a5 5 0 1 1-2-2l3 3zM7 17l-2 2M5 15l-2 2",
   trash: "M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14M9 7V4h6v3",
   check: "M20 6 9 17l-5-5",
   map: "M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3zM9 3v15M15 6v15",
@@ -245,6 +248,57 @@ function contactActions({ phone = "", email = "", name = "MARFAN CREW", compact 
       <button class="btn ${compact ? "compact" : ""}" type="button" data-email="${esc(safeEmail)}" data-email-subject="${esc(subject)}" ${safeEmail ? "" : "disabled"} title="${safeEmail ? "Enviar email" : "Sin email"}">${icon("mail")} Email</button>
     </div>
   `;
+}
+
+function randomNumber(max) {
+  const cryptoApi = window.crypto || window.msCrypto;
+  if (cryptoApi?.getRandomValues) {
+    const values = new Uint32Array(1);
+    cryptoApi.getRandomValues(values);
+    return values[0] % max;
+  }
+  return Math.floor(Math.random() * max);
+}
+
+function randomCharacter(chars) {
+  return chars[randomNumber(chars.length)];
+}
+
+function secureTemporaryPassword(length = 14) {
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghijkmnopqrstuvwxyz";
+  const digits = "23456789";
+  const all = `${upper}${lower}${digits}`;
+  const chars = [
+    randomCharacter(upper),
+    randomCharacter(lower),
+    randomCharacter(digits)
+  ];
+  while (chars.length < length) chars.push(randomCharacter(all));
+  for (let index = chars.length - 1; index > 0; index -= 1) {
+    const swapIndex = randomNumber(index + 1);
+    [chars[index], chars[swapIndex]] = [chars[swapIndex], chars[index]];
+  }
+  return chars.join("");
+}
+
+async function copyText(value) {
+  const text = String(value || "");
+  if (!text) return false;
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  return copied;
 }
 
 function statusTag(status) {
@@ -870,20 +924,63 @@ function userPasswordStale(user) {
   return user.role !== "employee" && olderThanDays(user.passwordChangedAt, 180);
 }
 
+function activePermissionCount(user) {
+  return adminPermissionDefs.filter(([key]) => permissionEnabled(user.permissions, key)).length;
+}
+
+function userQualityFlags(user) {
+  const flags = [];
+  if (!user.email && !user.phone) flags.push({ label: "Sin contacto", tone: "red" });
+  if (user.role === "employee" && !user.employeeId) flags.push({ label: "Empleado sin ficha", tone: "amber" });
+  if (user.role === "admin" && activePermissionCount(user) >= adminPermissionDefs.length - 2) {
+    flags.push({ label: "Permisos amplios", tone: "amber" });
+  }
+  if (user.role !== "employee" && !user.lastLoginAt) flags.push({ label: "Sin primer acceso", tone: "blue" });
+  return flags;
+}
+
+function userHasQualityIssues(user) {
+  return userQualityFlags(user).length > 0;
+}
+
 function userNeedsAttention(user) {
-  return !user.active || userIsLocked(user) || user.recoveryPending || userPasswordStale(user);
+  return !user.active || userIsLocked(user) || user.recoveryPending || userPasswordStale(user) || userHasQualityIssues(user);
 }
 
 function userSecuritySummary(user) {
   const locked = userIsLocked(user);
   const sessions = Number(user.activeSessionCount || 0);
+  const qualityFlags = userQualityFlags(user);
   return `
     <div class="security-stack">
       ${locked ? `<span class="tag red">Bloqueado hasta ${esc(shortDateTime(user.lockedUntil))}</span>` : `<span class="tag ${sessions ? "green" : "blue"}">${sessions} sesion${sessions === 1 ? "" : "es"} activa${sessions === 1 ? "" : "s"}</span>`}
       ${userPasswordStale(user) ? `<span class="tag amber">Clave antigua</span>` : ""}
+      ${qualityFlags.map((flag) => `<span class="tag ${flag.tone}">${esc(flag.label)}</span>`).join("")}
       <small>Ultimo acceso: ${esc(shortDateTime(user.lastLoginAt))}</small>
       <small>Clave: ${esc(shortDateTime(user.passwordChangedAt))}</small>
       ${Number(user.failedLoginCount || 0) ? `<small>Fallos recientes: ${esc(user.failedLoginCount)}</small>` : ""}
+    </div>
+  `;
+}
+
+function userIdentityCell(user, isSuper) {
+  return `
+    <div class="user-identity-cell">
+      <strong>${esc(user.name)}</strong>
+      <small class="muted">${esc(user.id)}</small>
+      ${isSuper ? `
+        <form class="user-contact-editor" data-form="user-contact" data-user-id="${esc(user.id)}">
+          <details>
+            <summary>Editar datos</summary>
+            <div class="user-contact-grid">
+              <label>Nombre<input name="name" value="${esc(user.name)}" required /></label>
+              <label>Email<input name="email" type="email" value="${esc(user.email || "")}" /></label>
+              <label>Telefono<input name="phone" value="${esc(user.phone || "")}" /></label>
+            </div>
+            <button class="btn compact primary" type="submit">${icon("check")} Guardar datos</button>
+          </details>
+        </form>
+      ` : ""}
     </div>
   `;
 }
@@ -905,7 +1002,8 @@ function filteredUsers(users) {
       (filters.security === "locked" && userIsLocked(user)) ||
       (filters.security === "recovery" && user.recoveryPending) ||
       (filters.security === "sessions" && Number(user.activeSessionCount || 0) > 0) ||
-      (filters.security === "stale" && userPasswordStale(user));
+      (filters.security === "stale" && userPasswordStale(user)) ||
+      (filters.security === "quality" && userHasQualityIssues(user));
     if (!securityOk) return false;
     if (!query) return true;
     return searchableText(user.name, user.email, user.phone, user.id, user.role, user.employeeRole, user.employeeStatus).includes(query);
@@ -918,6 +1016,7 @@ function userCommandCenter(users, isSuper) {
   const locked = users.filter(userIsLocked);
   const recovery = users.filter((user) => user.recoveryPending);
   const stale = users.filter(userPasswordStale);
+  const quality = users.filter(userHasQualityIssues);
   return `
     <section class="panel user-command-center">
       <div class="user-filter-grid">
@@ -944,6 +1043,7 @@ function userCommandCenter(users, isSuper) {
             <option value="recovery" ${filters.security === "recovery" ? "selected" : ""}>Recuperaciones</option>
             <option value="sessions" ${filters.security === "sessions" ? "selected" : ""}>Sesiones activas</option>
             <option value="stale" ${filters.security === "stale" ? "selected" : ""}>Clave antigua</option>
+            <option value="quality" ${filters.security === "quality" ? "selected" : ""}>Calidad de cuenta</option>
           </select>
         </div>
         <button class="btn" type="button" data-user-filter-reset>${icon("refresh")} Limpiar</button>
@@ -953,6 +1053,7 @@ function userCommandCenter(users, isSuper) {
         <button class="attention-tile ${locked.length ? "hot" : ""} ${filters.security === "locked" ? "active" : ""}" type="button" data-user-security-filter="locked" aria-pressed="${filters.security === "locked"}"><span>${locked.length}</span><strong>Bloqueos</strong></button>
         <button class="attention-tile ${recovery.length ? "hot" : ""} ${filters.security === "recovery" ? "active" : ""}" type="button" data-user-security-filter="recovery" aria-pressed="${filters.security === "recovery"}"><span>${recovery.length}</span><strong>Recuperacion</strong></button>
         <button class="attention-tile ${stale.length ? "hot" : ""} ${filters.security === "stale" ? "active" : ""}" type="button" data-user-security-filter="stale" aria-pressed="${filters.security === "stale"}"><span>${stale.length}</span><strong>Clave antigua</strong></button>
+        <button class="attention-tile ${quality.length ? "hot" : ""} ${filters.security === "quality" ? "active" : ""}" type="button" data-user-security-filter="quality" aria-pressed="${filters.security === "quality"}"><span>${quality.length}</span><strong>Calidad ficha</strong></button>
       </div>
     </section>
   `;
@@ -1005,6 +1106,8 @@ function usersView() {
   const recoveries = users.filter((user) => user.recoveryPending).length;
   const activeSessions = users.reduce((sum, user) => sum + Number(user.activeSessionCount || 0), 0);
   const lockedUsers = users.filter(userIsLocked).length;
+  const qualityUsers = users.filter(userHasQualityIssues).length;
+  const attentionUsers = users.filter(userNeedsAttention).length;
   return `
     <div class="page-head">
       <div>
@@ -1021,7 +1124,7 @@ function usersView() {
       ${cardTemplate({ label: "Administradores", value: admins, hint: "Gestionan la empresa", tone: "blue" })}
       ${isSuper ? cardTemplate({ label: "Empleados", value: employees, hint: "Portal operario", tone: "ink" }) : ""}
       ${isSuper ? cardTemplate({ label: "Sesiones", value: activeSessions, hint: "Abiertas ahora", tone: activeSessions ? "blue" : "green" }) : ""}
-      ${isSuper ? cardTemplate({ label: "Alertas acceso", value: lockedUsers + recoveries, hint: `${lockedUsers} bloqueos · ${recoveries} recuperaciones`, tone: lockedUsers + recoveries ? "amber" : "green" }) : ""}
+      ${isSuper ? cardTemplate({ label: "Atencion usuarios", value: attentionUsers, hint: `${lockedUsers} bloqueos · ${recoveries} recuperaciones · ${qualityUsers} calidad`, tone: attentionUsers ? "amber" : "green" }) : ""}
       ${cardTemplate({ label: "Bloqueados", value: users.length - activeUsers, hint: "Sin acceso", tone: "red" })}
     </section>
     ${userCommandCenter(users, isSuper)}
@@ -1039,7 +1142,7 @@ function usersView() {
                 return `
                   <tr>
                     ${isSuper ? `<td class="select-col"><input type="checkbox" data-user-select="${esc(user.id)}" ${selected ? "checked" : ""} aria-label="Seleccionar ${esc(user.name)}" /></td>` : ""}
-                    <td><strong>${esc(user.name)}</strong><br /><small class="muted">${esc(user.id)}</small></td>
+                    <td>${userIdentityCell(user, isSuper)}</td>
                     <td>${roleTag(user.role)}</td>
                     <td>${esc(user.email || "")}<br /><small class="muted">${esc(user.phone || "")}</small></td>
                     <td>${user.employeeId ? `<strong>${esc(user.employeeRole)}</strong><br /><small class="muted">${esc(user.employeeStatus)}</small>` : `<span class="muted">No vinculada</span>`}</td>
@@ -1081,7 +1184,18 @@ function usersView() {
         <div class="field"><label>Nombre</label><input name="name" required /></div>
         <div class="field"><label>Email</label><input name="email" type="email" /></div>
         <div class="field"><label>Telefono</label><input name="phone" /></div>
-        <div class="field"><label>Contrasena temporal</label><input name="password" type="password" minlength="8" autocomplete="new-password" placeholder="Minimo 8, letras y numeros" required /></div>
+        <div class="field password-field">
+          <label>Contrasena temporal</label>
+          <div class="password-control">
+            <input name="password" type="password" minlength="8" autocomplete="new-password" placeholder="Genera una clave segura" required />
+            <div class="password-actions">
+              <button class="btn compact" type="button" data-generate-password>${icon("key")} Generar</button>
+              <button class="btn compact" type="button" data-toggle-password>${icon("eye")} Ver</button>
+              <button class="btn compact" type="button" data-copy-password>${icon("copy")} Copiar</button>
+            </div>
+          </div>
+          <small class="muted">Recomendada: clave temporal generada y enviada por canal seguro.</small>
+        </div>
         ${isSuper ? `<div class="inspector-section">
           <h3>Permisos del administrador</h3>
           ${permissionPresetButtons()}
@@ -4329,6 +4443,19 @@ async function handleSubmit(event) {
       toast("Cliente actualizado");
       await renderAdmin(true);
     }
+    if (type === "user-contact") {
+      const body = formData(form);
+      await api(`/api/users/${form.dataset.userId}`, {
+        method: "PATCH",
+        body: {
+          name: body.name,
+          email: body.email,
+          phone: body.phone
+        }
+      });
+      toast("Datos de acceso actualizados");
+      await renderAdmin(true);
+    }
     if (type === "employee") {
       const body = await employeeAdminPayload(form);
       body.skills = String(body.skills || "").split(",").map((item) => item.trim()).filter(Boolean);
@@ -4530,6 +4657,30 @@ async function handleClick(event) {
   if (target.dataset.showReset !== undefined) {
     state.showReset = true;
     return renderLogin();
+  }
+
+  if (target.dataset.generatePassword !== undefined) {
+    const input = target.closest("form")?.querySelector("[name=password]");
+    if (!input) return;
+    input.value = secureTemporaryPassword();
+    input.type = "text";
+    const copied = await copyText(input.value).catch(() => false);
+    return toast(copied ? "Clave segura generada y copiada" : "Clave segura generada. Copiala manualmente", copied ? "info" : "error");
+  }
+
+  if (target.dataset.copyPassword !== undefined) {
+    const input = target.closest("form")?.querySelector("[name=password]");
+    if (!input?.value) return toast("Primero genera o escribe una contrasena", "error");
+    const copied = await copyText(input.value).catch(() => false);
+    return toast(copied ? "Contrasena copiada" : "No se pudo copiar automaticamente", copied ? "info" : "error");
+  }
+
+  if (target.dataset.togglePassword !== undefined) {
+    const input = target.closest("form")?.querySelector("[name=password]");
+    if (!input) return;
+    input.type = input.type === "password" ? "text" : "password";
+    target.innerHTML = input.type === "password" ? `${icon("eye")} Ver` : `${icon("eye")} Ocultar`;
+    return;
   }
 
   if (target.dataset.nav) {
@@ -4977,7 +5128,7 @@ async function handleClick(event) {
   }
 
   if (target.dataset.resetUser) {
-    const password = window.prompt("Nueva contrasena temporal");
+    const password = window.prompt("Nueva contrasena temporal segura", secureTemporaryPassword());
     if (!password) return;
     if (password.length < 8) return toast("La contrasena debe tener al menos 8 caracteres", "error");
     if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) {
@@ -4987,7 +5138,8 @@ async function handleClick(event) {
       method: "PATCH",
       body: { password }
     });
-    toast("Contrasena temporal actualizada");
+    await copyText(password).catch(() => false);
+    toast("Contrasena temporal actualizada y copiada");
     return renderAdmin(true);
   }
 

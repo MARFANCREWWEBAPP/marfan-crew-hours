@@ -298,6 +298,25 @@ button {
   box-shadow: 0 0 0 3px rgba(10, 115, 232, 0.12);
 }
 
+.password-field small {
+  line-height: 1.35;
+}
+
+.password-control {
+  display: grid;
+  gap: 8px;
+}
+
+.password-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.password-actions .btn {
+  flex: 1 1 88px;
+}
+
 .remember-row,
 .row-between {
   display: flex;
@@ -948,7 +967,7 @@ button:disabled {
 
 .user-attention-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  grid-template-columns: repeat(5, minmax(116px, 1fr));
   gap: 10px;
 }
 
@@ -1092,6 +1111,52 @@ button:disabled {
 .users-table .select-col {
   padding-left: 12px;
   padding-right: 6px;
+}
+
+.user-identity-cell {
+  display: grid;
+  gap: 3px;
+  min-width: 180px;
+}
+
+.user-contact-editor {
+  margin-top: 5px;
+}
+
+.user-contact-editor summary {
+  cursor: pointer;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.user-contact-grid {
+  display: grid;
+  gap: 7px;
+  margin: 8px 0;
+}
+
+.user-contact-grid label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.user-contact-grid input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 9px;
+  color: var(--ink);
+  background: #fff;
+}
+
+.user-contact-grid input:focus {
+  border-color: var(--blue);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(10, 115, 232, 0.12);
 }
 
 .permission-editor {
