@@ -266,6 +266,78 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 	    assert.equal(superLogin.status, 200);
 	    const superToken = superLogin.json.token;
 
+	    const lockoutAdmin = await jsonRequest(baseUrl, "/api/users", {
+	      method: "POST",
+	      token: superToken,
+	      body: {
+	        role: "admin",
+	        name: "Admin Bloqueo Seguridad",
+	        email: "bloqueo.seguridad@marfancrew.test",
+	        password: "Lockout2026"
+	      }
+	    });
+	    assert.equal(lockoutAdmin.status, 201);
+	    for (let attempt = 0; attempt < 5; attempt += 1) {
+	      const failedAccountLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+	        method: "POST",
+	        body: {
+	          identifier: "bloqueo.seguridad@marfancrew.test",
+	          password: "NoEsLaClave2026",
+	          mode: "admin"
+	        }
+	      });
+	      assert.equal(failedAccountLogin.status, attempt === 4 ? 423 : 401);
+	    }
+	    const lockedCorrectPassword = await jsonRequest(baseUrl, "/api/auth/login", {
+	      method: "POST",
+	      body: {
+	        identifier: "bloqueo.seguridad@marfancrew.test",
+	        password: "Lockout2026",
+	        mode: "admin"
+	      }
+	    });
+	    assert.equal(lockedCorrectPassword.status, 423);
+	    assert.ok(lockedCorrectPassword.json.lockedUntil);
+
+	    const lockedUsers = await jsonRequest(baseUrl, "/api/users", { token: superToken });
+	    assert.equal(lockedUsers.status, 200);
+	    const lockedUser = lockedUsers.json.users.find((item) => item.id === lockoutAdmin.json.user.id);
+	    assert.equal(lockedUser.failedLoginCount, 5);
+	    assert.ok(lockedUser.lockedUntil);
+	    assert.equal(lockedUser.activeSessionCount, 0);
+	    assert.ok(lockedUser.passwordChangedAt);
+
+	    const unlockUser = await jsonRequest(baseUrl, `/api/users/${lockoutAdmin.json.user.id}`, {
+	      method: "PATCH",
+	      token: superToken,
+	      body: { unlock: true }
+	    });
+	    assert.equal(unlockUser.status, 200);
+	    assert.equal(unlockUser.json.user.failedLoginCount, 0);
+	    assert.equal(unlockUser.json.user.lockedUntil, "");
+
+	    const unlockedLogin = await jsonRequest(baseUrl, "/api/auth/login", {
+	      method: "POST",
+	      body: {
+	        identifier: "bloqueo.seguridad@marfancrew.test",
+	        password: "Lockout2026",
+	        mode: "admin"
+	      }
+	    });
+	    assert.equal(unlockedLogin.status, 200);
+	    const usersWithSession = await jsonRequest(baseUrl, "/api/users", { token: superToken });
+	    const lockoutWithSession = usersWithSession.json.users.find((item) => item.id === lockoutAdmin.json.user.id);
+	    assert.equal(lockoutWithSession.activeSessionCount >= 1, true);
+
+	    const revokedSessions = await jsonRequest(baseUrl, `/api/users/${lockoutAdmin.json.user.id}/sessions`, {
+	      method: "DELETE",
+	      token: superToken
+	    });
+	    assert.equal(revokedSessions.status, 200);
+	    assert.equal(revokedSessions.json.revoked >= 1, true);
+	    const revokedSessionMe = await jsonRequest(baseUrl, "/api/auth/me", { token: unlockedLogin.json.token });
+	    assert.equal(revokedSessionMe.status, 401);
+
 	    const recoveryRequest = await jsonRequest(baseUrl, "/api/auth/recover", {
 	      method: "POST",
 	      body: { identifier: "coordinador@marfancrew.test" }
@@ -1435,13 +1507,15 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.match(clientDossierHtml, /Abrir archivo/);
     assert.match(clientDossierHtml, new RegExp(`/api/documents/${uploadedDocument.json.document.id}/file`));
 
+    const nightRestDate = addDaysLocal(8);
+    const morningRestDate = addDaysLocal(9);
     const nightRestEvent = await jsonRequest(baseUrl, "/api/events", {
       method: "POST",
       token,
       body: {
         name: "Montaje nocturno descanso",
         clientId: "cli_tech",
-        date: "2026-07-04",
+        date: nightRestDate,
         startTime: "22:00",
         endTime: "02:00",
         location: "Recinto noche",
@@ -1458,14 +1532,14 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
       token,
       body: { eventId: nightRestEvent.json.event.id, employeeId: "emp_nerea", role: "Limpieza" }
     });
-    assert.equal(nightRestAssignment.status, 201);
+    assert.equal(nightRestAssignment.status, 201, JSON.stringify(nightRestAssignment.json));
     const morningRestEvent = await jsonRequest(baseUrl, "/api/events", {
       method: "POST",
       token,
       body: {
         name: "Turno temprano descanso",
         clientId: "cli_tech",
-        date: "2026-07-05",
+        date: morningRestDate,
         startTime: "08:00",
         endTime: "12:00",
         location: "Recinto manana",
@@ -1482,8 +1556,8 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
       token,
       body: {
         employeeId: "emp_nerea",
-        startDate: "2026-07-05",
-        endDate: "2026-07-05",
+        startDate: morningRestDate,
+        endDate: morningRestDate,
         type: "no_disponible",
         status: "solicitado",
         reason: "Solicitud pendiente del operario"
@@ -2127,7 +2201,7 @@ test("Google Calendar sync writes imported and new events with OAuth credentials
   const baseUrl = `http://127.0.0.1:${port}`;
   const mockGoogleFetch = path.resolve(__dirname, "mock-google-fetch.cjs");
   const googleLog = path.join(tmp, "google-fetch.jsonl");
-  const nodeOptions = [process.env.NODE_OPTIONS, `--require=${mockGoogleFetch}`].filter(Boolean).join(" ");
+  const nodeOptions = [process.env.NODE_OPTIONS, `--require=${JSON.stringify(mockGoogleFetch)}`].filter(Boolean).join(" ");
   const child = spawn(process.execPath, ["server/index.js"], {
     cwd: path.resolve(__dirname, ".."),
     env: {
@@ -2175,13 +2249,15 @@ test("Google Calendar sync writes imported and new events with OAuth credentials
     assert.equal(oauthCalendar.json.googleStatus.status, "connected_oauth");
     assert.equal(oauthCalendar.json.googleEvents.some((event) => event.google_event_id === "oauth_api_event"), true);
 
+    const oauthServiceDate = addDaysLocal(10);
+    const importedServiceDate = addDaysLocal(11);
     const createdEvent = await jsonRequest(baseUrl, "/api/events", {
       method: "POST",
       token,
       body: {
         name: "Servicio OAuth Google",
         clientId: "cli_tech",
-        date: "2026-07-01",
+        date: oauthServiceDate,
         startTime: "10:00",
         endTime: "14:00",
         location: "Recinto OAuth",
@@ -2226,10 +2302,10 @@ test("Google Calendar sync writes imported and new events with OAuth credentials
       method: "POST",
       token,
       body: {
-        id: "google_oauth_imported",
-        googleUid: "google-oauth-imported@example.com",
-        name: "Evento Google por completar",
-        date: "2026-07-02",
+	        id: "google_oauth_imported",
+	        googleUid: "google-oauth-imported@example.com",
+	        name: "Evento Google por completar",
+	        date: importedServiceDate,
         startTime: "09:00",
         endTime: "11:00",
         location: "Recinto Google OAuth",
@@ -2244,8 +2320,8 @@ test("Google Calendar sync writes imported and new events with OAuth credentials
       method: "PATCH",
       token,
       body: {
-        name: "Evento Google editado en MARFAN",
-        date: "2026-07-02",
+	        name: "Evento Google editado en MARFAN",
+	        date: importedServiceDate,
         startTime: "11:30",
         endTime: "14:30",
         location: "Recinto Google OAuth editado",

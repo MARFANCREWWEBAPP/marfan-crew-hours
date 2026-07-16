@@ -493,6 +493,7 @@ async function renderAdmin(force = false) {
   `;
   queueMicrotask(() => {
     setupSignaturePads();
+    updateEventDraftSummaries();
     window.scrollTo(0, 0);
   });
 }
@@ -794,6 +795,23 @@ function userRecoveryStatus(user) {
   return `<span class="tag amber">Recuperacion pendiente${count > 1 ? ` x${count}` : ""}</span>${detail ? `<br />${detail}` : ""}`;
 }
 
+function userIsLocked(user) {
+  return Boolean(user.lockedUntil && new Date(user.lockedUntil).getTime() > Date.now());
+}
+
+function userSecuritySummary(user) {
+  const locked = userIsLocked(user);
+  const sessions = Number(user.activeSessionCount || 0);
+  return `
+    <div class="security-stack">
+      ${locked ? `<span class="tag red">Bloqueado hasta ${esc(shortDateTime(user.lockedUntil))}</span>` : `<span class="tag ${sessions ? "green" : "blue"}">${sessions} sesion${sessions === 1 ? "" : "es"} activa${sessions === 1 ? "" : "s"}</span>`}
+      <small>Ultimo acceso: ${esc(shortDateTime(user.lastLoginAt))}</small>
+      <small>Clave: ${esc(shortDateTime(user.passwordChangedAt))}</small>
+      ${Number(user.failedLoginCount || 0) ? `<small>Fallos recientes: ${esc(user.failedLoginCount)}</small>` : ""}
+    </div>
+  `;
+}
+
 function usersView() {
   const users = state.data.users || [];
   const isSuper = state.user?.role === "super_admin";
@@ -801,11 +819,13 @@ function usersView() {
   const admins = users.filter((user) => user.role !== "employee" && user.active).length;
   const employees = users.filter((user) => user.role === "employee" && user.active).length;
   const recoveries = users.filter((user) => user.recoveryPending).length;
+  const activeSessions = users.reduce((sum, user) => sum + Number(user.activeSessionCount || 0), 0);
+  const lockedUsers = users.filter(userIsLocked).length;
   return `
     <div class="page-head">
       <div>
         <h1>Administradores</h1>
-        <p>Alta de usuarios administradores, accesos internos y permisos de gestion.</p>
+        <p>Alta de usuarios, sesiones activas, bloqueos de seguridad y permisos de gestion.</p>
       </div>
       <div class="filters-row">
         <span class="tag ${isSuper ? "red" : "blue"}">${isSuper ? "Super Admin" : "Admin"}</span>
@@ -816,7 +836,8 @@ function usersView() {
       ${cardTemplate({ label: "Usuarios activos", value: activeUsers, hint: "Con acceso habilitado", tone: "green" })}
       ${cardTemplate({ label: "Administradores", value: admins, hint: "Gestionan la empresa", tone: "blue" })}
       ${isSuper ? cardTemplate({ label: "Empleados", value: employees, hint: "Portal operario", tone: "ink" }) : ""}
-      ${isSuper ? cardTemplate({ label: "Recuperaciones", value: recoveries, hint: "Solicitudes pendientes", tone: recoveries ? "amber" : "green" }) : ""}
+      ${isSuper ? cardTemplate({ label: "Sesiones", value: activeSessions, hint: "Abiertas ahora", tone: activeSessions ? "blue" : "green" }) : ""}
+      ${isSuper ? cardTemplate({ label: "Alertas acceso", value: lockedUsers + recoveries, hint: `${lockedUsers} bloqueos · ${recoveries} recuperaciones`, tone: lockedUsers + recoveries ? "amber" : "green" }) : ""}
       ${cardTemplate({ label: "Bloqueados", value: users.length - activeUsers, hint: "Sin acceso", tone: "red" })}
     </section>
     <section class="split-grid users-view" style="margin-top:16px">
@@ -824,7 +845,7 @@ function usersView() {
         <div class="panel-head"><h2>${isSuper ? "Usuarios del sistema" : "Administradores internos"}</h2></div>
         <div class="table-wrap">
           <table class="data-table users-table">
-            <thead><tr><th>Usuario</th><th>Rol</th><th>Contacto</th><th>Ficha operario</th><th>Permisos</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <thead><tr><th>Usuario</th><th>Rol</th><th>Contacto</th><th>Ficha operario</th><th>Permisos</th><th>Seguridad</th><th>Estado</th><th>Acciones</th></tr></thead>
             <tbody>
               ${users.map((user) => {
                 const isSelf = user.id === state.user.id;
@@ -846,11 +867,14 @@ function usersView() {
                         </form>
                       ` : permissionSummary(user)}
                     </td>
+                    <td>${userSecuritySummary(user)}</td>
                     <td>${user.active ? statusTag("confirmado") : `<span class="tag red">Bloqueado</span>`}${userRecoveryStatus(user)}</td>
                     <td>
                       <div class="table-actions">
                         ${isSuper && user.role === "employee" ? `<button class="btn compact" data-user-role="${user.id}" data-next-role="admin">Admin</button>` : ""}
                         ${isSuper && user.role === "admin" ? `<button class="btn compact" data-user-role="${user.id}" data-next-role="employee">Empleado</button>` : ""}
+                        ${isSuper && userIsLocked(user) ? `<button class="btn compact" data-unlock-user="${user.id}">Desbloq.</button>` : ""}
+                        ${isSuper && Number(user.activeSessionCount || 0) > 0 && !isSelf ? `<button class="btn compact" data-revoke-sessions="${user.id}">Cerrar sesiones</button>` : ""}
                         ${isSuper ? `<button class="btn compact ${user.recoveryPending ? "primary" : ""}" data-reset-user="${user.id}">${user.recoveryPending ? "Nueva clave" : "Clave"}</button>` : ""}
                         ${isSuper && !isSelf ? `<button class="btn compact ${user.active ? "red" : ""}" data-user-active="${user.id}" data-next-active="${user.active ? "false" : "true"}">${user.active ? "Bloq." : "Act."}</button>` : `<span class="muted">${isSelf ? "Tu usuario" : "Solo lectura"}</span>`}
                       </div>
@@ -868,7 +892,7 @@ function usersView() {
         <div class="field"><label>Nombre</label><input name="name" required /></div>
         <div class="field"><label>Email</label><input name="email" type="email" /></div>
         <div class="field"><label>Telefono</label><input name="phone" /></div>
-        <div class="field"><label>Contrasena temporal</label><input name="password" type="password" minlength="8" required value="marfan123" /></div>
+        <div class="field"><label>Contrasena temporal</label><input name="password" type="password" minlength="8" autocomplete="new-password" placeholder="Minimo 8, letras y numeros" required /></div>
         ${isSuper ? `<div class="inspector-section">
           <h3>Permisos del administrador</h3>
           ${permissionChecklist()}
@@ -889,10 +913,14 @@ function usersView() {
 function auditActionLabel(action) {
   const labels = {
     login_success: "Inicio de sesion",
+    login_failed: "Login fallido",
+    login_account_locked: "Cuenta bloqueada",
+    login_blocked: "Login bloqueado",
     logout: "Cierre de sesion",
     user_created: "Usuario creado",
     user_updated: "Usuario actualizado",
     user_deactivated: "Usuario bloqueado",
+    user_sessions_revoked: "Sesiones cerradas",
     event_created: "Evento creado",
     event_updated: "Evento actualizado",
     event_closed: "Evento cerrado",
@@ -1036,7 +1064,12 @@ function eventsTable(events) {
               <td>${event.incident_count}</td>
               <td><strong style="color:${event.finance.margin < 30 ? "var(--amber)" : "var(--green)"}">${event.finance.margin}%</strong></td>
               <td>${statusTag(event.status)}</td>
-              <td><button class="btn" data-select-event="${event.id}">${icon("search")} Ver</button></td>
+              <td>
+                <div class="table-actions">
+                  <button class="btn compact" data-select-event="${event.id}">${icon("search")} Ver</button>
+                  ${assignmentEventLocked(event) ? "" : `<button class="btn compact primary" data-edit-event="${event.id}">${icon("pen")} Editar</button>`}
+                </div>
+              </td>
             </tr>
           `).join("")}
         </tbody>
@@ -1604,63 +1637,161 @@ function requirementCounts(requirements = []) {
   return Object.fromEntries(requirements.map((requirement) => [requirement.role, Number(requirement.count || 0)]));
 }
 
-function eventEditForm(event) {
+function eventFormValues(event = null) {
+  return {
+    id: event?.id || "",
+    name: event?.name || "",
+    clientId: event?.client_id || state.data.clients?.[0]?.id || "",
+    date: event?.date || todayIso(),
+    startTime: event?.start_time || "09:00",
+    endTime: event?.end_time || "15:00",
+    vehicleCount: event?.vehicle_count || 1,
+    requirements: event ? requirementCounts(event.requirements || []) : null,
+    location: event?.location || "",
+    address: event?.address || "",
+    googleMapsUrl: event?.google_maps_url || "",
+    lat: event?.lat ?? "",
+    lng: event?.lng ?? "",
+    budget: event?.budget || "",
+    teamLeaderId: event?.team_leader_id || "",
+    notes: event?.notes || ""
+  };
+}
+
+function eventClientOptions(selectedId = "") {
+  return state.data.clients.map((client) =>
+    `<option value="${esc(client.id)}" ${client.id === selectedId ? "selected" : ""}>${esc(client.name)}</option>`
+  ).join("");
+}
+
+function eventLeaderOptions(selectedId = "") {
+  return state.data.employees.map((employee) =>
+    `<option value="${esc(employee.id)}" ${employee.id === selectedId ? "selected" : ""}>${esc(employee.name)} · ${esc(employee.role)}</option>`
+  ).join("");
+}
+
+function eventEditorForm({ event = null, mode = "create" } = {}) {
+  const values = eventFormValues(event);
+  const editing = mode === "edit";
   return `
-    <form class="event-edit-form" data-form="event-edit" data-event-id="${event.id}">
-      <div class="row-between">
-        <div>${statusTag(event.status)}</div>
-        <button class="btn" type="button" data-cancel-edit-event>${icon("refresh")} Cancelar</button>
+    <form class="panel inspector event-builder" data-form="${editing ? "event-edit" : "event"}" ${editing ? `data-event-id="${esc(values.id)}"` : ""} data-event-builder>
+      <div class="event-builder-head">
+        <div>
+          <span class="tag ${editing ? "blue" : "green"}">${editing ? "Editar evento" : "Nuevo evento"}</span>
+          <h2>${editing ? esc(values.name || "Editar evento") : "Crear evento"}</h2>
+          <p class="muted">${editing ? "Actualiza un servicio que aun no se ha realizado." : "Rellena los datos clave y guarda el servicio."}</p>
+        </div>
+        <div class="event-builder-head-actions">
+          ${editing ? `<button class="btn compact" type="button" data-cancel-edit-event>${icon("refresh")} Cancelar</button>` : ""}
+          <button class="btn compact primary" type="submit">${icon("save")} ${editing ? "Guardar" : "Guardar evento"}</button>
+        </div>
       </div>
-      <h2>Editar evento</h2>
-      <div class="field"><label>Nombre</label><input name="name" required value="${esc(event.name)}" /></div>
-      <div class="field"><label>Cliente</label><select name="clientId">${state.data.clients.map((client) => `<option value="${client.id}" ${client.id === event.client_id ? "selected" : ""}>${esc(client.name)}</option>`).join("")}</select></div>
-      <div class="form-grid compact">
-        <div class="field"><label>Fecha</label><input name="date" type="date" value="${esc(event.date)}" required /></div>
-        <div class="field"><label>Inicio</label><input name="startTime" type="time" value="${esc(event.start_time)}" required /></div>
-        <div class="field"><label>Fin</label><input name="endTime" type="time" value="${esc(event.end_time)}" required /></div>
-        <div class="field"><label>Vehiculos</label><input name="vehicleCount" type="number" min="1" value="${esc(event.vehicle_count || 1)}" /></div>
+
+      <div class="event-draft-summary" data-event-summary></div>
+
+      <section class="event-step">
+        <div class="event-step-head"><span>1</span><strong>Servicio</strong><small>Cliente, fecha y horario</small></div>
+        <div class="field"><label>Nombre del evento</label><input name="name" required value="${esc(values.name)}" placeholder="Ej. Montaje corporativo Palacio de Ferias" /></div>
+        <div class="field"><label>Cliente</label><select name="clientId">${eventClientOptions(values.clientId)}</select></div>
+        <div class="event-quick-row">
+          <button class="btn compact" type="button" data-event-date-preset="today">Hoy</button>
+          <button class="btn compact" type="button" data-event-date-preset="tomorrow">Manana</button>
+          <button class="btn compact" type="button" data-event-date-preset="week">+7 dias</button>
+          <button class="btn compact" type="button" data-event-time-preset="morning">Manana 09-15</button>
+          <button class="btn compact" type="button" data-event-time-preset="night">Noche 22-02</button>
+        </div>
+        <div class="form-grid compact">
+          <div class="field"><label>Fecha</label><input name="date" type="date" value="${esc(values.date)}" required /></div>
+          <div class="field"><label>Inicio</label><input name="startTime" type="time" value="${esc(values.startTime)}" required /></div>
+          <div class="field"><label>Fin</label><input name="endTime" type="time" value="${esc(values.endTime)}" required /></div>
+          <div class="field"><label>Vehiculos</label><input name="vehicleCount" type="number" min="1" value="${esc(values.vehicleCount)}" /></div>
+        </div>
+      </section>
+
+      <section class="event-step">
+        <div class="event-step-head"><span>2</span><strong>Equipo</strong><small>Roles necesarios</small></div>
+        ${roleRequirementGrid(values.requirements)}
+      </section>
+
+      <section class="event-step">
+        <div class="event-step-head"><span>3</span><strong>Ubicacion y cierre</strong><small>Recinto, jefe, precio y notas</small></div>
+        <div class="field"><label>Ubicacion</label><input name="location" value="${esc(values.location)}" required placeholder="Recinto o ciudad" /></div>
+        <div class="field"><label>Direccion</label><input name="address" value="${esc(values.address)}" placeholder="Direccion completa para operaciones" /></div>
+        <div class="field"><label>Link Google Maps</label><input name="googleMapsUrl" data-google-maps-url value="${esc(values.googleMapsUrl)}" placeholder="Pega un enlace de Google Maps para detectar coordenadas" /></div>
+        <div class="form-grid compact">
+          <div class="field"><label>Latitud</label><input name="lat" data-event-lat type="number" step="0.000001" value="${esc(values.lat)}" /></div>
+          <div class="field"><label>Longitud</label><input name="lng" data-event-lng type="number" step="0.000001" value="${esc(values.lng)}" /></div>
+          <div class="field"><label>Precio manual</label><input name="budget" type="number" min="0" value="${esc(values.budget)}" placeholder="Auto" /></div>
+        </div>
+        <div class="field"><label>Jefe de equipo</label><select name="teamLeaderId"><option value="">Pendiente</option>${eventLeaderOptions(values.teamLeaderId)}</select></div>
+        <div class="field"><label>Notas</label><textarea name="notes" placeholder="Indicaciones de montaje, accesos, uniforme, contacto en recinto...">${esc(values.notes)}</textarea></div>
+      </section>
+
+      <div class="event-form-actions">
+        <button class="btn primary full" type="submit">${icon("save")} ${editing ? "Guardar cambios" : "Guardar evento"}</button>
+        <small class="muted">${editing ? "Se actualizara tambien Google Calendar si esta conectado." : "Despues podras asignar operarios, duplicarlo o sincronizar con Google."}</small>
       </div>
-      <div class="field"><label>Equipo necesario</label>${roleRequirementGrid(requirementCounts(event.requirements || []))}</div>
-      <div class="field"><label>Ubicacion</label><input name="location" value="${esc(event.location)}" required /></div>
-      <div class="field"><label>Direccion</label><input name="address" value="${esc(event.address || event.location)}" /></div>
-      <div class="field"><label>Link Google Maps</label><input name="googleMapsUrl" data-google-maps-url value="${esc(event.google_maps_url || "")}" /></div>
-      <div class="form-grid compact">
-        <div class="field"><label>Latitud</label><input name="lat" data-event-lat type="number" step="0.000001" value="${esc(event.lat)}" /></div>
-        <div class="field"><label>Longitud</label><input name="lng" data-event-lng type="number" step="0.000001" value="${esc(event.lng)}" /></div>
-        <div class="field"><label>Precio manual</label><input name="budget" type="number" min="0" value="${esc(event.budget || "")}" /></div>
-      </div>
-      <div class="field"><label>Jefe de equipo</label><select name="teamLeaderId"><option value="">Pendiente</option>${state.data.employees.map((employee) => `<option value="${employee.id}" ${employee.id === event.team_leader_id ? "selected" : ""}>${esc(employee.name)} · ${esc(employee.role)}</option>`).join("")}</select></div>
-      <div class="field"><label>Notas</label><textarea name="notes">${esc(event.notes || "")}</textarea></div>
-      <button class="btn primary full" type="submit">${icon("check")} Guardar cambios</button>
     </form>
   `;
 }
 
+function eventEditForm(event) {
+  return eventEditorForm({ event, mode: "edit" });
+}
+
 function createEventForm() {
-  return `
-    <form class="panel inspector" data-form="event">
-      <h2>Nuevo evento</h2>
-      <div class="field"><label>Nombre</label><input name="name" required value="Montaje corporativo" /></div>
-      <div class="field"><label>Cliente</label><select name="clientId">${state.data.clients.map((client) => `<option value="${client.id}">${esc(client.name)}</option>`).join("")}</select></div>
-      <div class="form-grid">
-        <div class="field"><label>Fecha</label><input name="date" type="date" value="${todayIso()}" required /></div>
-        <div class="field"><label>Inicio</label><input name="startTime" type="time" value="09:00" required /></div>
-        <div class="field"><label>Fin</label><input name="endTime" type="time" value="15:00" required /></div>
-        <div class="field"><label>Vehiculos</label><input name="vehicleCount" type="number" min="1" value="1" /></div>
-      </div>
-      <div class="field"><label>Equipo necesario</label>${roleRequirementGrid()}</div>
-      <div class="field"><label>Ubicacion</label><input name="location" value="Recinto en Malaga" required /></div>
-      <div class="field"><label>Link Google Maps</label><input name="googleMapsUrl" data-google-maps-url placeholder="https://www.google.com/maps/..." /></div>
-      <div class="form-grid compact">
-        <div class="field"><label>Latitud</label><input name="lat" data-event-lat type="number" step="0.000001" /></div>
-        <div class="field"><label>Longitud</label><input name="lng" data-event-lng type="number" step="0.000001" /></div>
-        <div class="field"><label>Precio manual</label><input name="budget" type="number" min="0" placeholder="Auto" /></div>
-      </div>
-      <div class="field"><label>Jefe de equipo</label><select name="teamLeaderId"><option value="">Pendiente</option>${state.data.employees.map((employee) => `<option value="${employee.id}">${esc(employee.name)} · ${esc(employee.role)}</option>`).join("")}</select></div>
-      <div class="field"><label>Notas</label><textarea name="notes">Montaje, runners y apoyo de produccion.</textarea></div>
-      <button class="btn primary full" type="submit">${icon("plus")} Crear evento</button>
-    </form>
+  return eventEditorForm({ mode: "create" });
+}
+
+function eventFormDurationHours(startTime, endTime) {
+  const [sh, sm] = String(startTime || "00:00").split(":").map(Number);
+  const [eh, em] = String(endTime || "00:00").split(":").map(Number);
+  if (![sh, sm, eh, em].every(Number.isFinite)) return 0;
+  let start = sh * 60 + sm;
+  let end = eh * 60 + em;
+  if (end <= start) end += 24 * 60;
+  return Math.round(((end - start) / 60) * 10) / 10;
+}
+
+function eventFormRoleSummary(form) {
+  const roles = Array.from(form.querySelectorAll("[data-role-count]"))
+    .map((input) => ({ role: input.dataset.roleCount, count: Number(input.value || 0) }))
+    .filter((item) => item.role && item.count > 0);
+  return {
+    roles,
+    total: roles.reduce((sum, item) => sum + item.count, 0)
+  };
+}
+
+function updateEventDraftSummary(form) {
+  const summary = form?.querySelector?.("[data-event-summary]");
+  if (!summary) return;
+  const data = new FormData(form);
+  const client = (state.data.clients || []).find((item) => item.id === data.get("clientId"));
+  const roleSummary = eventFormRoleSummary(form);
+  const hours = eventFormDurationHours(data.get("startTime"), data.get("endTime"));
+  const date = data.get("date") || todayIso();
+  const location = String(data.get("location") || "").trim();
+  const hasCoords = String(data.get("lat") || "").trim() && String(data.get("lng") || "").trim();
+  const budget = String(data.get("budget") || "").trim();
+  summary.innerHTML = `
+    <div>
+      <span class="tag blue">${esc(shortDate(date))}</span>
+      <h3>${esc(data.get("name") || "Evento sin nombre")}</h3>
+      <small>${esc(client?.name || "Cliente pendiente")} · ${esc(location || "Ubicacion pendiente")}</small>
+    </div>
+    <div class="event-summary-grid">
+      <div><span>Horario</span><strong>${esc(data.get("startTime") || "--:--")} - ${esc(data.get("endTime") || "--:--")}</strong><small>${hours || "-"} h</small></div>
+      <div><span>Equipo</span><strong>${roleSummary.total}</strong><small>${roleSummary.roles.length || "-"} roles</small></div>
+      <div><span>Mapa</span><strong>${hasCoords ? "OK" : "Pendiente"}</strong><small>${hasCoords ? "Coordenadas listas" : "Pega Maps o rellena lat/lng"}</small></div>
+      <div><span>Precio</span><strong>${budget ? money(budget) : "Auto"}</strong><small>${esc(data.get("vehicleCount") || 1)} veh.</small></div>
+    </div>
+    ${roleSummary.roles.length ? `<div class="requirements-summary">${roleSummary.roles.map((item) => `<span class="tag blue">${esc(item.role)} x${esc(item.count)}</span>`).join("")}</div>` : `<small class="muted">Suma operarios en Equipo para calcular necesidades.</small>`}
   `;
+}
+
+function updateEventDraftSummaries() {
+  document.querySelectorAll("[data-event-builder]").forEach(updateEventDraftSummary);
 }
 
 function eventsView() {
@@ -3940,7 +4071,9 @@ async function handleSubmit(event) {
       const body = formData(form);
       body.requirements = eventRequirementsFromForm(form);
       body.requiredTotal = body.requirements.reduce((sum, item) => sum + item.count, 0);
-      await api("/api/events", { method: "POST", body });
+      const result = await api("/api/events", { method: "POST", body });
+      state.selectedEventId = result.event?.id || state.selectedEventId;
+      state.assignmentEventId = result.event?.id || state.assignmentEventId;
       toast("Evento creado");
       await renderAdmin(true);
     }
@@ -3948,7 +4081,8 @@ async function handleSubmit(event) {
       const body = formData(form);
       body.requirements = eventRequirementsFromForm(form);
       body.requiredTotal = body.requirements.reduce((sum, item) => sum + item.count, 0);
-      await api(`/api/events/${form.dataset.eventId}`, { method: "PATCH", body });
+      const result = await api(`/api/events/${form.dataset.eventId}`, { method: "PATCH", body });
+      state.selectedEventId = result.event?.id || form.dataset.eventId;
       state.editEventId = null;
       toast("Evento actualizado");
       await renderAdmin(true);
@@ -4335,6 +4469,35 @@ async function handleClick(event) {
     return renderAdmin(true);
   }
 
+  if (target.dataset.eventDatePreset) {
+    const form = target.closest("[data-event-builder]");
+    const input = form?.querySelector("[name=date]");
+    if (!input) return;
+    const today = parseLocalDate(todayIso());
+    const presets = {
+      today,
+      tomorrow: addCalendarDays(today, 1),
+      week: addCalendarDays(today, 7)
+    };
+    input.value = isoDate(presets[target.dataset.eventDatePreset] || today);
+    updateEventDraftSummary(form);
+    return;
+  }
+
+  if (target.dataset.eventTimePreset) {
+    const form = target.closest("[data-event-builder]");
+    if (!form) return;
+    const presets = {
+      morning: ["09:00", "15:00"],
+      night: ["22:00", "02:00"]
+    };
+    const [start, end] = presets[target.dataset.eventTimePreset] || presets.morning;
+    form.querySelector("[name=startTime]").value = start;
+    form.querySelector("[name=endTime]").value = end;
+    updateEventDraftSummary(form);
+    return;
+  }
+
   if (target.dataset.newEvent !== undefined) {
     state.selectedEventId = null;
     state.selectedEventSnapshotId = null;
@@ -4529,6 +4692,24 @@ async function handleClick(event) {
       body: { active: target.dataset.nextActive === "true" }
     });
     toast(target.dataset.nextActive === "true" ? "Usuario activado" : "Usuario bloqueado");
+    return renderAdmin(true);
+  }
+
+  if (target.dataset.unlockUser) {
+    await api(`/api/users/${target.dataset.unlockUser}`, {
+      method: "PATCH",
+      body: { unlock: true }
+    });
+    toast("Cuenta desbloqueada");
+    return renderAdmin(true);
+  }
+
+  if (target.dataset.revokeSessions) {
+    const user = (state.data.users || []).find((item) => item.id === target.dataset.revokeSessions);
+    const ok = window.confirm(`Cerrar todas las sesiones de ${user?.name || "este usuario"}?`);
+    if (!ok) return toast("Operacion cancelada");
+    const result = await api(`/api/users/${target.dataset.revokeSessions}/sessions`, { method: "DELETE" });
+    toast(`${result.revoked || 0} sesiones cerradas`);
     return renderAdmin(true);
   }
 
@@ -4855,6 +5036,8 @@ function handleInput(event) {
   if (target?.closest?.("[data-report-filters]")) {
     syncReportFiltersFromDom();
   }
+  const eventBuilder = target?.closest?.("[data-event-builder]");
+  if (eventBuilder) updateEventDraftSummary(eventBuilder);
   if (!target?.dataset || target.dataset.search === undefined) return;
   state.searchQuery = target.value;
   refreshGlobalSearchResults();
@@ -4880,6 +5063,8 @@ async function handleChange(event) {
   if (event.target.closest?.("[data-report-filters]")) {
     syncReportFiltersFromDom();
   }
+  const eventBuilder = event.target.closest?.("[data-event-builder]");
+  if (eventBuilder) updateEventDraftSummary(eventBuilder);
   if (event.target.matches("[data-assignment-event]")) {
     state.assignmentEventId = event.target.value;
     state.recommendations = null;
@@ -4909,6 +5094,7 @@ async function handleChange(event) {
     if (coords && form) {
       form.querySelector("[data-event-lat]").value = coords.lat.toFixed(6);
       form.querySelector("[data-event-lng]").value = coords.lng.toFixed(6);
+      updateEventDraftSummary(form);
       toast("Coordenadas del recinto detectadas");
     }
   }

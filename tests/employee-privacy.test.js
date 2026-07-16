@@ -287,6 +287,11 @@ test("employee portal API never exposes internal economic fields", async () => {
     assert.equal(adminLogin.status, 200);
     const { token: adminToken } = await adminLogin.json();
 
+    const adminPortalHome = await fetch(`${baseUrl}/api/employee/home`, {
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+    assert.equal(adminPortalHome.status, 403);
+
     const visibleEventDocument = await fetch(`${baseUrl}/api/events/${nextServiceId}/documents`, {
       method: "POST",
       headers: {

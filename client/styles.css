@@ -874,7 +874,7 @@ button:disabled {
 }
 
 .users-table {
-  min-width: 560px;
+  min-width: 900px;
 }
 
 .users-table th,
@@ -918,6 +918,17 @@ button:disabled {
   color: var(--muted);
   font-size: 12px;
   font-weight: 750;
+}
+
+.security-stack {
+  display: grid;
+  gap: 4px;
+  min-width: 150px;
+}
+
+.security-stack small {
+  color: var(--muted);
+  line-height: 1.25;
 }
 
 .dashboard-grid .data-table th:nth-child(9),
@@ -1253,6 +1264,132 @@ button:disabled {
 .inspector h2 {
   margin: 0;
   font-size: 24px;
+}
+
+.event-builder {
+  padding: 0;
+  gap: 0;
+}
+
+.event-builder-head {
+  padding: 16px;
+  border-bottom: 1px solid var(--line-soft);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.event-builder-head h2 {
+  margin: 6px 0 2px;
+}
+
+.event-builder-head p {
+  margin: 0;
+}
+
+.event-builder-head-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.event-draft-summary,
+.event-step,
+.event-form-actions {
+  margin: 12px 16px 0;
+}
+
+.event-draft-summary {
+  border: 1px solid var(--blue-soft);
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.event-draft-summary h3 {
+  margin: 6px 0 2px;
+  font-size: 17px;
+}
+
+.event-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.event-summary-grid div {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+  padding: 9px;
+  display: grid;
+  gap: 2px;
+}
+
+.event-summary-grid span,
+.event-summary-grid small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.event-summary-grid strong {
+  font-size: 15px;
+}
+
+.event-step {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+}
+
+.event-step-head {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 8px 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.event-step-head span {
+  grid-row: span 2;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--blue);
+  color: #fff;
+  font-weight: 850;
+}
+
+.event-step-head strong {
+  line-height: 1;
+}
+
+.event-step-head small {
+  color: var(--muted);
+}
+
+.event-quick-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.event-form-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  border-top: 1px solid var(--line-soft);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), #fff);
+  padding: 12px 0 16px;
 }
 
 .inspector-section {

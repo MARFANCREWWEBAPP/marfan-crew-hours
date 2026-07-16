@@ -67,6 +67,8 @@ const GOOGLE_CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.e
 const GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const AUTH_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const AUTH_RATE_LIMIT_MAX_FAILURES = 5;
+const ACCOUNT_LOCK_FAILURES = 5;
+const ACCOUNT_LOCK_MS = 15 * 60 * 1000;
 let googleAccessTokenCache = null;
 const googleOauthStates = new Map();
 const authFailureBuckets = new Map();
@@ -306,6 +308,70 @@ function recordAuthFailure(key) {
 
 function clearAuthFailures(req, purpose, identifier) {
   authFailureBuckets.delete(authRateLimitKey(req, purpose, identifier));
+}
+
+function dateValueMs(value) {
+  if (!value) return 0;
+  const text = String(value);
+  const normalized = text.includes("T") ? text : `${text.replace(" ", "T")}Z`;
+  const ms = new Date(normalized).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function accountLockedUntil(account) {
+  const lockedUntilMs = dateValueMs(account?.locked_until);
+  return lockedUntilMs > Date.now() ? new Date(lockedUntilMs).toISOString() : "";
+}
+
+function recordAccountLoginFailure(req, account, reason = "bad_password") {
+  if (!account?.id) return { locked: false, failedCount: 0, lockedUntil: "" };
+  const previousLockExpired = account.locked_until && !accountLockedUntil(account);
+  const failedCount = previousLockExpired ? 1 : Number(account.failed_login_count || 0) + 1;
+  const locked = failedCount >= ACCOUNT_LOCK_FAILURES;
+  const lockedUntil = locked ? new Date(Date.now() + ACCOUNT_LOCK_MS).toISOString() : "";
+  run(
+    `UPDATE users
+     SET failed_login_count = ?,
+         last_failed_login_at = CURRENT_TIMESTAMP,
+         locked_until = ?
+     WHERE id = ?`,
+    [failedCount, lockedUntil || null, account.id]
+  );
+  audit(account, locked ? "login_account_locked" : "login_failed", "session", account.id, {
+    reason,
+    failedCount,
+    lockedUntil,
+    ip: requestIp(req)
+  });
+  return { locked, failedCount, lockedUntil };
+}
+
+function clearAccountLoginFailures(userId) {
+  if (!userId) return;
+  run(
+    `UPDATE users
+     SET failed_login_count = 0,
+         locked_until = NULL,
+         last_failed_login_at = NULL
+     WHERE id = ?`,
+    [userId]
+  );
+}
+
+function requireEmployeePortalUser(user) {
+  requireUser(user);
+  if (user.role !== "employee") {
+    const error = new Error("Portal reservado a empleados");
+    error.status = 403;
+    throw error;
+  }
+  const employee = get("SELECT * FROM employees WHERE user_id = ? AND archived_at IS NULL LIMIT 1", [user.id]);
+  if (!employee) {
+    const error = new Error("Empleado no encontrado");
+    error.status = 404;
+    throw error;
+  }
+  return employee;
 }
 
 function requireUser(user) {
@@ -1758,8 +1824,8 @@ function ensureEmployeePortalUser({ name, email, phone, defaultPassword }) {
   const credentials = hashPassword(validateEmployeePortalPassword(fallbackPassword));
   const userId = randomId("usr");
   run(
-    `INSERT INTO users (id, role, name, email, phone, password_hash, salt, active)
-     VALUES (?, 'employee', ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, 1)`,
+    `INSERT INTO users (id, role, name, email, phone, password_hash, salt, active, password_changed_at)
+     VALUES (?, 'employee', ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, 1, CURRENT_TIMESTAMP)`,
     [userId, name, cleanEmail, cleanPhone, credentials.hash, credentials.salt]
   );
   return { userId, created: true };
@@ -5220,7 +5286,26 @@ function listUsers() {
   return all(
     `SELECT users.id, users.role, users.name, users.email, users.phone, users.avatar_url, users.active,
             users.last_login_at, users.created_at, users.permissions_json,
+            users.failed_login_count, users.locked_until, users.last_failed_login_at, users.password_changed_at,
             employees.id AS employee_id, employees.role AS employee_role, employees.status AS employee_status,
+            (
+              SELECT COUNT(*)
+              FROM sessions
+              WHERE sessions.user_id = users.id
+                AND datetime(sessions.expires_at) > CURRENT_TIMESTAMP
+            ) AS active_session_count,
+            (
+              SELECT MAX(created_at)
+              FROM sessions
+              WHERE sessions.user_id = users.id
+                AND datetime(sessions.expires_at) > CURRENT_TIMESTAMP
+            ) AS last_session_at,
+            (
+              SELECT MAX(expires_at)
+              FROM sessions
+              WHERE sessions.user_id = users.id
+                AND datetime(sessions.expires_at) > CURRENT_TIMESTAMP
+            ) AS session_expires_at,
             (
               SELECT COUNT(*)
               FROM password_reset_tokens
@@ -5256,6 +5341,13 @@ function listUsers() {
     permissions: normalizeAdminPermissions(row.permissions_json, row.role),
     lastLoginAt: row.last_login_at,
     createdAt: row.created_at,
+    failedLoginCount: Number(row.failed_login_count || 0),
+    lockedUntil: accountLockedUntil(row),
+    lastFailedLoginAt: row.last_failed_login_at,
+    passwordChangedAt: row.password_changed_at,
+    activeSessionCount: Number(row.active_session_count || 0),
+    lastSessionAt: row.last_session_at,
+    sessionExpiresAt: row.session_expires_at,
     employeeId: row.employee_id,
     employeeRole: row.employee_role,
     employeeStatus: row.employee_status,
@@ -5744,12 +5836,31 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const rateKey = assertAuthRateLimit(req, "login", body.identifier);
     const account = findActiveLoginAccount(body.identifier);
+    const lockedUntil = accountLockedUntil(account);
+    if (lockedUntil) {
+      audit(account, "login_blocked", "session", account.id, {
+        lockedUntil,
+        ip: requestIp(req)
+      });
+      return sendJson(res, 423, {
+        error: "Usuario bloqueado temporalmente por seguridad",
+        lockedUntil
+      });
+    }
     const passwordAccepted =
       account &&
       (verifyPassword(body.password || "", account.salt, account.password_hash) ||
         employeeDefaultPhonePasswordMatches(account, body.password || ""));
     if (!passwordAccepted) {
       recordAuthFailure(rateKey);
+      const lock = recordAccountLoginFailure(req, account, "bad_password");
+      if (lock.locked) {
+        clearAuthFailures(req, "login", body.identifier);
+        return sendJson(res, 423, {
+          error: "Usuario bloqueado temporalmente por seguridad",
+          lockedUntil: lock.lockedUntil
+        });
+      }
       return sendJson(res, 401, { error: "Credenciales incorrectas" });
     }
     if (body.mode === "employee" && account.role !== "employee") {
@@ -5761,6 +5872,7 @@ async function handleApi(req, res, url) {
       return sendJson(res, 403, { error: "Usa el login de empleado" });
     }
     clearAuthFailures(req, "login", body.identifier);
+    clearAccountLoginFailures(account.id);
 
     const token = randomToken();
     const days = body.remember ? 30 : 1;
@@ -5852,6 +5964,10 @@ async function handleApi(req, res, url) {
       run(
         `UPDATE users
          SET password_hash = ?, salt = ?
+             , password_changed_at = CURRENT_TIMESTAMP,
+             failed_login_count = 0,
+             locked_until = NULL,
+             last_failed_login_at = NULL
          WHERE id = ?`,
         [credentials.hash, credentials.salt, reset.user_id]
       );
@@ -6103,8 +6219,8 @@ async function handleApi(req, res, url) {
       : normalizeAdminPermissions(null, role);
     transaction(() => {
       run(
-        `INSERT INTO users (id, role, name, email, phone, password_hash, salt, permissions_json, active)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        `INSERT INTO users (id, role, name, email, phone, password_hash, salt, permissions_json, active, password_changed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`,
         [
           id,
           role,
@@ -6153,6 +6269,7 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const role = body.role && ["super_admin", "admin", "employee"].includes(body.role) ? body.role : undefined;
     const nextActive = body.active === undefined ? undefined : Boolean(body.active);
+    const unlock = body.unlock === true || body.unlock === "true";
     const target = ensureCanChangeUser(user, targetId, role, nextActive);
     const password = body.password ? hashPassword(validateNewPassword(body.password)) : null;
     const finalRole = role || target.role;
@@ -6175,6 +6292,10 @@ async function handleApi(req, res, url) {
          SET role = ?, name = ?, email = ?, phone = ?, active = ?,
              password_hash = COALESCE(?, password_hash),
              salt = COALESCE(?, salt),
+             password_changed_at = CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE password_changed_at END,
+             failed_login_count = CASE WHEN ? IS NOT NULL THEN 0 ELSE failed_login_count END,
+             locked_until = CASE WHEN ? IS NOT NULL THEN NULL ELSE locked_until END,
+             last_failed_login_at = CASE WHEN ? IS NOT NULL THEN NULL ELSE last_failed_login_at END,
              permissions_json = ?
          WHERE id = ?`,
         [
@@ -6185,6 +6306,10 @@ async function handleApi(req, res, url) {
           nextActive === undefined ? target.active : (nextActive ? 1 : 0),
           password?.hash || null,
           password?.salt || null,
+          password?.hash || null,
+          password?.hash || null,
+          password?.hash || null,
+          password?.hash || null,
           JSON.stringify(permissions),
           targetId
         ]
@@ -6214,6 +6339,7 @@ async function handleApi(req, res, url) {
       }
 
       if (nextActive === false || password) run("DELETE FROM sessions WHERE user_id = ?", [targetId]);
+      if (unlock && !password) clearAccountLoginFailures(targetId);
       if (password) {
         run("UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND used_at IS NULL", [
           targetId
@@ -6223,10 +6349,38 @@ async function handleApi(req, res, url) {
         role: finalRole,
         active: nextActive === undefined ? Boolean(target.active) : nextActive,
         passwordChanged: Boolean(password),
+        unlocked: unlock,
         permissions
       });
     });
     return sendJson(res, 200, { user: listUsers().find((item) => item.id === targetId) });
+  }
+
+  const userSessionsMatch = pathname.match(/^\/api\/users\/([^/]+)\/sessions$/);
+  if (userSessionsMatch && method === "DELETE") {
+    requireSuperAdmin(user);
+    const targetId = decodeURIComponent(userSessionsMatch[1]);
+    const target = get("SELECT id, name FROM users WHERE id = ?", [targetId]);
+    if (!target) return sendJson(res, 404, { error: "Usuario no encontrado" });
+    const token = tokenFromRequest(req);
+    const currentTokens = targetId === user.id && token ? sessionTokenCandidates(token) : [];
+    const result = currentTokens.length
+      ? run(
+          `DELETE FROM sessions
+           WHERE user_id = ?
+             AND token NOT IN (${currentTokens.map(() => "?").join(",")})`,
+          [targetId, ...currentTokens]
+        )
+      : run("DELETE FROM sessions WHERE user_id = ?", [targetId]);
+    audit(user, "user_sessions_revoked", "user", targetId, {
+      revoked: result.changes || 0,
+      currentSessionPreserved: Boolean(currentTokens.length)
+    });
+    return sendJson(res, 200, {
+      ok: true,
+      revoked: result.changes || 0,
+      currentSessionPreserved: Boolean(currentTokens.length)
+    });
   }
 
   if (userMatch && method === "DELETE") {
@@ -6913,7 +7067,11 @@ async function handleApi(req, res, url) {
           `UPDATE users
            SET name = ?, email = NULLIF(?, ''), phone = NULLIF(?, ''), active = ?,
                password_hash = COALESCE(?, password_hash),
-               salt = COALESCE(?, salt)
+               salt = COALESCE(?, salt),
+               password_changed_at = CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE password_changed_at END,
+               failed_login_count = CASE WHEN ? IS NOT NULL THEN 0 ELSE failed_login_count END,
+               locked_until = CASE WHEN ? IS NOT NULL THEN NULL ELSE locked_until END,
+               last_failed_login_at = CASE WHEN ? IS NOT NULL THEN NULL ELSE last_failed_login_at END
            WHERE id = ?`,
           [
             nextName,
@@ -6922,6 +7080,10 @@ async function handleApi(req, res, url) {
             nextStatus === "activo" ? 1 : 0,
             portalCredentials?.hash || null,
             portalCredentials?.salt || null,
+            portalCredentials?.hash || null,
+            portalCredentials?.hash || null,
+            portalCredentials?.hash || null,
+            portalCredentials?.hash || null,
             existing.user_id
           ]
         );
@@ -7855,9 +8017,7 @@ async function handleApi(req, res, url) {
   }
 
   if (pathname === "/api/employee/home" && method === "GET") {
-    requireUser(user);
-    const employee = get("SELECT * FROM employees WHERE user_id = ?", [user.id]);
-    if (!employee) return sendJson(res, 404, { error: "Empleado no encontrado" });
+    const employee = requireEmployeePortalUser(user);
     const today = formatDate();
     const policy = clockPolicy();
     const serviceSql = `
@@ -7964,9 +8124,7 @@ async function handleApi(req, res, url) {
   }
 
   if (pathname === "/api/employee/profile" && method === "PATCH") {
-    requireUser(user);
-    const employee = get("SELECT * FROM employees WHERE user_id = ?", [user.id]);
-    if (!employee) return sendJson(res, 404, { error: "Empleado no encontrado" });
+    const employee = requireEmployeePortalUser(user);
 	    const body = await readBody(req);
 	    const email = body.email === undefined ? cleanContactEmail(employee.email) : cleanContactEmail(body.email);
 	    const phone = body.phone === undefined ? cleanContactPhone(employee.phone) : cleanContactPhone(body.phone);
@@ -7989,13 +8147,21 @@ async function handleApi(req, res, url) {
         `UPDATE users
          SET phone = ?, email = ?,
              password_hash = COALESCE(?, password_hash),
-             salt = COALESCE(?, salt)
+             salt = COALESCE(?, salt),
+             password_changed_at = CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE password_changed_at END,
+             failed_login_count = CASE WHEN ? IS NOT NULL THEN 0 ELSE failed_login_count END,
+             locked_until = CASE WHEN ? IS NOT NULL THEN NULL ELSE locked_until END,
+             last_failed_login_at = CASE WHEN ? IS NOT NULL THEN NULL ELSE last_failed_login_at END
          WHERE id = ?`,
         [
           phone,
           email,
           password?.hash || null,
           password?.salt || null,
+          password?.hash || null,
+          password?.hash || null,
+          password?.hash || null,
+          password?.hash || null,
           user.id
         ]
       );
@@ -8014,9 +8180,7 @@ async function handleApi(req, res, url) {
 
   const employeeConfirmMatch = pathname.match(/^\/api\/employee\/services\/([^/]+)\/confirm$/);
   if (employeeConfirmMatch && method === "POST") {
-    requireUser(user);
-    const employee = get("SELECT * FROM employees WHERE user_id = ?", [user.id]);
-    if (!employee) return sendJson(res, 404, { error: "Empleado no encontrado" });
+    const employee = requireEmployeePortalUser(user);
     const eventId = decodeURIComponent(employeeConfirmMatch[1]);
     const assignment = get(
       `SELECT assignments.*, events.name AS event_name, events.date AS event_date
@@ -8047,9 +8211,7 @@ async function handleApi(req, res, url) {
   }
 
   if (pathname === "/api/employee/availability" && method === "POST") {
-    requireUser(user);
-    const employee = get("SELECT * FROM employees WHERE user_id = ?", [user.id]);
-    if (!employee) return sendJson(res, 404, { error: "Empleado no encontrado" });
+    const employee = requireEmployeePortalUser(user);
     const body = await readBody(req);
     if (!body.startDate || !body.endDate) return sendJson(res, 400, { error: "Fechas obligatorias" });
     const id = randomId("ava");
@@ -8076,9 +8238,7 @@ async function handleApi(req, res, url) {
   }
 
   if (pathname === "/api/employee/documents" && method === "POST") {
-    requireUser(user);
-    const employee = get("SELECT * FROM employees WHERE user_id = ?", [user.id]);
-    if (!employee) return sendJson(res, 404, { error: "Empleado no encontrado" });
+    const employee = requireEmployeePortalUser(user);
     const body = await readBody(req);
     if (!body.fileDataBase64) return sendJson(res, 400, { error: "Archivo obligatorio" });
     const id = randomId("doc");
@@ -8114,9 +8274,7 @@ async function handleApi(req, res, url) {
   }
 
   if (pathname === "/api/employee/incidents" && method === "POST") {
-    requireUser(user);
-    const employee = get("SELECT * FROM employees WHERE user_id = ?", [user.id]);
-    if (!employee) return sendJson(res, 404, { error: "Empleado no encontrado" });
+    const employee = requireEmployeePortalUser(user);
     const body = await readBody(req);
     const eventId = String(body.eventId || "").trim();
     const assignment = get(

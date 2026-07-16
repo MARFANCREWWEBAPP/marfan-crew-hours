@@ -574,6 +574,21 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS idx_clients_archived_at ON clients(archived_at);
       CREATE INDEX IF NOT EXISTS idx_employees_archived_at ON employees(archived_at);
     `
+  },
+  {
+    version: 18,
+    name: "user-security-state",
+    sql: `
+      ALTER TABLE users ADD COLUMN failed_login_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE users ADD COLUMN locked_until TEXT;
+      ALTER TABLE users ADD COLUMN last_failed_login_at TEXT;
+      ALTER TABLE users ADD COLUMN password_changed_at TEXT;
+
+      UPDATE users
+         SET password_changed_at = COALESCE(password_changed_at, created_at, CURRENT_TIMESTAMP);
+
+      CREATE INDEX IF NOT EXISTS idx_users_locked_until ON users(locked_until);
+    `
   }
 ];
 
@@ -602,8 +617,8 @@ function applyMigrations() {
 function addUser({ id, role, name, email, phone, password }) {
   const credentials = hashPassword(password);
   run(
-    `INSERT INTO users (id, role, name, email, phone, password_hash, salt)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO users (id, role, name, email, phone, password_hash, salt, password_changed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
     [id, role, name, email, phone, credentials.hash, credentials.salt]
   );
 }
@@ -762,6 +777,10 @@ function ensureProductionSuperAdminAccess({ resetPassword = false, clearSessions
              phone = ?,
              password_hash = COALESCE(?, password_hash),
              salt = COALESCE(?, salt),
+             password_changed_at = CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE password_changed_at END,
+             failed_login_count = CASE WHEN ? IS NOT NULL THEN 0 ELSE failed_login_count END,
+             locked_until = CASE WHEN ? IS NOT NULL THEN NULL ELSE locked_until END,
+             last_failed_login_at = CASE WHEN ? IS NOT NULL THEN NULL ELSE last_failed_login_at END,
              permissions_json = NULL,
              active = 1
          WHERE id = ?`,
@@ -771,13 +790,17 @@ function ensureProductionSuperAdminAccess({ resetPassword = false, clearSessions
           PRODUCTION_SUPERADMIN_PHONE,
           credentials?.hash || null,
           credentials?.salt || null,
+          credentials?.hash || null,
+          credentials?.hash || null,
+          credentials?.hash || null,
+          credentials?.hash || null,
           userId
         ]
       );
     } else {
       run(
-        `INSERT INTO users (id, role, name, email, phone, password_hash, salt, permissions_json, active)
-         VALUES (?, 'super_admin', ?, ?, ?, ?, ?, NULL, 1)`,
+        `INSERT INTO users (id, role, name, email, phone, password_hash, salt, permissions_json, active, password_changed_at)
+         VALUES (?, 'super_admin', ?, ?, ?, ?, ?, NULL, 1, CURRENT_TIMESTAMP)`,
         [
           userId,
           PRODUCTION_SUPERADMIN_NAME,
@@ -830,6 +853,7 @@ function seedBundledProductionData() {
     for (const { table, columns, conflictColumn = "id" } of PRODUCTION_SEED_TABLES) {
       upsertSeedRows(table, columns, seed[table] || [], conflictColumn);
     }
+    run("UPDATE users SET password_changed_at = COALESCE(password_changed_at, created_at, CURRENT_TIMESTAMP)");
   });
 }
 
@@ -963,6 +987,10 @@ function ensureEmployeePhonePortalAccess() {
                phone = ?,
                password_hash = ?,
                salt = ?,
+               password_changed_at = CURRENT_TIMESTAMP,
+               failed_login_count = 0,
+               locked_until = NULL,
+               last_failed_login_at = NULL,
                active = 1
            WHERE id = ?`,
           [employee.name, safeEmail, phoneKey, credentials.hash, credentials.salt, portalUser.id]
@@ -975,8 +1003,8 @@ function ensureEmployeePhonePortalAccess() {
       } else {
         const userId = randomId("usr");
         run(
-          `INSERT INTO users (id, role, name, email, phone, password_hash, salt, active)
-           VALUES (?, 'employee', ?, NULLIF(?, ''), ?, ?, ?, 1)`,
+          `INSERT INTO users (id, role, name, email, phone, password_hash, salt, active, password_changed_at)
+           VALUES (?, 'employee', ?, NULLIF(?, ''), ?, ?, ?, 1, CURRENT_TIMESTAMP)`,
           [userId, employee.name, safeEmail, phoneKey, credentials.hash, credentials.salt]
         );
         portalUser = { id: userId };
