@@ -1,5 +1,10 @@
 const root = document.querySelector("#app");
 
+const ADMIN_INACTIVITY_LIMIT_DAYS = 60;
+const ACCESS_REVIEW_LIMIT_DAYS = 90;
+const PASSWORD_ROTATION_LIMIT_DAYS = 180;
+const USER_CADENCE_WARNING_DAYS = 14;
+
 const state = {
   token: localStorage.getItem("marfan_token"),
   user: null,
@@ -1309,7 +1314,15 @@ function suggestedPermissionProfileForUser(user) {
   return candidates[0] || null;
 }
 
-function permissionSummary(user) {
+function permissionDeltaText(suggested) {
+  if (!suggested) return "";
+  const parts = [];
+  if (suggested.added) parts.push(`+${suggested.added} permisos`);
+  if (suggested.removed) parts.push(`-${suggested.removed} permisos`);
+  return parts.length ? parts.join(" · ") : "sin cambios de alcance";
+}
+
+function permissionSummary(user, canAct = false) {
   if (user.role === "super_admin") return `<span class="tag red">Acceso total</span>`;
   if (user.role === "employee") return `<span class="muted">Portal empleado</span>`;
   const active = adminPermissionDefs.filter(([key]) => permissionEnabled(user.permissions, key));
@@ -1319,6 +1332,12 @@ function permissionSummary(user) {
     <div class="permission-summary">
       <span class="tag ${profile.tone}">${esc(profile.label)}</span>
       <small>${active.length}/${adminPermissionDefs.length} modulos${suggested ? ` · sugerido ${esc(suggested.label)}` : ""}</small>
+      ${suggested ? `
+        <div class="permission-drift">
+          <span>${esc(permissionDeltaText(suggested))}</span>
+          ${canAct ? `<button class="btn compact ghost" type="button" data-user-prepare-action="${esc(user.id)}" data-suggested-bulk-action="suggested_profile">Preparar perfil</button>` : ""}
+        </div>
+      ` : ""}
     </div>
   `;
 }
@@ -1341,16 +1360,83 @@ function olderThanDays(value, days) {
   return Date.now() - date.getTime() > days * 24 * 60 * 60 * 1000;
 }
 
+function daysSince(value) {
+  if (!value) return null;
+  const date = new Date(String(value).replace(" ", "T"));
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.max(0, Math.floor((Date.now() - date.getTime()) / (24 * 60 * 60 * 1000)));
+}
+
+function userCadenceStatus(value, limitDays, warningDays = USER_CADENCE_WARNING_DAYS) {
+  const elapsed = daysSince(value);
+  if (elapsed === null) {
+    return {
+      label: "Sin registrar",
+      detail: `Sin fecha base · limite ${limitDays}d`,
+      tone: "amber",
+      percent: 100
+    };
+  }
+  const remaining = limitDays - elapsed;
+  const percent = Math.min(100, Math.max(0, Math.round((elapsed / limitDays) * 100)));
+  if (remaining < 0) {
+    return {
+      label: `Vencido +${Math.abs(remaining)}d`,
+      detail: `${elapsed}d transcurridos de ${limitDays}d`,
+      tone: "red",
+      percent: 100
+    };
+  }
+  if (remaining === 0) {
+    return {
+      label: "Vence hoy",
+      detail: `${elapsed}d transcurridos de ${limitDays}d`,
+      tone: "amber",
+      percent: 100
+    };
+  }
+  if (remaining <= warningDays) {
+    return {
+      label: `Vence en ${remaining}d`,
+      detail: `${elapsed}d transcurridos de ${limitDays}d`,
+      tone: "amber",
+      percent
+    };
+  }
+  return {
+    label: `Vigente ${remaining}d`,
+    detail: `${elapsed}d transcurridos de ${limitDays}d`,
+    tone: "green",
+    percent
+  };
+}
+
+function userCadenceDueSoon(value, limitDays, warningDays = USER_CADENCE_WARNING_DAYS) {
+  const elapsed = daysSince(value);
+  if (elapsed === null) return false;
+  const remaining = limitDays - elapsed;
+  return remaining >= 0 && remaining <= warningDays;
+}
+
 function userPasswordStale(user) {
-  return user.role !== "employee" && olderThanDays(user.passwordChangedAt, 180);
+  return user.role !== "employee" && olderThanDays(user.passwordChangedAt, PASSWORD_ROTATION_LIMIT_DAYS);
 }
 
 function userAccessReviewStale(user) {
-  return user.role !== "employee" && olderThanDays(user.accessReviewedAt, 90);
+  return user.role !== "employee" && olderThanDays(user.accessReviewedAt, ACCESS_REVIEW_LIMIT_DAYS);
 }
 
 function userInactiveRisk(user) {
-  return user.active && user.role !== "employee" && olderThanDays(user.lastLoginAt || user.createdAt, 60);
+  return user.active && user.role !== "employee" && olderThanDays(user.lastLoginAt || user.createdAt, ADMIN_INACTIVITY_LIMIT_DAYS);
+}
+
+function userSecurityDueSoon(user) {
+  if (!user.active || user.role === "employee") return false;
+  return (
+    userCadenceDueSoon(user.passwordChangedAt, PASSWORD_ROTATION_LIMIT_DAYS) ||
+    userCadenceDueSoon(user.accessReviewedAt, ACCESS_REVIEW_LIMIT_DAYS) ||
+    userCadenceDueSoon(user.lastLoginAt || user.createdAt, ADMIN_INACTIVITY_LIMIT_DAYS)
+  );
 }
 
 function userDeniedPermissionRisk(user) {
@@ -1436,8 +1522,9 @@ function userQualityFlags(user, duplicateContactUserIds = null) {
   if (!user.email && !user.phone) flags.push({ label: "Sin contacto", tone: "red" });
   if (user.role === "employee" && !user.employeeId) flags.push({ label: "Empleado sin ficha", tone: "amber" });
   if (user.mustChangePassword) flags.push({ label: "Clave temporal", tone: "amber" });
+  if (userSecurityDueSoon(user)) flags.push({ label: "Vence pronto", tone: "amber" });
   if (userAccessReviewStale(user)) flags.push({ label: "Revision pendiente", tone: "amber" });
-  if (userInactiveRisk(user)) flags.push({ label: "Sin uso +60d", tone: "red" });
+  if (userInactiveRisk(user)) flags.push({ label: `Sin uso +${ADMIN_INACTIVITY_LIMIT_DAYS}d`, tone: "red" });
   if (userDeniedPermissionRisk(user)) flags.push({ label: `Permisos denegados x${Number(user.deniedPermissionCount || 0)}`, tone: "red" });
   if (hasDuplicateContact) flags.push({ label: "Contacto duplicado", tone: "red" });
   if (user.role === "admin" && activePermissionCount(user) >= adminPermissionDefs.length - 2) {
@@ -1453,7 +1540,7 @@ function userHasQualityIssues(user, duplicateContactUserIds = null) {
 }
 
 function userNeedsAttention(user, duplicateContactUserIds = null) {
-  return !user.active || userIsLocked(user) || user.recoveryPending || userPasswordStale(user) || userAccessReviewStale(user) || userInactiveRisk(user) || userDeniedPermissionRisk(user) || userHasQualityIssues(user, duplicateContactUserIds);
+  return !user.active || userIsLocked(user) || user.recoveryPending || userSecurityDueSoon(user) || userPasswordStale(user) || userAccessReviewStale(user) || userInactiveRisk(user) || userDeniedPermissionRisk(user) || userHasQualityIssues(user, duplicateContactUserIds);
 }
 
 function userRiskScore(user, duplicateContactUserIds = null) {
@@ -1470,6 +1557,7 @@ function userRiskScore(user, duplicateContactUserIds = null) {
   if (user.mustChangePassword) score += 2;
   if (userPasswordStale(user)) score += 2;
   if (userAccessReviewStale(user)) score += 2;
+  if (userSecurityDueSoon(user)) score += 1;
   if (user.role === "admin" && activePermissionCount(user) >= adminPermissionDefs.length - 2) score += 1;
   if (userHasCustomPermissions(user)) score += 1;
   if (user.role !== "employee" && !user.lastLoginAt) score += 1;
@@ -1481,6 +1569,86 @@ function userRiskLevel(user, duplicateContactUserIds = null) {
   if (score >= 6) return { label: "Alto", tone: "red", score };
   if (score >= 3) return { label: "Medio", tone: "amber", score };
   return { label: "OK", tone: "green", score };
+}
+
+function userRecommendedAction(user, duplicateContactUserIds = null) {
+  const hasDuplicateContact = duplicateContactUserIds ? duplicateContactUserIds.has(user.id) : userHasDuplicateContactRisk(user);
+  if (userIsLocked(user)) {
+    return { label: "Desbloquear login", detail: "Verificar identidad y retirar bloqueo de acceso.", tone: "red", bulkAction: "unlock" };
+  }
+  if (userDeniedPermissionRisk(user)) {
+    return { label: "Revisar actividad", detail: "Hay intentos fuera de perfil en los ultimos dias.", tone: "red", direct: "activity" };
+  }
+  if (hasDuplicateContact) {
+    return { label: "Resolver duplicado", detail: "Email o telefono compartido con otra ficha.", tone: "red", direct: "duplicate_contact" };
+  }
+  if (user.active && user.role !== "employee" && userInactiveRisk(user)) {
+    return { label: "Bloquear inactivo", detail: "Administrador activo sin uso reciente.", tone: "red", bulkAction: "deactivate_inactive" };
+  }
+  if (user.recoveryPending || user.mustChangePassword) {
+    return { label: "Generar codigo", detail: "Compartir acceso temporal por canal seguro.", tone: "amber", direct: "access_code" };
+  }
+  if (user.active && user.role !== "employee" && userPasswordStale(user)) {
+    return { label: "Forzar cambio clave", detail: "Renovar credenciales y cerrar sesiones antiguas.", tone: "amber", bulkAction: "force_password_change" };
+  }
+  if (user.active && user.role !== "employee" && userAccessReviewStale(user)) {
+    return { label: "Marcar revisado", detail: "Validar que permisos y rol siguen correctos.", tone: "amber", bulkAction: "mark_reviewed" };
+  }
+  if (userSecurityDueSoon(user)) {
+    return { label: "Planificar control", detail: `Clave, revision o uso vencen en menos de ${USER_CADENCE_WARNING_DAYS} dias.`, tone: "blue", direct: "due_soon" };
+  }
+  if (user.role === "admin" && userHasCustomPermissions(user)) {
+    return { label: "Aplicar perfil sugerido", detail: "Convertir permisos a perfil mantenible.", tone: "blue", bulkAction: "suggested_profile" };
+  }
+  if (Number(user.activeSessionCount || 0) > 1 && user.role !== "employee") {
+    return { label: "Cerrar sesiones", detail: "Reducir sesiones abiertas de administracion.", tone: "blue", bulkAction: "revoke_sessions" };
+  }
+  return null;
+}
+
+function userRecommendedActionButton(user, recommendation, canAct) {
+  if (!recommendation || !canAct) return "";
+  if (recommendation.bulkAction) {
+    return `<button class="btn compact primary" type="button" data-user-prepare-action="${esc(user.id)}" data-suggested-bulk-action="${esc(recommendation.bulkAction)}">Preparar</button>`;
+  }
+  if (recommendation.direct === "activity") {
+    return `<button class="btn compact" type="button" data-user-activity="${esc(user.id)}">Actividad</button>`;
+  }
+  if (recommendation.direct === "access_code" && user.active) {
+    return `<button class="btn compact" type="button" data-access-code-user="${esc(user.id)}">Codigo</button>`;
+  }
+  if (recommendation.direct === "duplicate_contact") {
+    return `<button class="btn compact" type="button" data-user-security-filter="duplicate_contact">Ver duplicados</button>`;
+  }
+  if (recommendation.direct === "due_soon") {
+    return `<button class="btn compact" type="button" data-user-security-filter="due_soon">Ver</button>`;
+  }
+  return "";
+}
+
+function userCadenceItem(label, value, limitDays) {
+  const status = userCadenceStatus(value, limitDays);
+  return `
+    <div class="cadence-row ${status.tone}">
+      <div class="cadence-copy">
+        <span>${esc(label)}</span>
+        <strong>${esc(status.label)}</strong>
+        <small>${esc(status.detail)}</small>
+      </div>
+      <div class="cadence-bar" aria-hidden="true"><span style="width: ${status.percent}%"></span></div>
+    </div>
+  `;
+}
+
+function userSecurityCadence(user) {
+  if (user.role === "employee") return "";
+  return `
+    <div class="security-cadence">
+      ${userCadenceItem("Clave", user.passwordChangedAt, PASSWORD_ROTATION_LIMIT_DAYS)}
+      ${userCadenceItem("Revision", user.accessReviewedAt, ACCESS_REVIEW_LIMIT_DAYS)}
+      ${userCadenceItem("Uso admin", user.lastLoginAt || user.createdAt, ADMIN_INACTIVITY_LIMIT_DAYS)}
+    </div>
+  `;
 }
 
 function usersPriorityMode(filters = state.userFilters || {}) {
@@ -1595,6 +1763,14 @@ function userOperationsHealthPanel(users, isSuper) {
       label: "Intentos fuera de perfil",
       filter: "denied",
       select: "userSelectDeniedPermissions"
+    },
+    {
+      tone: "amber",
+      tag: "Proximo",
+      count: users.filter(userSecurityDueSoon).length,
+      label: `Vence en ${USER_CADENCE_WARNING_DAYS} dias`,
+      filter: "due_soon",
+      select: "userSelectDueSoon"
     },
     {
       tone: "amber",
@@ -1735,6 +1911,9 @@ function userActionQueueItems(users) {
     if (user.recoveryPending) {
       items.push({ ...base, priority: 72, tone: "amber", action: "code", title: "Recuperacion pendiente", detail: "Hay un codigo temporal abierto para este acceso." });
     }
+    if (userSecurityDueSoon(user)) {
+      items.push({ ...base, priority: 70, tone: "blue", action: "activity", title: "Control vence pronto", detail: `Clave, revision o uso vencen en menos de ${USER_CADENCE_WARNING_DAYS} dias.` });
+    }
     if (Number(user.activeSessionCount || 0) > 1 && user.role !== "employee") {
       items.push({ ...base, priority: 66, tone: "blue", action: "sessions", title: "Varias sesiones abiertas", detail: `${Number(user.activeSessionCount || 0)} sesiones activas.` });
     }
@@ -1787,11 +1966,12 @@ function userActionQueue(users, isSuper) {
   `;
 }
 
-function userSecuritySummary(user, duplicateContactUserIds = null) {
+function userSecuritySummary(user, duplicateContactUserIds = null, canAct = false) {
   const locked = userIsLocked(user);
   const sessions = Number(user.activeSessionCount || 0);
   const qualityFlags = userQualityFlags(user, duplicateContactUserIds);
   const risk = userRiskLevel(user, duplicateContactUserIds);
+  const recommendation = userRecommendedAction(user, duplicateContactUserIds);
   const deniedPermissionCount = Number(user.deniedPermissionCount || 0);
   return `
     <div class="security-stack">
@@ -1799,6 +1979,17 @@ function userSecuritySummary(user, duplicateContactUserIds = null) {
         <span>Riesgo ${esc(risk.label)}</span>
         <strong>${esc(risk.score)}</strong>
       </div>
+      ${recommendation ? `
+        <div class="recommended-action ${recommendation.tone}">
+          <div>
+            <span>Proxima accion</span>
+            <strong>${esc(recommendation.label)}</strong>
+            <small>${esc(recommendation.detail)}</small>
+          </div>
+          ${userRecommendedActionButton(user, recommendation, canAct)}
+        </div>
+      ` : ""}
+      ${userSecurityCadence(user)}
       ${locked ? `<span class="tag red">Bloqueado hasta ${esc(shortDateTime(user.lockedUntil))}</span>` : `<span class="tag ${sessions ? "green" : "blue"}">${sessions} sesion${sessions === 1 ? "" : "es"} activa${sessions === 1 ? "" : "s"}</span>`}
       ${userPasswordStale(user) ? `<span class="tag amber">Clave antigua</span>` : ""}
       ${qualityFlags.map((flag) => `<span class="tag ${flag.tone}">${esc(flag.label)}</span>`).join("")}
@@ -1867,6 +2058,7 @@ function filteredUsers(users) {
       (filters.security === "locked" && userIsLocked(user)) ||
       (filters.security === "recovery" && user.recoveryPending) ||
       (filters.security === "temporary" && user.mustChangePassword) ||
+      (filters.security === "due_soon" && userSecurityDueSoon(user)) ||
       (filters.security === "review" && userAccessReviewStale(user)) ||
       (filters.security === "inactive_risk" && userInactiveRisk(user)) ||
       (filters.security === "denied" && userDeniedPermissionRisk(user)) ||
@@ -1890,6 +2082,7 @@ function userCommandCenter(users, isSuper) {
   const locked = users.filter(userIsLocked);
   const recovery = users.filter((user) => user.recoveryPending);
   const temporary = users.filter((user) => user.mustChangePassword);
+  const dueSoon = users.filter(userSecurityDueSoon);
   const review = users.filter(userAccessReviewStale);
   const inactiveRisk = users.filter(userInactiveRisk);
   const denied = users.filter(userDeniedPermissionRisk);
@@ -1921,6 +2114,7 @@ function userCommandCenter(users, isSuper) {
             <option value="locked" ${filters.security === "locked" ? "selected" : ""}>Bloqueos login</option>
             <option value="recovery" ${filters.security === "recovery" ? "selected" : ""}>Recuperaciones</option>
             <option value="temporary" ${filters.security === "temporary" ? "selected" : ""}>Clave temporal</option>
+            <option value="due_soon" ${filters.security === "due_soon" ? "selected" : ""}>Vence pronto</option>
             <option value="review" ${filters.security === "review" ? "selected" : ""}>Revision pendiente</option>
             <option value="inactive_risk" ${filters.security === "inactive_risk" ? "selected" : ""}>Inactividad</option>
             <option value="denied" ${filters.security === "denied" ? "selected" : ""}>Permisos denegados</option>
@@ -1939,6 +2133,7 @@ function userCommandCenter(users, isSuper) {
         <button class="attention-tile ${locked.length ? "hot" : ""} ${filters.security === "locked" ? "active" : ""}" type="button" data-user-security-filter="locked" aria-pressed="${filters.security === "locked"}"><span>${locked.length}</span><strong>Bloqueos</strong></button>
         <button class="attention-tile ${recovery.length ? "hot" : ""} ${filters.security === "recovery" ? "active" : ""}" type="button" data-user-security-filter="recovery" aria-pressed="${filters.security === "recovery"}"><span>${recovery.length}</span><strong>Recuperacion</strong></button>
         <button class="attention-tile ${temporary.length ? "hot" : ""} ${filters.security === "temporary" ? "active" : ""}" type="button" data-user-security-filter="temporary" aria-pressed="${filters.security === "temporary"}"><span>${temporary.length}</span><strong>Clave temporal</strong></button>
+        <button class="attention-tile ${dueSoon.length ? "hot" : ""} ${filters.security === "due_soon" ? "active" : ""}" type="button" data-user-security-filter="due_soon" aria-pressed="${filters.security === "due_soon"}"><span>${dueSoon.length}</span><strong>Vence pronto</strong></button>
         <button class="attention-tile ${review.length ? "hot" : ""} ${filters.security === "review" ? "active" : ""}" type="button" data-user-security-filter="review" aria-pressed="${filters.security === "review"}"><span>${review.length}</span><strong>Revision</strong></button>
         <button class="attention-tile ${inactiveRisk.length ? "hot" : ""} ${filters.security === "inactive_risk" ? "active" : ""}" type="button" data-user-security-filter="inactive_risk" aria-pressed="${filters.security === "inactive_risk"}"><span>${inactiveRisk.length}</span><strong>Inactividad</strong></button>
         <button class="attention-tile ${denied.length ? "hot" : ""} ${filters.security === "denied" ? "active" : ""}" type="button" data-user-security-filter="denied" aria-pressed="${filters.security === "denied"}"><span>${denied.length}</span><strong>Denegados</strong></button>
@@ -1999,6 +2194,7 @@ function userBulkImpact(users, selectedIds, duplicateContactUserIds = null) {
     inactive: selectedUsers.filter((user) => !user.active).length,
     locked: selectedUsers.filter(userIsLocked).length,
     highRisk: selectedUsers.filter((user) => userRiskScore(user, riskDuplicateContactUserIds) >= 6).length,
+    dueSoon: selectedUsers.filter(userSecurityDueSoon).length,
     reviewPending: selectedUsers.filter((user) => user.active && user.role !== "employee" && userAccessReviewStale(user)).length,
     stalePasswords: selectedUsers.filter((user) => user.active && userPasswordStale(user)).length,
     customPermissions: selectedUsers.filter(userHasCustomPermissions).length,
@@ -2020,13 +2216,15 @@ function bulkImpactStat(label, value, tone = "blue") {
 function userBulkImpactPanel(users, selectedIds, duplicateContactUserIds = null) {
   if (!selectedIds.length) return "";
   const impact = userBulkImpact(users, selectedIds, duplicateContactUserIds);
-  const tone = impact.highRisk || impact.locked || impact.duplicateContacts ? "red" : impact.reviewPending || impact.stalePasswords || impact.customPermissions ? "amber" : "green";
+  const tone = impact.highRisk || impact.locked || impact.duplicateContacts ? "red" : impact.dueSoon || impact.reviewPending || impact.stalePasswords || impact.customPermissions ? "amber" : "green";
   const focus = impact.highRisk
     ? "Prioridad: cerrar riesgos altos antes de cambios de rutina."
     : impact.stalePasswords
       ? "Prioridad: renovar claves y cerrar sesiones antiguas."
       : impact.reviewPending
         ? "Prioridad: revisar accesos y permisos pendientes."
+        : impact.dueSoon
+          ? "Prioridad: planificar controles que vencen pronto."
         : "Seleccion lista para ejecutar acciones de administracion.";
   return `
     <div class="bulk-impact ${tone}">
@@ -2040,6 +2238,7 @@ function userBulkImpactPanel(users, selectedIds, duplicateContactUserIds = null)
         ${bulkImpactStat("admins", impact.admins, "blue")}
         ${bulkImpactStat("operarios", impact.employees, "blue")}
         ${bulkImpactStat("riesgo alto", impact.highRisk, impact.highRisk ? "red" : "green")}
+        ${bulkImpactStat("vence pronto", impact.dueSoon, impact.dueSoon ? "amber" : "green")}
         ${bulkImpactStat("sesiones", impact.activeSessions, impact.activeSessions ? "amber" : "green")}
         ${bulkImpactStat("revision", impact.reviewPending, impact.reviewPending ? "amber" : "green")}
         ${bulkImpactStat("clave antigua", impact.stalePasswords, impact.stalePasswords ? "amber" : "green")}
@@ -2078,6 +2277,7 @@ function userBulkBar(users, visibleUsers, isSuper) {
   const disabled = selectedIds.length ? "" : "disabled";
   const hasAttention = visibleUsers.some((user) => userNeedsAttention(user, duplicateContactUserIds));
   const hasHighRisk = visibleUsers.some((user) => userRiskScore(user, duplicateContactUserIds) >= 6);
+  const hasDueSoon = visibleUsers.some(userSecurityDueSoon);
   return `
     <section class="panel user-bulk-bar">
       <label class="bulk-select">
@@ -2093,6 +2293,7 @@ function userBulkBar(users, visibleUsers, isSuper) {
           <span>Seleccion inteligente</span>
           <button class="btn compact" type="button" data-user-select-high-risk ${hasHighRisk ? "" : "disabled"}>${icon("shield")} Riesgo alto</button>
           <button class="btn compact" type="button" data-user-select-attention ${hasAttention ? "" : "disabled"}>Alertas</button>
+          <button class="btn compact" type="button" data-user-select-due-soon ${hasDueSoon ? "" : "disabled"}>Vence pronto</button>
           <button class="btn compact" type="button" data-user-select-stale-passwords data-suggested-bulk-action="force_password_change" ${visibleUsers.some((user) => user.active && userPasswordStale(user)) ? "" : "disabled"}>${icon("key")} Claves antiguas</button>
           <button class="btn compact" type="button" data-user-select-duplicate-contacts ${duplicateContactUserIds.size ? "" : "disabled"}>Duplicados</button>
         </div>
@@ -2166,7 +2367,8 @@ function userBulkConfirmationMessage(action, users, selectedIds, profile = "", p
     `Seleccionados: ${impact.total}${preview?.preview ? ` · Aplicaria: ${preview.updated}/${preview.total} · Omitiria: ${preview.skipped}` : ""}`,
     `Administradores: ${impact.admins} · Operarios: ${impact.employees}`,
     `Riesgo alto: ${impact.highRisk} · Sesiones abiertas: ${impact.activeSessions}`,
-    `Revision pendiente: ${impact.reviewPending} · Clave antigua: ${impact.stalePasswords}`
+    `Revision pendiente: ${impact.reviewPending} · Clave antigua: ${impact.stalePasswords}`,
+    `Vence pronto: ${impact.dueSoon}`
   ];
   if (previewEffects) {
     lines.push(
@@ -2449,7 +2651,7 @@ function usersView() {
                     <td>
                       ${isSuper && user.role === "admin" ? `
                         <form class="permission-editor" data-form="user-permissions" data-user-id="${esc(user.id)}">
-                          ${permissionSummary(user)}
+                          ${permissionSummary(user, isSuper)}
                           <details>
                             <summary>Editar</summary>
                             ${permissionPresetButtons(true)}
@@ -2457,9 +2659,9 @@ function usersView() {
                             <button class="btn compact primary" type="submit">${icon("check")} Guardar</button>
                           </details>
                         </form>
-                      ` : permissionSummary(user)}
+                      ` : permissionSummary(user, isSuper)}
                     </td>
-                    <td>${userSecuritySummary(user, duplicateContactUserIds)}</td>
+                    <td>${userSecuritySummary(user, duplicateContactUserIds, isSuper)}</td>
                     <td>${user.active ? statusTag("confirmado") : `<span class="tag red">Bloqueado</span>`}${userRecoveryStatus(user)}</td>
                     <td>
                       <div class="table-actions">
@@ -6270,6 +6472,15 @@ async function handleClick(event) {
     return renderAdmin();
   }
 
+  if (target.dataset.userPrepareAction) {
+    const user = (state.data.users || []).find((item) => item.id === target.dataset.userPrepareAction);
+    if (!user) return toast("Usuario no encontrado", "error");
+    state.selectedUserIds = [user.id];
+    setSuggestedBulkActionFromTarget(target);
+    toast(`Accion preparada para ${user.name || "usuario"}`);
+    return renderAdmin();
+  }
+
   if (target.dataset.userSelectAttention !== undefined) {
     const duplicateContactUserIds = userDuplicateContactUserIds(state.data.users || [], state.data.employees || []);
     state.selectedUserIds = filteredUsers(state.data.users || [])
@@ -6287,6 +6498,16 @@ async function handleClick(event) {
     state.userFilters = state.userFilters || { search: "", role: "all", security: "all" };
     state.userFilters.security = "high_risk";
     setSuggestedBulkActionFromTarget(target);
+    return renderAdmin();
+  }
+
+  if (target.dataset.userSelectDueSoon !== undefined) {
+    state.userFilters = state.userFilters || { search: "", role: "all", security: "all" };
+    state.selectedUserIds = filteredUsers(state.data.users || [])
+      .filter(userSecurityDueSoon)
+      .map((user) => user.id);
+    state.userFilters.security = "due_soon";
+    clearSuggestedUserBulkAction();
     return renderAdmin();
   }
 

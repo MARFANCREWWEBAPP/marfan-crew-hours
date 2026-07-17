@@ -5055,6 +5055,18 @@ function decodePngDataUrlImage(value) {
   }
 }
 
+let pdfLogoImageCache;
+function pdfLogoImage() {
+  if (pdfLogoImageCache !== undefined) return pdfLogoImageCache;
+  try {
+    const buffer = fs.readFileSync(path.join(CLIENT_DIR, "assets", "logo.png"));
+    pdfLogoImageCache = decodePngDataUrlImage(`data:image/png;base64,${buffer.toString("base64")}`);
+  } catch {
+    pdfLogoImageCache = null;
+  }
+  return pdfLogoImageCache;
+}
+
 function pdfStreamObject(dictionary, stream) {
   return Buffer.concat([
     Buffer.from(`<< ${dictionary} /Length ${stream.length} >>\nstream\n`, "utf8"),
@@ -5063,11 +5075,10 @@ function pdfStreamObject(dictionary, stream) {
   ]);
 }
 
-function createPdfDocument(ops, images = []) {
-  const content = ops.join("\n");
+function createPdfDocument(opsOrPages, images = []) {
+  const pages = Array.isArray(opsOrPages?.[0]) ? opsOrPages : [opsOrPages || []];
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
     "",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>"
@@ -5091,10 +5102,16 @@ function createPdfDocument(ops, images = []) {
     ));
     xObjects.push(`/Im${index + 1} ${imageObjectNumber} 0 R`);
   });
-  const contentObjectNumber = objects.length + 1;
   const xObjectResources = xObjects.length ? `/XObject << ${xObjects.join(" ")} >> ` : "";
-  objects[2] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> ${xObjectResources}>> /Contents ${contentObjectNumber} 0 R >>`;
-  objects.push(pdfStreamObject("", Buffer.from(content, "utf8")));
+  const pageRefs = [];
+  for (const pageOps of pages) {
+    const pageObjectNumber = objects.length + 1;
+    const contentObjectNumber = pageObjectNumber + 1;
+    pageRefs.push(`${pageObjectNumber} 0 R`);
+    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> ${xObjectResources}>> /Contents ${contentObjectNumber} 0 R >>`);
+    objects.push(pdfStreamObject("", Buffer.from((pageOps || []).join("\n"), "utf8")));
+  }
+  objects[1] = `<< /Type /Pages /Kids [${pageRefs.join(" ")}] /Count ${pageRefs.length} >>`;
 
   const chunks = [Buffer.from("%PDF-1.4\n", "utf8")];
   const offsets = [0];
@@ -5255,86 +5272,117 @@ function createPdfReport(title, rows) {
     }
     return Math.max(8, Math.floor(width / 4.4));
   };
-  const labelText = (header) => String(header || "").replace(/_/g, " ").toUpperCase();
-  const ops = [];
-  const fill = (r, g, b) => ops.push(`${r} ${g} ${b} rg`);
-  const stroke = (r, g, b) => ops.push(`${r} ${g} ${b} RG`);
-  const rect = (x, y, w, h, mode = "f") => ops.push(`${x} ${y} ${w} ${h} re ${mode}`);
-  const text = (value, x, y, size = 9, font = "F1", color = [0.06, 0.09, 0.16], max = 80) => {
-    fill(...color);
-    ops.push("BT", `/${font} ${size} Tf`, `${x} ${y} Td`, `(${pdfSafeText(value, max)}) Tj`, "ET");
-  };
-  const drawCard = (card, index) => {
+  const labelText = (header) => ({
+    precio_servicio: "PRECIO",
+    estado_documental: "DOCS",
+    documentos_caducados: "CADUC.",
+    fecha_incidencia: "FECHA",
+    distancia_base_km: "DIST.",
+    km_facturables: "KM",
+    kilometraje: "KM EUR"
+  }[header] || String(header || "").replace(/_/g, " ").toUpperCase());
+  const logo = pdfLogoImage();
+  const images = logo ? [logo] : [];
+  const rowsFirstPage = 20;
+  const rowsNextPage = 23;
+  const chunks = [];
+  if (!rows.length) {
+    chunks.push([]);
+  } else {
+    chunks.push(rows.slice(0, rowsFirstPage));
+    for (let start = rowsFirstPage; start < rows.length; start += rowsNextPage) {
+      chunks.push(rows.slice(start, start + rowsNextPage));
+    }
+  }
+  const pages = [];
+  const drawCard = (ops, draw, card, index) => {
     const x = 40 + index * 132;
     const tone = card.tone || "light";
     const bg = tone === "dark" ? [0.024, 0.063, 0.11] : tone === "green" ? [0.027, 0.58, 0.33] : tone === "amber" ? [1, 0.95, 0.82] : [1, 1, 1];
     const fg = tone === "dark" || tone === "green" ? [1, 1, 1] : [0.06, 0.09, 0.16];
     const muted = tone === "dark" || tone === "green" ? [0.84, 0.91, 0.97] : [0.39, 0.45, 0.55];
-    fill(...bg);
-    stroke(tone === "light" ? 0.84 : bg[0], tone === "light" ? 0.87 : bg[1], tone === "light" ? 0.91 : bg[2]);
-    rect(x, 622, 119, 58, "B");
-    text(card.label, x + 12, 660, 7, "F2", muted, 24);
-    text(card.value, x + 12, 638, 12, "F2", fg, 28);
+    draw.fill(...bg);
+    draw.stroke(tone === "light" ? 0.84 : bg[0], tone === "light" ? 0.87 : bg[1], tone === "light" ? 0.91 : bg[2]);
+    draw.rect(x, 622, 119, 58, "B");
+    draw.text(card.label, x + 12, 660, 7, "F2", muted, 24);
+    draw.text(card.value, x + 12, 638, 12, "F2", fg, 28);
   };
-
-  fill(0.965, 0.976, 0.988);
-  rect(0, 0, 595, 842);
-  fill(0.024, 0.063, 0.11);
-  rect(0, 748, 595, 94);
-  fill(0.027, 0.58, 0.33);
-  rect(0, 748, 12, 94);
-  fill(1, 1, 1);
-  rect(40, 779, 36, 36);
-  text("M", 52, 790, 18, "F2", [0.024, 0.063, 0.11], 2);
-  text("MARFAN CREW", 88, 804, 12, "F2", [1, 1, 1], 34);
-  text("Informe corporativo de operaciones", 88, 787, 8, "F1", [0.78, 0.86, 0.94], 62);
-  text(`Generado ${new Date().toLocaleString("es-ES")}`, 390, 804, 8, "F1", [0.78, 0.86, 0.94], 52);
-  text("ERP SaaS eventos", 390, 787, 8, "F2", [1, 1, 1], 35);
-  text(title, 40, 714, 20, "F2", [0.024, 0.063, 0.11], 70);
-  text(`${rows.length} registros exportados · CSV y Excel disponibles para detalle completo`, 40, 693, 8, "F1", [0.36, 0.43, 0.53], 100);
-  cardData.forEach(drawCard);
-
-  text("Detalle del informe", 40, 588, 12, "F2", [0.024, 0.063, 0.11], 38);
-  fill(0.024, 0.063, 0.11);
-  rect(40, 558, 515, 22);
-  let x = 48;
-  columns.forEach((header, index) => {
-    text(labelText(header), x, 566, 6.5, "F2", [1, 1, 1], Math.max(12, Math.floor(columnWidths[index] / 4.6)));
-    x += columnWidths[index];
+  chunks.forEach((chunk, pageIndex) => {
+    const ops = [];
+    const draw = {
+      fill: (r, g, b) => ops.push(`${r} ${g} ${b} rg`),
+      stroke: (r, g, b) => ops.push(`${r} ${g} ${b} RG`),
+      rect: (x, y, w, h, mode = "f") => ops.push(`${x} ${y} ${w} ${h} re ${mode}`),
+      text: (value, x, y, size = 9, font = "F1", color = [0.06, 0.09, 0.16], max = 80) => {
+        draw.fill(...color);
+        ops.push("BT", `/${font} ${size} Tf`, `${x} ${y} Td`, `(${pdfSafeText(value, max)}) Tj`, "ET");
+      },
+      image: (index, x, y, w, h) => ops.push("q", `${w} 0 0 ${h} ${x} ${y} cm`, `/Im${index + 1} Do`, "Q")
+    };
+    const isFirst = pageIndex === 0;
+    draw.fill(0.965, 0.976, 0.988);
+    draw.rect(0, 0, 595, 842);
+    draw.fill(0.024, 0.063, 0.11);
+    draw.rect(0, 748, 595, 94);
+    draw.fill(0.027, 0.58, 0.33);
+    draw.rect(0, 748, 12, 94);
+    draw.fill(1, 1, 1);
+    draw.rect(40, 779, 36, 36);
+    if (logo) draw.image(0, 44, 783, 28, 28);
+    else draw.text("M", 52, 790, 18, "F2", [0.024, 0.063, 0.11], 2);
+    draw.text("MARFAN CREW", 88, 804, 12, "F2", [1, 1, 1], 34);
+    draw.text("Informe corporativo de operaciones", 88, 787, 8, "F1", [0.78, 0.86, 0.94], 62);
+    draw.text(`Generado ${new Date().toLocaleString("es-ES")}`, 390, 804, 8, "F1", [0.78, 0.86, 0.94], 52);
+    draw.text(`Pagina ${pageIndex + 1}/${chunks.length}`, 390, 787, 8, "F2", [1, 1, 1], 35);
+    draw.text(title, 40, 714, 20, "F2", [0.024, 0.063, 0.11], 70);
+    draw.text(isFirst ? `${rows.length} registros exportados · PDF completo con detalle paginado` : `Continuacion · ${rows.length} registros totales`, 40, 693, 8, "F1", [0.36, 0.43, 0.53], 100);
+    const tableTitleY = isFirst ? 588 : 650;
+    const tableHeaderY = isFirst ? 558 : 620;
+    let rowY = isFirst ? 535 : 597;
+    if (isFirst) cardData.forEach((card, index) => drawCard(ops, draw, card, index));
+    draw.text("Detalle del informe", 40, tableTitleY, 12, "F2", [0.024, 0.063, 0.11], 38);
+    if (columns.length) {
+      draw.fill(0.024, 0.063, 0.11);
+      draw.rect(40, tableHeaderY, 515, 22);
+      let x = 48;
+      columns.forEach((header, index) => {
+        draw.text(labelText(header), x, tableHeaderY + 8, 6.5, "F2", [1, 1, 1], Math.max(12, Math.floor(columnWidths[index] / 4.6)));
+        x += columnWidths[index];
+      });
+    }
+    if (!rows.length) {
+      draw.fill(1, 1, 1);
+      draw.stroke(0.89, 0.91, 0.94);
+      draw.rect(40, 500, 515, 38, "B");
+      draw.text("No hay datos para los filtros seleccionados.", 56, 518, 9, "F1", [0.39, 0.45, 0.55], 80);
+    } else {
+      const baseIndex = pageIndex === 0 ? 0 : rowsFirstPage + (pageIndex - 1) * rowsNextPage;
+      for (const [rowOffset, row] of chunk.entries()) {
+        const rowIndex = baseIndex + rowOffset;
+        draw.fill(rowIndex % 2 ? 1 : 0.985, rowIndex % 2 ? 1 : 0.988, rowIndex % 2 ? 1 : 0.992);
+        draw.stroke(0.89, 0.91, 0.94);
+        draw.rect(40, rowY - 6, 515, 22, "B");
+        let cellX = 48;
+        columns.forEach((header, index) => {
+          const max = reportCellMax(header, columnWidths[index]);
+          draw.text(cellText(header, row[header]), cellX, rowY + 1, 6.8, "F1", [0.06, 0.09, 0.16], max);
+          cellX += columnWidths[index];
+        });
+        rowY -= 22;
+      }
+    }
+    draw.fill(1, 1, 1);
+    draw.stroke(0.84, 0.87, 0.91);
+    draw.rect(40, 58, 515, 44, "B");
+    draw.text("Uso interno MARFAN CREW", 54, 82, 8, "F2", [0.024, 0.063, 0.11], 45);
+    draw.text("Documento generado automaticamente desde datos persistentes del ERP. Conserva CSV/Excel para auditoria completa.", 54, 68, 7, "F1", [0.39, 0.45, 0.55], 118);
+    draw.fill(0.024, 0.063, 0.11);
+    draw.rect(0, 0, 595, 36);
+    draw.text("MARFAN CREW ERP", 40, 14, 9, "F2", [1, 1, 1], 36);
+    draw.text("Informes · operaciones · finanzas · RRHH", 344, 14, 7, "F1", [0.78, 0.86, 0.94], 58);
+    pages.push(ops);
   });
-  let y = 535;
-  for (const [rowIndex, row] of rows.slice(0, 20).entries()) {
-    fill(rowIndex % 2 ? 1 : 0.985, rowIndex % 2 ? 1 : 0.988, rowIndex % 2 ? 1 : 0.992);
-    stroke(0.89, 0.91, 0.94);
-    rect(40, y - 6, 515, 22, "B");
-    let cellX = 48;
-    columns.forEach((header, index) => {
-      const max = reportCellMax(header, columnWidths[index]);
-      text(cellText(header, row[header]), cellX, y + 1, 6.8, "F1", [0.06, 0.09, 0.16], max);
-      cellX += columnWidths[index];
-    });
-    y -= 22;
-  }
-  if (!rows.length) {
-    fill(1, 1, 1);
-    stroke(0.89, 0.91, 0.94);
-    rect(40, 500, 515, 38, "B");
-    text("No hay datos para los filtros seleccionados.", 56, 518, 9, "F1", [0.39, 0.45, 0.55], 80);
-  } else if (rows.length > 20) {
-    text(`Informe truncado en PDF: ${rows.length - 20} filas adicionales disponibles en CSV/Excel.`, 40, y - 6, 8, "F2", [0.55, 0.29, 0.02], 88);
-  }
-
-  fill(1, 1, 1);
-  stroke(0.84, 0.87, 0.91);
-  rect(40, 58, 515, 44, "B");
-  text("Uso interno MARFAN CREW", 54, 82, 8, "F2", [0.024, 0.063, 0.11], 45);
-  text("Documento generado automaticamente desde datos persistentes del ERP. Conserva CSV/Excel para auditoria completa.", 54, 68, 7, "F1", [0.39, 0.45, 0.55], 118);
-
-  fill(0.024, 0.063, 0.11);
-  rect(0, 0, 595, 36);
-  text("MARFAN CREW ERP", 40, 14, 9, "F2", [1, 1, 1], 36);
-  text("Informes · operaciones · finanzas · RRHH", 344, 14, 7, "F1", [0.78, 0.86, 0.94], 58);
-  return createPdfDocument(ops);
+  return createPdfDocument(pages, images);
 }
 
 function safeFileName(name) {
@@ -6563,127 +6611,176 @@ function deliveryNotePdf(event) {
   const servicePrice = Number(note.service_price ?? event.service_price ?? event.budget ?? 0);
   const pricingContext = deliveryPricingContext(event);
   const rows = deliveryNoteRows(event);
+  const logo = pdfLogoImage();
   const signatureImage = decodePngDataUrlImage(note.signature_image);
-  const pdfImages = signatureImage ? [signatureImage] : [];
-  const ops = [];
-  const fill = (r, g, b) => ops.push(`${r} ${g} ${b} rg`);
-  const stroke = (r, g, b) => ops.push(`${r} ${g} ${b} RG`);
-  const rect = (x, y, w, h, mode = "f") => ops.push(`${x} ${y} ${w} ${h} re ${mode}`);
-  const text = (value, x, y, size = 9, font = "F1", color = [0.06, 0.09, 0.16], max = 90) => {
-    fill(...color);
-    ops.push("BT", `/${font} ${size} Tf`, `${x} ${y} Td`, `(${pdfSafeText(value, max)}) Tj`, "ET");
-  };
-  const image = (index, x, y, w, h) => ops.push("q", `${w} 0 0 ${h} ${x} ${y} cm`, `/Im${index + 1} Do`, "Q");
+  const pdfImages = [];
+  const logoIndex = logo ? pdfImages.push(logo) - 1 : -1;
+  const signatureIndex = signatureImage ? pdfImages.push(signatureImage) - 1 : -1;
+  const pages = [];
   const moneyText = (value) => `${Number(value || 0).toFixed(2)} EUR`;
-  const card = (x, y, w, h, label, value, tone = "light") => {
+  const signed = Boolean(note.locked);
+  const firstPageRows = 10;
+  const nextPageRows = 15;
+  const chunks = [];
+  if (!rows.length) {
+    chunks.push([]);
+  } else {
+    chunks.push(rows.slice(0, firstPageRows));
+    for (let start = firstPageRows; start < rows.length; start += nextPageRows) {
+      chunks.push(rows.slice(start, start + nextPageRows));
+    }
+  }
+  const makeDraw = (ops) => ({
+    fill: (r, g, b) => ops.push(`${r} ${g} ${b} rg`),
+    stroke: (r, g, b) => ops.push(`${r} ${g} ${b} RG`),
+    rect: (x, y, w, h, mode = "f") => ops.push(`${x} ${y} ${w} ${h} re ${mode}`),
+    text(value, x, y, size = 9, font = "F1", color = [0.06, 0.09, 0.16], max = 90) {
+      this.fill(...color);
+      ops.push("BT", `/${font} ${size} Tf`, `${x} ${y} Td`, `(${pdfSafeText(value, max)}) Tj`, "ET");
+    },
+    image: (index, x, y, w, h) => ops.push("q", `${w} 0 0 ${h} ${x} ${y} cm`, `/Im${index + 1} Do`, "Q")
+  });
+  const drawCard = (draw, x, y, w, h, label, value, tone = "light") => {
     const bg = tone === "dark" ? [0.024, 0.063, 0.11] : tone === "green" ? [0.027, 0.58, 0.33] : [1, 1, 1];
     const border = tone === "dark" || tone === "green" ? bg : [0.84, 0.87, 0.91];
-    fill(...bg);
-    stroke(...border);
-    rect(x, y, w, h, "B");
-    text(label.toUpperCase(), x + 12, y + h - 18, 7, "F2", tone === "light" ? [0.39, 0.45, 0.55] : [0.84, 0.91, 0.97], 40);
-    text(value, x + 12, y + 14, tone === "green" ? 18 : 11, "F2", tone === "light" ? [0.06, 0.09, 0.16] : [1, 1, 1], 64);
+    draw.fill(...bg);
+    draw.stroke(...border);
+    draw.rect(x, y, w, h, "B");
+    draw.text(label.toUpperCase(), x + 12, y + h - 18, 7, "F2", tone === "light" ? [0.39, 0.45, 0.55] : [0.84, 0.91, 0.97], 40);
+    draw.text(value, x + 12, y + 14, tone === "green" ? 18 : 11, "F2", tone === "light" ? [0.06, 0.09, 0.16] : [1, 1, 1], 64);
   };
-
-  fill(0.965, 0.976, 0.988);
-  rect(0, 0, 595, 842);
-  fill(0.024, 0.063, 0.11);
-  rect(0, 748, 595, 94);
-  fill(0.027, 0.58, 0.33);
-  rect(0, 748, 12, 94);
-  fill(1, 1, 1);
-  rect(40, 779, 36, 36);
-  text("M", 52, 790, 18, "F2", [0.024, 0.063, 0.11], 2);
-  text("MARFAN CREW", 88, 804, 12, "F2", [1, 1, 1], 34);
-  text("Albaran corporativo de servicio", 88, 787, 8, "F1", [0.78, 0.86, 0.94], 58);
-  text(`Generado ${new Date().toLocaleString("es-ES")}`, 390, 804, 8, "F1", [0.78, 0.86, 0.94], 52);
-  text(`Ref. ${event.id}`, 390, 787, 8, "F2", [1, 1, 1], 45);
-
-  text("ALBARAN DE SERVICIO", 40, 714, 20, "F2", [0.024, 0.063, 0.11], 46);
-  text(event.name, 40, 692, 12, "F2", [0.16, 0.22, 0.31], 74);
-  const signed = Boolean(note.locked);
-  fill(signed ? 0.86 : 1, signed ? 0.98 : 0.95, signed ? 0.9 : 0.78);
-  stroke(signed ? 0.03 : 0.71, signed ? 0.46 : 0.28, signed ? 0.28 : 0.03);
-  rect(412, 700, 143, 24, "B");
-  text(signed ? "FIRMADO Y BLOQUEADO" : "PENDIENTE DE FIRMA", 425, 708, 8, "F2", signed ? [0.03, 0.46, 0.28] : [0.71, 0.28, 0.03], 34);
-
-  card(40, 618, 330, 58, "Cliente", `${event.client_name} · ${event.location}`, "light");
-  card(390, 618, 165, 58, "Precio servicio", moneyText(servicePrice), "green");
-  card(40, 546, 120, 54, "Fecha", event.date, "light");
-  card(174, 546, 120, 54, "Horario", `${event.start_time}-${event.end_time}`, "light");
-  card(308, 546, 120, 54, "Jefe equipo", event.team_leader_name || "Pendiente", "light");
-  card(442, 546, 113, 54, "Equipo", `${rows.length} operarios`, "dark");
-
-  text("Datos de facturacion", 40, 514, 12, "F2", [0.024, 0.063, 0.11], 40);
-  fill(1, 1, 1);
-  stroke(0.84, 0.87, 0.91);
-  rect(40, 456, 515, 44, "B");
-  text(`Direccion: ${event.address || event.location}`, 54, 482, 8, "F1", [0.16, 0.22, 0.31], 105);
-  text(`Base ${pricingContext.baseAddress} -> ${Number(event.base_distance_km || 0).toFixed(1)} km`, 54, 466, 8, "F1", [0.16, 0.22, 0.31], 80);
-  text(`Roles ${moneyText(event.role_price_total)} · Nocturnidad ${moneyText(event.night_price_total)} · Km ${moneyText(event.distance_price_total)}`, 300, 466, 8, "F2", [0.06, 0.09, 0.16], 70);
-  text(`Km incluidos ${pricingContext.includedKm.toFixed(1)} · Facturables ${Number(event.billable_km || 0).toFixed(1)} · Vehiculos ${Number(event.vehicle_count || 1)} · ${pricingContext.kilometrePrice.toFixed(2)} EUR/km`, 300, 482, 8, "F1", [0.16, 0.22, 0.31], 70);
-
-  text("Equipo, horario y pluses", 40, 424, 12, "F2", [0.024, 0.063, 0.11], 40);
-  fill(0.024, 0.063, 0.11);
-  rect(40, 399, 515, 20);
-  const columns = [
-    ["Operario", 50],
-    ["Rol", 190],
-    ["Horario", 302],
-    ["Km", 378],
-    ["Dieta", 420],
-    ["Noct.", 468],
-    ["Extras", 512]
-  ];
-  for (const [label, x] of columns) text(label, x, 405, 7.5, "F2", [1, 1, 1], 18);
-  let y = 379;
-  for (const { assignment, allowance } of rows.slice(0, 10)) {
-    fill(y % 40 === 19 ? 1 : 0.985, y % 40 === 19 ? 1 : 0.988, y % 40 === 19 ? 1 : 0.992);
-    stroke(0.89, 0.91, 0.94);
-    rect(40, y - 6, 515, 20, "B");
-    text(assignment.name, 50, y, 7.5, "F1", [0.06, 0.09, 0.16], 30);
-    text(assignment.role, 190, y, 7.5, "F1", [0.06, 0.09, 0.16], 24);
-    text(`${event.start_time}-${event.end_time}`, 302, y, 7.5, "F1", [0.06, 0.09, 0.16], 16);
-    text(Number(allowance.km || 0).toFixed(1), 378, y, 7.5, "F1", [0.06, 0.09, 0.16], 8);
-    text(Number(allowance.diet || 0).toFixed(2), 420, y, 7.5, "F1", [0.06, 0.09, 0.16], 9);
-    text(Number(allowance.night_hours || 0).toFixed(1), 468, y, 7.5, "F1", [0.06, 0.09, 0.16], 8);
-    text(Number(allowance.extras || 0).toFixed(2), 512, y, 7.5, "F1", [0.06, 0.09, 0.16], 9);
-    y -= 21;
-  }
-  if (!rows.length) text("Sin operarios asignados", 50, y, 8, "F1", [0.39, 0.45, 0.55], 40);
-  if (rows.length > 10) text(`Mas ${rows.length - 10} operarios en el albaran HTML`, 50, y, 8, "F2", [0.55, 0.29, 0.02], 45);
-
-  fill(1, 1, 1);
-  stroke(0.84, 0.87, 0.91);
-  rect(40, 90, 245, 118, "B");
-  rect(310, 90, 245, 118, "B");
-  text("Firma cliente", 56, 184, 11, "F2", [0.024, 0.063, 0.11], 28);
-  if (signatureImage) {
-    const aspect = signatureImage.width / signatureImage.height;
-    let signatureWidth = 205;
-    let signatureHeight = signatureWidth / aspect;
-    if (signatureHeight > 38) {
-      signatureHeight = 38;
-      signatureWidth = signatureHeight * aspect;
+  const drawHeader = (draw, pageIndex) => {
+    draw.fill(0.965, 0.976, 0.988);
+    draw.rect(0, 0, 595, 842);
+    draw.fill(0.024, 0.063, 0.11);
+    draw.rect(0, 748, 595, 94);
+    draw.fill(0.027, 0.58, 0.33);
+    draw.rect(0, 748, 12, 94);
+    draw.fill(1, 1, 1);
+    draw.rect(40, 779, 36, 36);
+    if (logoIndex >= 0) draw.image(logoIndex, 44, 783, 28, 28);
+    else draw.text("M", 52, 790, 18, "F2", [0.024, 0.063, 0.11], 2);
+    draw.text("MARFAN CREW", 88, 804, 12, "F2", [1, 1, 1], 34);
+    draw.text("Albaran corporativo de servicio", 88, 787, 8, "F1", [0.78, 0.86, 0.94], 58);
+    draw.text(`Generado ${new Date().toLocaleString("es-ES")}`, 390, 804, 8, "F1", [0.78, 0.86, 0.94], 52);
+    draw.text(`Pagina ${pageIndex + 1}/${chunks.length}`, 390, 787, 8, "F2", [1, 1, 1], 35);
+  };
+  const drawFooter = (draw) => {
+    draw.fill(0.024, 0.063, 0.11);
+    draw.rect(0, 0, 595, 36);
+    draw.text("MARFAN CREW ERP", 40, 14, 9, "F2", [1, 1, 1], 36);
+    draw.text("Precio, equipo, kilometraje y firma de cliente", 330, 14, 7, "F1", [0.78, 0.86, 0.94], 54);
+  };
+  const drawCrewTable = (draw, chunk, topY, rowYStart, baseIndex = 0) => {
+    draw.text("Equipo, horario y pluses", 40, topY + 25, 12, "F2", [0.024, 0.063, 0.11], 40);
+    draw.fill(0.024, 0.063, 0.11);
+    draw.rect(40, topY, 515, 20);
+    const columns = [
+      ["Operario", 50],
+      ["Rol", 190],
+      ["Horario", 302],
+      ["Km", 378],
+      ["Dieta", 420],
+      ["Noct.", 468],
+      ["Extras", 512]
+    ];
+    for (const [label, x] of columns) draw.text(label, x, topY + 6, 7.5, "F2", [1, 1, 1], 18);
+    let y = rowYStart;
+    if (!chunk.length) {
+      draw.fill(1, 1, 1);
+      draw.stroke(0.89, 0.91, 0.94);
+      draw.rect(40, y - 6, 515, 24, "B");
+      draw.text("Sin operarios asignados", 50, y + 2, 8, "F1", [0.39, 0.45, 0.55], 40);
+      return;
     }
-    image(0, 56, 138, signatureWidth, signatureHeight);
-    text("Firma grafica capturada digitalmente", 56, 128, 7.5, "F1", [0.39, 0.45, 0.55], 48);
-  } else {
-    text(note.signature_image ? "Firma guardada, imagen no legible en PDF" : "Firma grafica no capturada", 56, 154, 8, "F1", [0.39, 0.45, 0.55], 52);
-  }
-  text(`Nombre: ${note.signature_name || ""}`, 56, 114, 8.5, "F1", [0.06, 0.09, 0.16], 52);
-  text(`DNI/NIF: ${note.signature_dni || ""}`, 56, 100, 8.5, "F1", [0.06, 0.09, 0.16], 40);
-  text("Control MARFAN", 326, 184, 11, "F2", [0.024, 0.063, 0.11], 28);
-  text(`Estado: ${signed ? "Firmado y bloqueado" : "Pendiente"}`, 326, 162, 8.5, "F2", signed ? [0.03, 0.46, 0.28] : [0.71, 0.28, 0.03], 42);
-  text(`Fecha firma: ${note.signed_at || ""}`, 326, 146, 8, "F1", [0.16, 0.22, 0.31], 44);
-  text(`Observaciones: ${note.client_notes || ""}`, 326, 128, 8, "F1", [0.16, 0.22, 0.31], 50);
-  text(`Notas servicio: ${event.notes || ""}`, 326, 112, 7.5, "F1", [0.39, 0.45, 0.55], 58);
-
-  fill(0.024, 0.063, 0.11);
-  rect(0, 0, 595, 36);
-  text("MARFAN CREW ERP", 40, 14, 9, "F2", [1, 1, 1], 36);
-  text("Precio, equipo, kilometraje y firma de cliente", 330, 14, 7, "F1", [0.78, 0.86, 0.94], 54);
-  return createPdfDocument(ops, pdfImages);
+    for (const [{ assignment, allowance }, offset] of chunk.map((item, index) => [item, index])) {
+      const rowIndex = baseIndex + offset;
+      draw.fill(rowIndex % 2 ? 1 : 0.985, rowIndex % 2 ? 1 : 0.988, rowIndex % 2 ? 1 : 0.992);
+      draw.stroke(0.89, 0.91, 0.94);
+      draw.rect(40, y - 6, 515, 20, "B");
+      draw.text(assignment.name, 50, y, 7.5, "F1", [0.06, 0.09, 0.16], 30);
+      draw.text(assignment.role, 190, y, 7.5, "F1", [0.06, 0.09, 0.16], 24);
+      draw.text(`${event.start_time}-${event.end_time}`, 302, y, 7.5, "F1", [0.06, 0.09, 0.16], 16);
+      draw.text(Number(allowance.km || 0).toFixed(1), 378, y, 7.5, "F1", [0.06, 0.09, 0.16], 8);
+      draw.text(Number(allowance.diet || 0).toFixed(2), 420, y, 7.5, "F1", [0.06, 0.09, 0.16], 9);
+      draw.text(Number(allowance.night_hours || 0).toFixed(1), 468, y, 7.5, "F1", [0.06, 0.09, 0.16], 8);
+      draw.text(Number(allowance.extras || 0).toFixed(2), 512, y, 7.5, "F1", [0.06, 0.09, 0.16], 9);
+      y -= 21;
+    }
+  };
+  const drawSignature = (draw) => {
+    draw.fill(1, 1, 1);
+    draw.stroke(0.84, 0.87, 0.91);
+    draw.rect(40, 90, 245, 118, "B");
+    draw.rect(310, 90, 245, 118, "B");
+    draw.text("Firma cliente", 56, 184, 11, "F2", [0.024, 0.063, 0.11], 28);
+    if (signatureImage && signatureIndex >= 0) {
+      const aspect = signatureImage.width / signatureImage.height;
+      let signatureWidth = 205;
+      let signatureHeight = signatureWidth / aspect;
+      if (signatureHeight > 38) {
+        signatureHeight = 38;
+        signatureWidth = signatureHeight * aspect;
+      }
+      draw.image(signatureIndex, 56, 138, signatureWidth, signatureHeight);
+      draw.text("Firma grafica capturada digitalmente", 56, 128, 7.5, "F1", [0.39, 0.45, 0.55], 48);
+    } else {
+      draw.text(note.signature_image ? "Firma guardada, imagen no legible en PDF" : "Firma grafica no capturada", 56, 154, 8, "F1", [0.39, 0.45, 0.55], 52);
+    }
+    draw.text(`Nombre: ${note.signature_name || ""}`, 56, 114, 8.5, "F1", [0.06, 0.09, 0.16], 52);
+    draw.text(`DNI/NIF: ${note.signature_dni || ""}`, 56, 100, 8.5, "F1", [0.06, 0.09, 0.16], 40);
+    draw.text("Control MARFAN", 326, 184, 11, "F2", [0.024, 0.063, 0.11], 28);
+    draw.text(`Estado: ${signed ? "Firmado y bloqueado" : "Pendiente"}`, 326, 162, 8.5, "F2", signed ? [0.03, 0.46, 0.28] : [0.71, 0.28, 0.03], 42);
+    draw.text(`Fecha firma: ${note.signed_at || ""}`, 326, 146, 8, "F1", [0.16, 0.22, 0.31], 44);
+    draw.text(`Observaciones: ${note.client_notes || ""}`, 326, 128, 8, "F1", [0.16, 0.22, 0.31], 50);
+    draw.text(`Notas servicio: ${event.notes || ""}`, 326, 112, 7.5, "F1", [0.39, 0.45, 0.55], 58);
+  };
+  chunks.forEach((chunk, pageIndex) => {
+    const ops = [];
+    const draw = makeDraw(ops);
+    const isFirst = pageIndex === 0;
+    const isLast = pageIndex === chunks.length - 1;
+    drawHeader(draw, pageIndex);
+    draw.text(isFirst ? "ALBARAN DE SERVICIO" : "ALBARAN DE SERVICIO - CONTINUACION", 40, 714, 20, "F2", [0.024, 0.063, 0.11], 58);
+    draw.text(event.name, 40, 692, 12, "F2", [0.16, 0.22, 0.31], 74);
+    draw.fill(signed ? 0.86 : 1, signed ? 0.98 : 0.95, signed ? 0.9 : 0.78);
+    draw.stroke(signed ? 0.03 : 0.71, signed ? 0.46 : 0.28, signed ? 0.28 : 0.03);
+    draw.rect(412, 700, 143, 24, "B");
+    draw.text(signed ? "FIRMADO Y BLOQUEADO" : "PENDIENTE DE FIRMA", 425, 708, 8, "F2", signed ? [0.03, 0.46, 0.28] : [0.71, 0.28, 0.03], 34);
+    if (isFirst) {
+      drawCard(draw, 40, 618, 330, 58, "Cliente", `${event.client_name} · ${event.location}`, "light");
+      drawCard(draw, 390, 618, 165, 58, "Precio servicio", moneyText(servicePrice), "green");
+      drawCard(draw, 40, 546, 120, 54, "Fecha", event.date, "light");
+      drawCard(draw, 174, 546, 120, 54, "Horario", `${event.start_time}-${event.end_time}`, "light");
+      drawCard(draw, 308, 546, 120, 54, "Jefe equipo", event.team_leader_name || "Pendiente", "light");
+      drawCard(draw, 442, 546, 113, 54, "Equipo", `${rows.length} operarios`, "dark");
+      draw.text("Datos de facturacion", 40, 514, 12, "F2", [0.024, 0.063, 0.11], 40);
+      draw.fill(1, 1, 1);
+      draw.stroke(0.84, 0.87, 0.91);
+      draw.rect(40, 456, 515, 44, "B");
+      draw.text(`Direccion: ${event.address || event.location}`, 54, 482, 8, "F1", [0.16, 0.22, 0.31], 105);
+      draw.text(`Base ${pricingContext.baseAddress} -> ${Number(event.base_distance_km || 0).toFixed(1)} km`, 54, 466, 8, "F1", [0.16, 0.22, 0.31], 80);
+      draw.text(`Roles ${moneyText(event.role_price_total)} · Nocturnidad ${moneyText(event.night_price_total)} · Km ${moneyText(event.distance_price_total)}`, 300, 466, 8, "F2", [0.06, 0.09, 0.16], 70);
+      draw.text(`Km incluidos ${pricingContext.includedKm.toFixed(1)} · Facturables ${Number(event.billable_km || 0).toFixed(1)} · Vehiculos ${Number(event.vehicle_count || 1)} · ${pricingContext.kilometrePrice.toFixed(2)} EUR/km`, 300, 482, 8, "F1", [0.16, 0.22, 0.31], 70);
+      drawCrewTable(draw, chunk, 399, 379, 0);
+      if (!isLast) {
+        draw.fill(1, 1, 1);
+        draw.stroke(0.84, 0.87, 0.91);
+        draw.rect(40, 110, 515, 42, "B");
+        draw.text("El equipo continua en las paginas siguientes. La firma se muestra al cierre del documento.", 54, 132, 8, "F2", [0.39, 0.45, 0.55], 104);
+      }
+    } else {
+      drawCard(draw, 40, 626, 155, 44, "Cliente", event.client_name, "light");
+      drawCard(draw, 210, 626, 150, 44, "Fecha", event.date, "light");
+      drawCard(draw, 375, 626, 180, 44, "Equipo total", `${rows.length} operarios`, "dark");
+      const baseIndex = firstPageRows + (pageIndex - 1) * nextPageRows;
+      drawCrewTable(draw, chunk, 584, 564, baseIndex);
+    }
+    if (isLast) drawSignature(draw);
+    drawFooter(draw);
+    pages.push(ops);
+  });
+  return createPdfDocument(pages, pdfImages);
 }
 
 function deliveryNoteHtml(event) {
@@ -6815,37 +6912,141 @@ function clientDossierData(event) {
 
 function clientDossierPdf(event) {
   const dossier = clientDossierData(event);
-  const lines = [
-    `Dossier cliente - ${event.name}`,
-    `MARFAN CREW ERP · Generado: ${new Date().toLocaleString("es-ES")}`,
-    `Evento: ${event.id} · Fecha: ${event.date} · Horario: ${event.start_time}-${event.end_time}`,
-    `Cliente: ${dossier.client.name || event.client_name} · CIF/NIF: ${dossier.client.tax_id || ""}`,
-    `Ubicacion: ${event.location} · Direccion: ${event.address || event.location}`,
-    `Jefe de equipo: ${event.team_leader_name || "Pendiente"}`,
-    `Precio servicio: ${Number(event.service_price || event.budget || 0).toFixed(2)} EUR`,
-    "",
-    `Equipo: ${dossier.totals.staff} operarios · Documentos: ${dossier.totals.documents} · Bloqueos: ${dossier.totals.blockers} · Avisos: ${dossier.totals.warnings}`,
-    "",
-    "Operario | Rol | Estado docs | Documentacion"
-  ];
-  for (const row of dossier.rows.slice(0, 24)) {
-    const docs = row.documents.length
-      ? row.documents.map((document) => {
-        const file = document.has_file ? " archivo" : "";
-        return `${document.type}:${documentStatusLabel(document.status)}${document.expires_at ? ` ${document.expires_at}` : ""}${file}`;
-      }).join(", ")
-      : "Sin documentos";
-    lines.push([
-      row.assignment.name,
-      row.assignment.role,
-      row.status === "bloqueado" ? "Con bloqueos" : row.status === "aviso" ? "Con avisos" : "OK",
-      docs
-    ].join(" | "));
+  const logo = pdfLogoImage();
+  const images = logo ? [logo] : [];
+  const rowsFirstPage = 12;
+  const rowsNextPage = 17;
+  const chunks = [];
+  if (!dossier.rows.length) {
+    chunks.push([]);
+  } else {
+    chunks.push(dossier.rows.slice(0, rowsFirstPage));
+    for (let start = rowsFirstPage; start < dossier.rows.length; start += rowsNextPage) {
+      chunks.push(dossier.rows.slice(start, start + rowsNextPage));
+    }
   }
-  if (dossier.rows.length > 24) lines.push(`... ${dossier.rows.length - 24} operarios adicionales`);
-  if (!dossier.rows.length) lines.push("Sin operarios asignados");
-  lines.push("", "Nota: este dossier resume estado documental y equipo asignado. Los archivos originales permanecen protegidos en MARFAN CREW ERP.");
-  return createPdfLines(`Dossier ${event.name}`, lines);
+  const pages = [];
+  const statusText = (status) => status === "bloqueado" ? "Con bloqueos" : status === "aviso" ? "Con avisos" : "OK";
+  const statusTone = (status) => status === "bloqueado" ? [0.71, 0.14, 0.09] : status === "aviso" ? [0.71, 0.28, 0.03] : [0.03, 0.46, 0.28];
+  const docsText = (row) => {
+    if (!row.documents.length) return "Sin documentos registrados";
+    const visible = row.documents.slice(0, 3).map((document) => {
+      const expires = document.expires_at ? ` ${document.expires_at}` : "";
+      const file = document.has_file ? " archivo" : "";
+      return `${document.type}: ${documentStatusLabel(document.status)}${expires}${file}`;
+    });
+    if (row.documents.length > 3) visible.push(`+${row.documents.length - 3} docs`);
+    return visible.join(" · ");
+  };
+  const makeDraw = (ops) => ({
+    fill: (r, g, b) => ops.push(`${r} ${g} ${b} rg`),
+    stroke: (r, g, b) => ops.push(`${r} ${g} ${b} RG`),
+    rect: (x, y, w, h, mode = "f") => ops.push(`${x} ${y} ${w} ${h} re ${mode}`),
+    text(value, x, y, size = 9, font = "F1", color = [0.06, 0.09, 0.16], max = 90) {
+      this.fill(...color);
+      ops.push("BT", `/${font} ${size} Tf`, `${x} ${y} Td`, `(${pdfSafeText(value, max)}) Tj`, "ET");
+    },
+    image: (index, x, y, w, h) => ops.push("q", `${w} 0 0 ${h} ${x} ${y} cm`, `/Im${index + 1} Do`, "Q")
+  });
+  const drawHeader = (draw, pageIndex) => {
+    draw.fill(0.965, 0.976, 0.988);
+    draw.rect(0, 0, 595, 842);
+    draw.fill(0.024, 0.063, 0.11);
+    draw.rect(0, 748, 595, 94);
+    draw.fill(0.027, 0.58, 0.33);
+    draw.rect(0, 748, 12, 94);
+    draw.fill(1, 1, 1);
+    draw.rect(40, 779, 36, 36);
+    if (logo) draw.image(0, 44, 783, 28, 28);
+    else draw.text("M", 52, 790, 18, "F2", [0.024, 0.063, 0.11], 2);
+    draw.text("MARFAN CREW", 88, 804, 12, "F2", [1, 1, 1], 34);
+    draw.text("Dossier operativo para cliente", 88, 787, 8, "F1", [0.78, 0.86, 0.94], 62);
+    draw.text(`Generado ${new Date().toLocaleString("es-ES")}`, 390, 804, 8, "F1", [0.78, 0.86, 0.94], 52);
+    draw.text(`Pagina ${pageIndex + 1}/${chunks.length}`, 390, 787, 8, "F2", [1, 1, 1], 35);
+  };
+  const drawFooter = (draw) => {
+    draw.fill(0.024, 0.063, 0.11);
+    draw.rect(0, 0, 595, 36);
+    draw.text("MARFAN CREW ERP", 40, 14, 9, "F2", [1, 1, 1], 36);
+    draw.text("Dossier · equipo · documentacion · acceso protegido", 318, 14, 7, "F1", [0.78, 0.86, 0.94], 62);
+  };
+  const drawMetric = (draw, x, y, w, label, value, tone = "light") => {
+    const bg = tone === "dark" ? [0.024, 0.063, 0.11] : tone === "green" ? [0.027, 0.58, 0.33] : tone === "amber" ? [1, 0.95, 0.82] : [1, 1, 1];
+    const fg = tone === "dark" || tone === "green" ? [1, 1, 1] : [0.06, 0.09, 0.16];
+    const muted = tone === "dark" || tone === "green" ? [0.84, 0.91, 0.97] : [0.39, 0.45, 0.55];
+    draw.fill(...bg);
+    draw.stroke(tone === "light" ? 0.84 : bg[0], tone === "light" ? 0.87 : bg[1], tone === "light" ? 0.91 : bg[2]);
+    draw.rect(x, y, w, 48, "B");
+    draw.text(label.toUpperCase(), x + 10, y + 30, 7, "F2", muted, 24);
+    draw.text(value, x + 10, y + 12, 11, "F2", fg, 28);
+  };
+  const drawRows = (draw, chunk, startY, baseIndex = 0) => {
+    draw.fill(0.024, 0.063, 0.11);
+    draw.rect(40, startY, 515, 22);
+    draw.text("OPERARIO", 50, startY + 8, 7, "F2", [1, 1, 1], 22);
+    draw.text("ROL", 190, startY + 8, 7, "F2", [1, 1, 1], 14);
+    draw.text("ESTADO", 272, startY + 8, 7, "F2", [1, 1, 1], 16);
+    draw.text("DOCUMENTACION", 350, startY + 8, 7, "F2", [1, 1, 1], 32);
+    let y = startY - 25;
+    if (!chunk.length) {
+      draw.fill(1, 1, 1);
+      draw.stroke(0.89, 0.91, 0.94);
+      draw.rect(40, y - 6, 515, 30, "B");
+      draw.text("Sin operarios asignados", 54, y + 5, 8.5, "F1", [0.39, 0.45, 0.55], 45);
+      return;
+    }
+    chunk.forEach((row, offset) => {
+      const rowIndex = baseIndex + offset;
+      draw.fill(rowIndex % 2 ? 1 : 0.985, rowIndex % 2 ? 1 : 0.988, rowIndex % 2 ? 1 : 0.992);
+      draw.stroke(0.89, 0.91, 0.94);
+      draw.rect(40, y - 6, 515, 28, "B");
+      draw.text(row.assignment.name, 50, y + 7, 7.3, "F2", [0.06, 0.09, 0.16], 32);
+      draw.text(row.assignment.phone || row.assignment.email || "", 50, y - 3, 6.5, "F1", [0.39, 0.45, 0.55], 32);
+      draw.text(row.assignment.role, 190, y + 3, 7.3, "F1", [0.06, 0.09, 0.16], 22);
+      draw.text(statusText(row.status), 272, y + 3, 7.3, "F2", statusTone(row.status), 20);
+      draw.text(docsText(row), 350, y + 3, 6.8, "F1", [0.06, 0.09, 0.16], 56);
+      y -= 30;
+    });
+  };
+  chunks.forEach((chunk, pageIndex) => {
+    const ops = [];
+    const draw = makeDraw(ops);
+    const isFirst = pageIndex === 0;
+    drawHeader(draw, pageIndex);
+    draw.text(isFirst ? "DOSSIER CLIENTE" : "DOSSIER CLIENTE - CONTINUACION", 40, 714, 20, "F2", [0.024, 0.063, 0.11], 58);
+    draw.text(event.name, 40, 692, 12, "F2", [0.16, 0.22, 0.31], 74);
+    if (isFirst) {
+      drawMetric(draw, 40, 622, 119, "Equipo", String(dossier.totals.staff), "dark");
+      drawMetric(draw, 173, 622, 119, "Documentos", String(dossier.totals.documents), "light");
+      drawMetric(draw, 306, 622, 119, "Bloqueos", String(dossier.totals.blockers), dossier.totals.blockers ? "amber" : "green");
+      drawMetric(draw, 439, 622, 116, "Avisos", String(dossier.totals.warnings), dossier.totals.warnings ? "amber" : "light");
+      draw.fill(1, 1, 1);
+      draw.stroke(0.84, 0.87, 0.91);
+      draw.rect(40, 540, 515, 62, "B");
+      draw.text("Datos del cliente y servicio", 54, 578, 10, "F2", [0.024, 0.063, 0.11], 46);
+      draw.text(`Cliente: ${dossier.client.legal_name || dossier.client.name || event.client_name} · CIF/NIF: ${dossier.client.tax_id || "-"}`, 54, 560, 8, "F1", [0.16, 0.22, 0.31], 108);
+      draw.text(`Contacto: ${dossier.client.contact_name || "-"} · ${dossier.client.email || dossier.client.phone || "-"}`, 54, 546, 8, "F1", [0.16, 0.22, 0.31], 108);
+      draw.text(`Fecha ${event.date} · ${event.start_time}-${event.end_time} · Jefe ${event.team_leader_name || "Pendiente"}`, 318, 546, 8, "F2", [0.06, 0.09, 0.16], 70);
+      draw.text(`Direccion: ${event.address || event.location}`, 318, 560, 8, "F1", [0.16, 0.22, 0.31], 70);
+      draw.text("Equipo asignado y documentacion", 40, 506, 12, "F2", [0.024, 0.063, 0.11], 48);
+      drawRows(draw, chunk, 476, 0);
+    } else {
+      drawMetric(draw, 40, 626, 155, "Cliente", dossier.client.name || event.client_name, "light");
+      drawMetric(draw, 210, 626, 150, "Fecha", event.date, "light");
+      drawMetric(draw, 375, 626, 180, "Equipo total", `${dossier.totals.staff}`, "dark");
+      draw.text("Equipo asignado y documentacion", 40, 584, 12, "F2", [0.024, 0.063, 0.11], 48);
+      const baseIndex = rowsFirstPage + (pageIndex - 1) * rowsNextPage;
+      drawRows(draw, chunk, 554, baseIndex);
+    }
+    draw.fill(1, 1, 1);
+    draw.stroke(0.84, 0.87, 0.91);
+    draw.rect(40, 58, 515, 40, "B");
+    draw.text("Nota de seguridad", 54, 80, 8, "F2", [0.024, 0.063, 0.11], 38);
+    draw.text("Este dossier resume estado documental y equipo asignado. Los archivos originales permanecen protegidos en MARFAN CREW ERP.", 54, 67, 7, "F1", [0.39, 0.45, 0.55], 118);
+    drawFooter(draw);
+    pages.push(ops);
+  });
+  return createPdfDocument(pages, images);
 }
 
 function clientDossierHtml(event) {

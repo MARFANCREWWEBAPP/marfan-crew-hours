@@ -1400,6 +1400,24 @@ button:disabled {
   font-weight: 780;
 }
 
+.permission-drift {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+  padding: 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fffdf8;
+}
+
+.permission-drift span {
+  color: var(--amber);
+  font-size: 11px;
+  font-weight: 850;
+}
+
 .user-bulk-bar {
   margin-top: 12px;
   padding: 12px 14px;
@@ -1885,6 +1903,135 @@ button:disabled {
 
 .risk-meter.red strong {
   color: var(--red);
+}
+
+.recommended-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 8px;
+  border: 1px solid var(--line-soft);
+  border-left: 4px solid var(--blue);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.recommended-action span,
+.recommended-action small {
+  display: block;
+}
+
+.recommended-action span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.recommended-action strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.recommended-action small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.recommended-action.red {
+  border-left-color: var(--red);
+  background: #fffafa;
+}
+
+.recommended-action.amber {
+  border-left-color: var(--amber);
+  background: #fffdf8;
+}
+
+.recommended-action.blue {
+  border-left-color: var(--blue);
+  background: #f7fbff;
+}
+
+.security-cadence {
+  display: grid;
+  gap: 5px;
+}
+
+.cadence-row {
+  display: grid;
+  gap: 5px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.cadence-copy {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  align-items: center;
+}
+
+.cadence-copy span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.cadence-copy strong {
+  justify-self: end;
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: right;
+}
+
+.cadence-copy small {
+  grid-column: 1 / -1;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.cadence-bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line-soft);
+}
+
+.cadence-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--blue);
+}
+
+.cadence-row.green .cadence-bar span {
+  background: var(--green);
+}
+
+.cadence-row.amber {
+  background: #fffdf8;
+}
+
+.cadence-row.amber .cadence-bar span {
+  background: var(--amber);
+}
+
+.cadence-row.red {
+  background: #fffafa;
+}
+
+.cadence-row.red .cadence-bar span {
+  background: var(--red);
 }
 
 .security-stack small {
