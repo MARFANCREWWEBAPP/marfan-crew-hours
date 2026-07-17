@@ -1115,6 +1115,102 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.user-action-queue {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.queue-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.queue-head > div {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 3px 10px;
+  align-items: center;
+}
+
+.queue-head strong {
+  font-size: 26px;
+  line-height: 1;
+}
+
+.queue-head small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.queue-list {
+  display: grid;
+  gap: 8px;
+}
+
+.queue-row {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.queue-row.red {
+  border-left: 4px solid var(--red);
+  background: #fffafa;
+}
+
+.queue-row.amber {
+  border-left: 4px solid var(--amber);
+  background: #fffdf8;
+}
+
+.queue-row.blue {
+  border-left: 4px solid var(--blue);
+  background: #f8fbff;
+}
+
+.queue-priority {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+  font-weight: 900;
+  font-size: 13px;
+}
+
+.queue-row strong {
+  display: block;
+  line-height: 1.25;
+}
+
+.queue-row small {
+  display: block;
+  color: var(--muted);
+  margin-top: 3px;
+  font-size: 12px;
+  font-weight: 730;
+}
+
+.queue-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 .user-portal-health {
   border-top: 1px solid var(--line-soft);
   padding-top: 14px;
@@ -1869,6 +1965,7 @@ button:disabled {
 
 .creation-body form:not(.event-builder) > h2,
 .creation-body form:not(.event-builder) > .leader-toggle,
+.creation-body form:not(.event-builder) > .duplicate-guard,
 .creation-body form:not(.event-builder) > .field,
 .creation-body form:not(.event-builder) > .form-grid,
 .creation-body form:not(.event-builder) > button {
@@ -1877,11 +1974,113 @@ button:disabled {
 
 .creation-body form:not(.event-builder) > h2,
 .creation-body form:not(.event-builder) > .leader-toggle,
+.creation-body form:not(.event-builder) > .duplicate-guard,
 .creation-body form:not(.event-builder) > .form-grid,
 .creation-body form:not(.event-builder) > .field:has(textarea),
 .creation-body form:not(.event-builder) > .field:has(input[type="file"]),
 .creation-body form:not(.event-builder) > button.full {
   grid-column: 1 / -1;
+}
+
+.duplicate-guard {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+  background: #fff;
+}
+
+.duplicate-guard > div:first-child {
+  display: grid;
+  gap: 5px;
+}
+
+.duplicate-guard strong {
+  font-size: 15px;
+}
+
+.duplicate-guard small {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.duplicate-guard.ok {
+  background: #f6fef9;
+  border-color: #b7ebcf;
+}
+
+.duplicate-guard.warn {
+  background: #fffaf0;
+  border-color: #f7d38b;
+}
+
+.duplicate-guard.danger {
+  background: #fff7f7;
+  border-color: #f6b4ae;
+}
+
+.duplicate-match-list {
+  display: grid;
+  gap: 8px;
+}
+
+.duplicate-match-row {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fff;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.duplicate-match-row.red {
+  border-color: #f6b4ae;
+}
+
+.duplicate-match-row.amber {
+  border-color: #f7d38b;
+}
+
+.duplicate-overview {
+  margin-bottom: 16px;
+}
+
+.duplicate-overview .panel-head {
+  align-items: flex-start;
+}
+
+.duplicate-overview-body {
+  padding: 12px 16px 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.duplicate-group-row {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fffaf0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.duplicate-group-row small {
+  display: block;
+  color: var(--muted);
+  margin-top: 3px;
+  font-weight: 700;
+}
+
+.duplicate-group-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .event-builder {
@@ -3239,6 +3438,20 @@ button:disabled {
     align-items: stretch;
   }
 
+  .queue-head,
+  .queue-row {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .queue-row {
+    align-items: stretch;
+  }
+
+  .queue-actions {
+    justify-content: flex-start;
+  }
+
   .user-portal-health .btn {
     width: 100%;
   }
@@ -3375,6 +3588,15 @@ button:disabled {
 
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .duplicate-match-row,
+  .duplicate-group-row {
+    grid-template-columns: 1fr;
+  }
+
+  .duplicate-group-actions {
+    justify-content: flex-start;
   }
 }
 

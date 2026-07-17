@@ -269,6 +269,238 @@ function contactEmailKey(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function identityKey(value) {
+  return searchableText(value).replace(/[^a-z0-9]/g, "");
+}
+
+function formFieldValue(form, name) {
+  return String(form?.querySelector(`[name="${name}"]`)?.value || "").trim();
+}
+
+function addDuplicateMatch(matches, match) {
+  if (!match?.id) return;
+  const key = `${match.type}:${match.id}`;
+  const existing = matches.get(key);
+  if (!existing) {
+    matches.set(key, { ...match, reasons: Array.from(new Set(match.reasons || [])) });
+    return;
+  }
+  existing.reasons = Array.from(new Set([...(existing.reasons || []), ...(match.reasons || [])]));
+  if (match.tone === "red" || (match.tone === "amber" && existing.tone !== "red")) existing.tone = match.tone;
+}
+
+function duplicateToneRank(tone) {
+  return tone === "red" ? 0 : tone === "amber" ? 1 : 2;
+}
+
+function sortDuplicateMatches(matches) {
+  return Array.from(matches.values()).sort((a, b) =>
+    duplicateToneRank(a.tone) - duplicateToneRank(b.tone) || String(a.label).localeCompare(String(b.label))
+  );
+}
+
+function clientDuplicateMatches(form) {
+  const matches = new Map();
+  const nameKey = identityKey(formFieldValue(form, "name"));
+  const legalNameKey = identityKey(formFieldValue(form, "legalName"));
+  const taxKey = identityKey(formFieldValue(form, "taxId"));
+  const emailKey = contactEmailKey(formFieldValue(form, "email"));
+  const phoneKey = phoneLoginKey(formFieldValue(form, "phone"));
+  for (const client of state.data.clients || []) {
+    const reasons = [];
+    if (taxKey && taxKey.length >= 5 && identityKey(client.tax_id) === taxKey) reasons.push("CIF/NIF");
+    if (emailKey && contactEmailKey(client.email) === emailKey) reasons.push("email");
+    if (phoneKey && phoneLoginKey(client.phone) === phoneKey) reasons.push("telefono");
+    const existingNames = [identityKey(client.name), identityKey(client.legal_name)].filter((item) => item.length >= 6);
+    if ((nameKey.length >= 6 && existingNames.includes(nameKey)) || (legalNameKey.length >= 6 && existingNames.includes(legalNameKey))) {
+      reasons.push("nombre");
+    }
+    if (reasons.length) {
+      addDuplicateMatch(matches, {
+        type: "client",
+        id: client.id,
+        label: client.name,
+        meta: [client.tax_id, client.email, client.phone].filter(Boolean).join(" · "),
+        reasons,
+        tone: reasons.includes("CIF/NIF") ? "red" : "amber"
+      });
+    }
+  }
+  return sortDuplicateMatches(matches);
+}
+
+function employeeDuplicateMatches(form) {
+  const matches = new Map();
+  const nameKey = identityKey(formFieldValue(form, "name"));
+  const dniKey = identityKey(formFieldValue(form, "dni"));
+  const emailKey = contactEmailKey(formFieldValue(form, "email"));
+  const phoneKey = phoneLoginKey(formFieldValue(form, "phone"));
+  for (const employee of state.data.employees || []) {
+    const reasons = [];
+    if (dniKey && dniKey.length >= 5 && identityKey(employee.dni) === dniKey) reasons.push("DNI");
+    if (emailKey && contactEmailKey(employee.email) === emailKey) reasons.push("email");
+    if (phoneKey && phoneLoginKey(employee.phone) === phoneKey) reasons.push("telefono");
+    if (nameKey.length >= 6 && identityKey(employee.name) === nameKey) reasons.push("nombre");
+    if (reasons.length) {
+      addDuplicateMatch(matches, {
+        type: "employee",
+        id: employee.id,
+        label: employee.name,
+        meta: [employee.role, employee.dni, employee.email || employee.phone].filter(Boolean).join(" · "),
+        reasons,
+        tone: reasons.includes("DNI") ? "red" : "amber"
+      });
+    }
+  }
+  for (const user of state.data.users || []) {
+    const reasons = [];
+    if (emailKey && contactEmailKey(user.email) === emailKey) reasons.push("email de acceso");
+    if (phoneKey && phoneLoginKey(user.phone) === phoneKey) reasons.push("telefono de acceso");
+    if (!reasons.length) continue;
+    addDuplicateMatch(matches, {
+      type: "user",
+      id: user.id,
+      label: user.name,
+      meta: `${user.role === "employee" ? "Portal empleado" : "Usuario administracion"} · ${user.email || user.phone || user.id}`,
+      reasons,
+      tone: user.role === "employee" ? "amber" : "red"
+    });
+  }
+  return sortDuplicateMatches(matches);
+}
+
+function duplicateAction(match) {
+  const label = match.type === "client" ? "Ver cliente" : match.type === "employee" ? "Ver operario" : "Ver usuario";
+  return `<button class="btn compact" type="button" data-open-duplicate="${esc(match.type)}:${esc(match.id)}">${icon("search")} ${label}</button>`;
+}
+
+function duplicateMatchRows(matches) {
+  return `
+    <div class="duplicate-match-list">
+      ${matches.slice(0, 6).map((match) => `
+        <div class="duplicate-match-row ${esc(match.tone || "amber")}">
+          <div>
+            <strong>${esc(match.label || "Coincidencia")}</strong>
+            <small>${esc((match.reasons || []).join(", "))}${match.meta ? ` · ${esc(match.meta)}` : ""}</small>
+          </div>
+          ${duplicateAction(match)}
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function duplicateGuardContent(kind, matches = []) {
+  if (!matches.length) {
+    return `
+      <div>
+        <span class="tag green">Control duplicados</span>
+        <strong>Sin coincidencias detectadas</strong>
+        <small>Al escribir telefono, email, DNI o CIF te avisaremos si ya existe una ficha.</small>
+      </div>
+    `;
+  }
+  const redMatches = matches.filter((match) => match.tone === "red").length;
+  return `
+    <div>
+      <span class="tag ${redMatches ? "red" : "amber"}">Revisar antes de guardar</span>
+      <strong>${matches.length} posible${matches.length === 1 ? "" : "s"} duplicado${matches.length === 1 ? "" : "s"}</strong>
+      <small>${kind === "employee" ? "Evita crear otro portal o reutilizar contactos de administracion." : "Evita crear otra ficha para la misma empresa o contacto."}</small>
+    </div>
+    ${duplicateMatchRows(matches)}
+  `;
+}
+
+function duplicateGuardPanel(kind) {
+  return `<div class="duplicate-guard ok" data-duplicate-panel>${duplicateGuardContent(kind, [])}</div>`;
+}
+
+function updateDuplicateGuard(form) {
+  const panel = form?.querySelector?.("[data-duplicate-panel]");
+  if (!panel) return;
+  const kind = form.dataset.duplicateKind;
+  const matches = kind === "employee" ? employeeDuplicateMatches(form) : kind === "client" ? clientDuplicateMatches(form) : [];
+  panel.className = `duplicate-guard ${matches.length ? "warn" : "ok"} ${matches.some((match) => match.tone === "red") ? "danger" : ""}`;
+  panel.innerHTML = duplicateGuardContent(kind, matches);
+}
+
+function updateDuplicateGuards() {
+  document.querySelectorAll("form[data-duplicate-kind]").forEach(updateDuplicateGuard);
+}
+
+function duplicateGroups(items, specs) {
+  const groups = [];
+  for (const spec of specs) {
+    const buckets = new Map();
+    for (const item of items || []) {
+      const key = spec.key(item);
+      if (!key) continue;
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(item);
+    }
+    for (const [key, groupItems] of buckets.entries()) {
+      if (groupItems.length > 1) groups.push({ label: spec.label, key, items: groupItems });
+    }
+  }
+  return groups.sort((a, b) => b.items.length - a.items.length || a.label.localeCompare(b.label));
+}
+
+function clientDuplicateGroups() {
+  return duplicateGroups(state.data.clients || [], [
+    { label: "CIF/NIF", key: (client) => {
+      const key = identityKey(client.tax_id);
+      return key.length >= 5 ? key : "";
+    } },
+    { label: "Email", key: (client) => contactEmailKey(client.email) },
+    { label: "Telefono", key: (client) => phoneLoginKey(client.phone) }
+  ]);
+}
+
+function employeeDuplicateGroups() {
+  return duplicateGroups(state.data.employees || [], [
+    { label: "DNI", key: (employee) => {
+      const key = identityKey(employee.dni);
+      return key.length >= 5 ? key : "";
+    } },
+    { label: "Email", key: (employee) => contactEmailKey(employee.email) },
+    { label: "Telefono", key: (employee) => phoneLoginKey(employee.phone) }
+  ]);
+}
+
+function duplicateOverviewPanel(kind, groups) {
+  if (!groups.length) return "";
+  const isClient = kind === "client";
+  const itemType = isClient ? "client" : "employee";
+  const title = isClient ? "Control de clientes duplicados" : "Control de operarios duplicados";
+  const detail = isClient
+    ? "Hay datos fiscales o contactos repetidos. Revisa antes de crear nuevas fichas."
+    : "Hay DNI, telefonos o emails repetidos. Revisa para evitar portales y fichajes confusos.";
+  return `
+    <section class="panel duplicate-overview">
+      <div class="panel-head">
+        <div>
+          <h2>${title}</h2>
+          <small class="muted">${esc(detail)}</small>
+        </div>
+        <span class="tag amber">${groups.length} grupo${groups.length === 1 ? "" : "s"}</span>
+      </div>
+      <div class="duplicate-overview-body">
+        ${groups.slice(0, 4).map((group) => `
+          <div class="duplicate-group-row">
+            <div>
+              <strong>${esc(group.label)}</strong>
+              <small>${esc(group.items.length)} fichas comparten ${esc(group.key)}</small>
+            </div>
+            <div class="duplicate-group-actions">
+              ${group.items.slice(0, 4).map((item) => `<button class="btn compact" type="button" data-open-duplicate="${itemType}:${esc(item.id)}">${esc(item.name || item.id)}</button>`).join("")}
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
 function contactActions({ phone = "", email = "", name = "MARFAN CREW", compact = false } = {}) {
   const whatsapp = whatsappPhone(phone);
   const safeEmail = String(email || "").trim();
@@ -663,6 +895,7 @@ async function renderAdmin(force = false) {
   queueMicrotask(() => {
     setupSignaturePads();
     updateEventDraftSummaries();
+    updateDuplicateGuards();
     window.scrollTo(0, 0);
   });
 }
@@ -1220,6 +1453,94 @@ function userOperationsHealthPanel(users, isSuper) {
   `;
 }
 
+function userQueueActionButton(item) {
+  const userId = esc(item.user.id);
+  if (item.action === "unlock") return `<button class="btn compact primary" type="button" data-unlock-user="${userId}">Desbloquear</button>`;
+  if (item.action === "review") return `<button class="btn compact primary" type="button" data-review-user="${userId}">Marcar revisado</button>`;
+  if (item.action === "reset") return `<button class="btn compact" type="button" data-reset-user="${userId}">Nueva clave</button>`;
+  if (item.action === "code") return `<button class="btn compact" type="button" data-access-code-user="${userId}">Generar codigo</button>`;
+  if (item.action === "sessions") return `<button class="btn compact" type="button" data-user-sessions="${userId}">Ver sesiones</button>`;
+  if (item.action === "activity") return `<button class="btn compact" type="button" data-user-activity="${userId}">Ver actividad</button>`;
+  return `<button class="btn compact" type="button" data-open-duplicate="user:${userId}">Ver usuario</button>`;
+}
+
+function userActionQueueItems(users) {
+  const items = [];
+  for (const user of users || []) {
+    const base = {
+      user,
+      meta: [user.role === "employee" ? "Empleado" : "Administracion", user.email || user.phone || user.id].filter(Boolean).join(" · ")
+    };
+    if (userIsLocked(user)) {
+      items.push({ ...base, priority: 100, tone: "red", action: "unlock", title: "Login bloqueado", detail: "Demasiados intentos fallidos o bloqueo vigente." });
+    }
+    if (userDeniedPermissionRisk(user)) {
+      items.push({ ...base, priority: 94, tone: "red", action: "activity", title: "Permisos denegados", detail: `${Number(user.deniedPermissionCount || 0)} intentos fuera de perfil en los ultimos dias.` });
+    }
+    if (user.active && user.role !== "employee" && userInactiveRisk(user)) {
+      items.push({ ...base, priority: 88, tone: "red", action: "activity", title: "Administrador inactivo", detail: "Cuenta activa sin uso reciente. Revisar o bloquear acceso." });
+    }
+    if (user.active && user.role !== "employee" && userAccessReviewStale(user)) {
+      items.push({ ...base, priority: 82, tone: "amber", action: "review", title: "Acceso sin revision", detail: "Permisos pendientes de validacion periodica." });
+    }
+    if (user.active && user.role !== "employee" && userPasswordStale(user)) {
+      items.push({ ...base, priority: 76, tone: "amber", action: "reset", title: "Clave antigua", detail: "Conviene renovar credenciales y cerrar sesiones antiguas." });
+    }
+    if (user.recoveryPending) {
+      items.push({ ...base, priority: 72, tone: "amber", action: "code", title: "Recuperacion pendiente", detail: "Hay un codigo temporal abierto para este acceso." });
+    }
+    if (Number(user.activeSessionCount || 0) > 1 && user.role !== "employee") {
+      items.push({ ...base, priority: 66, tone: "blue", action: "sessions", title: "Varias sesiones abiertas", detail: `${Number(user.activeSessionCount || 0)} sesiones activas.` });
+    }
+    if (!user.email && !user.phone) {
+      items.push({ ...base, priority: 62, tone: "red", action: "activity", title: "Sin contacto", detail: "No se puede recuperar acceso ni contactar desde la ficha." });
+    }
+    if (user.role === "employee" && !user.employeeId) {
+      items.push({ ...base, priority: 58, tone: "amber", action: "activity", title: "Portal sin ficha", detail: "Usuario empleado no vinculado a una ficha operativa." });
+    }
+    if (userHasCustomPermissions(user)) {
+      items.push({ ...base, priority: 50, tone: "blue", action: "activity", title: "Permisos a medida", detail: "Conviene convertirlo a un perfil operativo para mantenimiento." });
+    }
+  }
+  return items.sort((a, b) =>
+    b.priority - a.priority ||
+    String(a.user.name || "").localeCompare(String(b.user.name || ""))
+  );
+}
+
+function userActionQueue(users, isSuper) {
+  if (!isSuper) return "";
+  const items = userActionQueueItems(users);
+  const visible = items.slice(0, 7);
+  return `
+    <div class="user-action-queue">
+      <div class="queue-head">
+        <div>
+          <span class="tag ${items.length ? "amber" : "green"}">Bandeja operativa</span>
+          <strong>${items.length}</strong>
+          <small>${items.length ? "acciones priorizadas para cerrar riesgos" : "sin tareas pendientes de usuarios"}</small>
+        </div>
+        <button class="btn compact" type="button" data-user-security-filter="attention" ${items.length ? "" : "disabled"}>Ver todas</button>
+      </div>
+      <div class="queue-list">
+        ${visible.map((item) => `
+          <div class="queue-row ${esc(item.tone)}">
+            <span class="queue-priority">${esc(item.priority)}</span>
+            <div>
+              <strong>${esc(item.title)} · ${esc(item.user.name || "Usuario")}</strong>
+              <small>${esc(item.detail)}<br />${esc(item.meta)}</small>
+            </div>
+            <div class="queue-actions">
+              ${userQueueActionButton(item)}
+              <button class="btn compact ghost" type="button" data-open-duplicate="user:${esc(item.user.id)}">Ficha</button>
+            </div>
+          </div>
+        `).join("") || `<div class="empty compact-empty">Todo limpio. No hay intervenciones prioritarias.</div>`}
+      </div>
+    </div>
+  `;
+}
+
 function userSecuritySummary(user) {
   const locked = userIsLocked(user);
   const sessions = Number(user.activeSessionCount || 0);
@@ -1350,6 +1671,7 @@ function userCommandCenter(users, isSuper) {
         <button class="attention-tile ${quality.length ? "hot" : ""} ${filters.security === "quality" ? "active" : ""}" type="button" data-user-security-filter="quality" aria-pressed="${filters.security === "quality"}"><span>${quality.length}</span><strong>Calidad ficha</strong></button>
       </div>
       ${userOperationsHealthPanel(users, isSuper)}
+      ${userActionQueue(users, isSuper)}
       ${userPortalHealthPanel(users, isSuper)}
     </section>
   `;
@@ -2608,8 +2930,9 @@ function deletedEventsEmptyState() {
 
 function clientForm() {
   return `
-    <form class="panel inspector" data-form="client">
+    <form class="panel inspector" data-form="client" data-duplicate-kind="client">
       <h2>Nuevo cliente</h2>
+      ${duplicateGuardPanel("client")}
       <div class="field"><label>Cliente</label><input name="name" required /></div>
       <div class="field"><label>Razon social</label><input name="legalName" /></div>
       <div class="field"><label>CIF/NIF</label><input name="taxId" /></div>
@@ -2718,6 +3041,7 @@ function clientsView() {
       <div><h1>Clientes</h1><p>Ficha fiscal, contactos, historico y rentabilidad.</p></div>
       <button class="btn primary" data-new-client>${icon("plus")} Nuevo cliente</button>
     </div>
+    ${duplicateOverviewPanel("client", clientDuplicateGroups())}
     ${clientImportPanel()}
     <section class="split-grid">
       <div class="panel">
@@ -2813,8 +3137,9 @@ function importsView() {
 
 function employeeForm() {
   return `
-    <form class="panel inspector" data-form="employee">
+    <form class="panel inspector" data-form="employee" data-duplicate-kind="employee">
       <h2>Nuevo operario</h2>
+      ${duplicateGuardPanel("employee")}
       <div class="field"><label>Nombre</label><input name="name" required /></div>
       <div class="field"><label>Rol</label><select name="role"><option>Montaje</option><option>Carga y descarga</option><option>Tecnico</option><option>Runner</option><option>Jefe de equipo</option><option>Carretillero</option><option>Limpieza</option><option>Auxiliar produccion</option></select></div>
       <div class="leader-toggle">
@@ -3012,6 +3337,7 @@ function employeesView() {
       <div><h1>Operarios</h1><p>Roles, tarifas, documentacion, disponibilidad e historico.</p></div>
       <button class="btn primary" data-new-employee>${icon("plus")} Nuevo operario</button>
     </div>
+    ${duplicateOverviewPanel("employee", employeeDuplicateGroups())}
     ${employeeImportPanel()}
     <section class="split-grid">
       <div class="panel">
@@ -5627,6 +5953,24 @@ async function handleClick(event) {
     return renderAdmin();
   }
 
+  if (target.dataset.openDuplicate) {
+    const [type, id] = String(target.dataset.openDuplicate).split(":");
+    state.createScreen = null;
+    if (type === "client") {
+      state.view = "clients";
+      state.selectedClientId = id;
+      state.editClientId = null;
+    } else if (type === "employee") {
+      state.view = "employees";
+      state.selectedEmployeeId = id;
+      state.editEmployeeId = null;
+    } else if (type === "user") {
+      state.view = "users";
+      state.userFilters = { search: id, role: "all", security: "all" };
+    }
+    return renderAdmin();
+  }
+
   if (target.dataset.selectEmployee) {
     state.createScreen = null;
     state.selectedEmployeeId = target.dataset.selectEmployee;
@@ -6258,6 +6602,8 @@ function handleInput(event) {
   if (target?.closest?.("[data-report-filters]")) {
     syncReportFiltersFromDom();
   }
+  const duplicateForm = target?.closest?.("form[data-duplicate-kind]");
+  if (duplicateForm) updateDuplicateGuard(duplicateForm);
   if (target?.dataset?.userFilter === "search") {
     state.userFilters.search = target.value;
     renderAdmin();
