@@ -633,6 +633,17 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_action_created
         ON audit_logs(actor_user_id, action, created_at);
     `
+  },
+  {
+    version: 23,
+    name: "recoverable-event-delete",
+    sql: `
+      ALTER TABLE events ADD COLUMN deleted_at TEXT;
+      ALTER TABLE events ADD COLUMN deleted_by_user_id TEXT;
+      ALTER TABLE events ADD COLUMN deleted_reason TEXT;
+
+      CREATE INDEX IF NOT EXISTS idx_events_deleted_at ON events(deleted_at);
+    `
   }
 ];
 
@@ -755,7 +766,7 @@ const PRODUCTION_SEED_TABLES = [
       "role_price_total", "night_price_total", "distance_price_total", "service_price",
       "google_calendar_uid", "google_calendar_source", "google_calendar_event_id",
       "google_calendar_html_link", "google_sync_status", "google_sync_error", "google_synced_at",
-      "location_source"
+      "location_source", "deleted_at", "deleted_by_user_id", "deleted_reason"
     ]
   },
   { table: "event_requirements", columns: ["id", "event_id", "role", "count"] },

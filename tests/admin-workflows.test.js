@@ -1836,12 +1836,44 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     });
     assert.equal(superDeleteEvent.status, 200);
     assert.equal(superDeleteEvent.json.deletedEventId, eventForDeletion.json.event.id);
+    assert.equal(superDeleteEvent.json.archived, true);
+    assert.equal(superDeleteEvent.json.restorable, true);
     assert.equal(superDeleteEvent.json.counts.deliveryNotes, 1);
     const deletedEventLookup = await jsonRequest(baseUrl, `/api/events/${eventForDeletion.json.event.id}`, { token });
     assert.equal(deletedEventLookup.status, 404);
+    const activeEventsAfterDelete = await jsonRequest(baseUrl, "/api/events", { token });
+    assert.equal(activeEventsAfterDelete.status, 200);
+    assert.equal(activeEventsAfterDelete.json.events.some((item) => item.id === eventForDeletion.json.event.id), false);
+    const deletedEventsAsAdmin = await jsonRequest(baseUrl, "/api/events?deleted=only", { token });
+    assert.equal(deletedEventsAsAdmin.status, 403);
+    const deletedEvents = await jsonRequest(baseUrl, "/api/events?deleted=only", { token: superToken });
+    assert.equal(deletedEvents.status, 200);
+    const deletedEventRow = deletedEvents.json.events.find((item) => item.id === eventForDeletion.json.event.id);
+    assert.ok(deletedEventRow);
+    assert.ok(deletedEventRow.deleted_at);
     const deleteAudit = await jsonRequest(baseUrl, `/api/audit-logs?action=event_deleted&entity=event`, { token: superToken });
     assert.equal(deleteAudit.status, 200);
     assert.equal(deleteAudit.json.logs.some((log) => log.entity_id === eventForDeletion.json.event.id), true);
+    const adminRestoreEvent = await jsonRequest(baseUrl, `/api/events/${eventForDeletion.json.event.id}/restore`, {
+      method: "POST",
+      token
+    });
+    assert.equal(adminRestoreEvent.status, 403);
+    const superRestoreEvent = await jsonRequest(baseUrl, `/api/events/${eventForDeletion.json.event.id}/restore`, {
+      method: "POST",
+      token: superToken
+    });
+    assert.equal(superRestoreEvent.status, 200);
+    assert.equal(superRestoreEvent.json.restoredEventId, eventForDeletion.json.event.id);
+    assert.equal(superRestoreEvent.json.event.deliveryNote.status, "borrador");
+    const restoredEventLookup = await jsonRequest(baseUrl, `/api/events/${eventForDeletion.json.event.id}`, { token });
+    assert.equal(restoredEventLookup.status, 200);
+    assert.equal(restoredEventLookup.json.event.id, eventForDeletion.json.event.id);
+    const deletedEventsAfterRestore = await jsonRequest(baseUrl, "/api/events?deleted=only", { token: superToken });
+    assert.equal(deletedEventsAfterRestore.json.events.some((item) => item.id === eventForDeletion.json.event.id), false);
+    const restoreAudit = await jsonRequest(baseUrl, `/api/audit-logs?action=event_restored&entity=event`, { token: superToken });
+    assert.equal(restoreAudit.status, 200);
+    assert.equal(restoreAudit.json.logs.some((log) => log.entity_id === eventForDeletion.json.event.id), true);
 
     const throwawayClient = await jsonRequest(baseUrl, "/api/clients", {
       method: "POST",

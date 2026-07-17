@@ -1055,6 +1055,7 @@ function detectAttendanceIncidents({ date = formatDate(), actor = null, now = ne
      JOIN employees ON employees.id = assignments.employee_id
      WHERE assignments.status != 'bloqueado'
        AND events.date = ?
+       AND events.deleted_at IS NULL
      ORDER BY events.start_time ASC, employees.name ASC`,
     [date]
   );
@@ -2243,12 +2244,13 @@ function eventPerformed(event, today = formatDate()) {
   return Boolean(event && (event.status === "finalizado" || String(event.date) < today));
 }
 
-function eventWithDeliveryState(eventId) {
+function eventWithDeliveryState(eventId, { includeDeleted = false } = {}) {
+  const deletedClause = includeDeleted ? "" : " AND events.deleted_at IS NULL";
   return get(
     `SELECT events.*, COALESCE(delivery_notes.locked, 0) AS delivery_note_locked
      FROM events
      LEFT JOIN delivery_notes ON delivery_notes.event_id = events.id
-     WHERE events.id = ?`,
+     WHERE events.id = ?${deletedClause}`,
     [eventId]
   );
 }
@@ -2472,7 +2474,7 @@ function normalizeRequirements(input, fallbackTotal = 1) {
 }
 
 function pricingForEvent(eventId, eventOverride = {}) {
-  const event = eventOverride.id ? eventOverride : get("SELECT * FROM events WHERE id = ?", [eventId]);
+  const event = eventOverride.id ? eventOverride : get("SELECT * FROM events WHERE id = ? AND deleted_at IS NULL", [eventId]);
   if (!event) return null;
   const requirements = all("SELECT role, count FROM event_requirements WHERE event_id = ?", [eventId]);
   return calculateServicePricing({
@@ -2513,7 +2515,7 @@ function updateEventPricing(eventId, pricing) {
 }
 
 function repriceOpenEvents() {
-  for (const event of all("SELECT id FROM events WHERE status != 'finalizado'")) {
+  for (const event of all("SELECT id FROM events WHERE status != 'finalizado' AND deleted_at IS NULL")) {
     updateEventPricing(event.id, pricingForEvent(event.id));
   }
 }
@@ -2671,7 +2673,7 @@ function syncStoredDocumentStatuses(actor = null) {
 }
 
 function eventFinancials(eventId) {
-  const event = get("SELECT * FROM events WHERE id = ?", [eventId]);
+  const event = get("SELECT * FROM events WHERE id = ? AND deleted_at IS NULL", [eventId]);
   if (!event) return null;
   const hours = hoursBetween(event.start_time, event.end_time);
   const labour = get(
@@ -2978,7 +2980,7 @@ function ensureAllowanceEventEditable(eventId) {
     `SELECT events.*, COALESCE(delivery_notes.locked, 0) AS delivery_note_locked
      FROM events
      LEFT JOIN delivery_notes ON delivery_notes.event_id = events.id
-     WHERE events.id = ?`,
+     WHERE events.id = ? AND events.deleted_at IS NULL`,
     [eventId]
   );
   if (!event) {
@@ -3004,7 +3006,7 @@ function ensureTimeEntryEventEditable(eventId) {
     `SELECT events.*, COALESCE(delivery_notes.locked, 0) AS delivery_note_locked
      FROM events
      LEFT JOIN delivery_notes ON delivery_notes.event_id = events.id
-     WHERE events.id = ?`,
+     WHERE events.id = ? AND events.deleted_at IS NULL`,
     [eventId]
   );
   if (!event) {
@@ -3216,9 +3218,14 @@ function enrichEvent(row) {
   };
 }
 
-function listEvents({ from, to, search, clientId, employeeId, status } = {}) {
+function listEvents({ from, to, search, clientId, employeeId, status, deleted = "active" } = {}) {
   const params = [];
   const where = [];
+  if (deleted === "only") {
+    where.push("events.deleted_at IS NOT NULL");
+  } else if (deleted !== "include") {
+    where.push("events.deleted_at IS NULL");
+  }
   if (from) {
     where.push("events.date >= ?");
     params.push(from);
@@ -3281,7 +3288,7 @@ function assignmentRowsForEvent(event) {
 }
 
 function updateEventStatus(eventId) {
-  const event = get("SELECT * FROM events WHERE id = ?", [eventId]);
+  const event = get("SELECT * FROM events WHERE id = ? AND deleted_at IS NULL", [eventId]);
   if (!event || event.status === "finalizado") return event?.status;
   const assigned = get("SELECT COUNT(*) AS count FROM assignments WHERE event_id = ? AND status != 'bloqueado'", [eventId]).count;
   let status = "completo";
@@ -3633,14 +3640,15 @@ function livePayload(date = formatDate(), attendanceDetection = null) {
   };
 }
 
-function eventDetail(eventId) {
+function eventDetail(eventId, { includeDeleted = false } = {}) {
+  const deletedClause = includeDeleted ? "" : " AND events.deleted_at IS NULL";
   const event = enrichEvent(
     get(
       `SELECT events.*, clients.name AS client_name, employees.name AS team_leader_name
        FROM events
        JOIN clients ON clients.id = events.client_id
        LEFT JOIN employees ON employees.id = events.team_leader_id
-       WHERE events.id = ?`,
+       WHERE events.id = ?${deletedClause}`,
       [eventId]
     )
   );
@@ -3664,9 +3672,13 @@ function eventDetail(eventId) {
   return event;
 }
 
-function eventDetailByGoogleUid(googleUid) {
-  const row = get("SELECT id FROM events WHERE google_calendar_uid = ?", [googleUid]);
-  return row ? eventDetail(row.id) : null;
+function eventDetailByGoogleUid(googleUid, { includeDeleted = false } = {}) {
+  const row = get(
+    `SELECT id FROM events
+     WHERE google_calendar_uid = ?${includeDeleted ? "" : " AND deleted_at IS NULL"}`,
+    [googleUid]
+  );
+  return row ? eventDetail(row.id, { includeDeleted }) : null;
 }
 
 const ROLE_DOCUMENT_REQUIREMENTS = [
@@ -3838,7 +3850,7 @@ function missingEventRoles(eventId) {
 }
 
 function plannerRecommendations(eventId) {
-  const event = get("SELECT * FROM events WHERE id = ?", [eventId]);
+  const event = get("SELECT * FROM events WHERE id = ? AND deleted_at IS NULL", [eventId]);
   if (!event) return [];
   const targetRoles = missingEventRoles(eventId);
   const assigned = new Set(
@@ -4036,8 +4048,29 @@ function importGoogleCalendarEvent(body, actor) {
     error.status = 400;
     throw error;
   }
-  const existing = eventDetailByGoogleUid(googleUid);
-  if (existing) return { event: existing, created: false };
+  const existing = eventDetailByGoogleUid(googleUid, { includeDeleted: true });
+  if (existing) {
+    if (existing.deleted_at) {
+      run(
+        `UPDATE events
+         SET deleted_at = NULL,
+             deleted_by_user_id = NULL,
+             deleted_reason = NULL
+         WHERE id = ?`,
+        [existing.id]
+      );
+      audit(actor, "event_restored", "event", existing.id, {
+        source: "google_import",
+        googleUid
+      });
+      createEventSnapshot(existing.id, "event_restored", actor, {
+        source: "google_import",
+        googleUid
+      });
+      return { event: eventDetail(existing.id), created: false, restored: true };
+    }
+    return { event: existing, created: false };
+  }
 
   const clientId = upsertGoogleCalendarClient();
   const id = randomId("evt");
@@ -6943,6 +6976,7 @@ async function handleApi(req, res, url) {
       `SELECT id
        FROM events
        WHERE date >= ?
+         AND deleted_at IS NULL
          AND (
            google_sync_status IS NULL
            OR google_sync_status IN ('pending', 'pending_auth', 'error', 'imported', 'disabled')
@@ -7585,7 +7619,14 @@ async function handleApi(req, res, url) {
 
   if (pathname === "/api/events" && method === "GET") {
     requireAdmin(user);
-    return sendJson(res, 200, { events: listEvents({ search: url.searchParams.get("search") }) });
+    const deleted = url.searchParams.get("deleted");
+    if (deleted === "only" || deleted === "include") requireSuperAdmin(user);
+    return sendJson(res, 200, {
+      events: listEvents({
+        search: url.searchParams.get("search"),
+        deleted: deleted === "only" ? "only" : deleted === "include" ? "include" : "active"
+      })
+    });
   }
 
   if (pathname === "/api/events" && method === "POST") {
@@ -7756,9 +7797,6 @@ async function handleApi(req, res, url) {
     requireSuperAdmin(user);
     const event = eventDetail(eventMatch[1]);
     if (!event) return sendJson(res, 404, { error: "Evento no encontrado" });
-    const documentFiles = listEventDocuments({ eventId: event.id })
-      .map((document) => documentFilePath(document))
-      .filter(Boolean);
     const counts = {
       assignments: get("SELECT COUNT(*) AS count FROM assignments WHERE event_id = ?", [event.id]).count,
       timeEntries: get("SELECT COUNT(*) AS count FROM time_entries WHERE event_id = ?", [event.id]).count,
@@ -7779,10 +7817,58 @@ async function handleApi(req, res, url) {
         googleCalendarUid: event.google_calendar_uid || "",
         counts
       });
-      run("DELETE FROM events WHERE id = ?", [event.id]);
+      createEventSnapshot(event.id, "event_deleted", user, {
+        recoverable: true,
+        counts
+      });
+      run(
+        `UPDATE events
+         SET deleted_at = CURRENT_TIMESTAMP,
+             deleted_by_user_id = ?,
+             deleted_reason = ?
+         WHERE id = ?`,
+        [user.id, "Eliminado desde administracion", event.id]
+      );
     });
-    for (const filePath of documentFiles) removeDocumentStorageFile(filePath);
-    return sendJson(res, 200, { ok: true, deletedEventId: event.id, counts });
+    return sendJson(res, 200, {
+      ok: true,
+      archived: true,
+      restorable: true,
+      deletedEventId: event.id,
+      counts,
+      event: eventDetail(event.id, { includeDeleted: true })
+    });
+  }
+
+  const eventRestoreMatch = pathname.match(/^\/api\/events\/([^/]+)\/restore$/);
+  if (eventRestoreMatch && method === "POST") {
+    requireSuperAdmin(user);
+    const event = eventDetail(eventRestoreMatch[1], { includeDeleted: true });
+    if (!event) return sendJson(res, 404, { error: "Evento no encontrado" });
+    if (!event.deleted_at) return sendJson(res, 409, { error: "El evento no esta eliminado" });
+    transaction(() => {
+      run(
+        `UPDATE events
+         SET deleted_at = NULL,
+             deleted_by_user_id = NULL,
+             deleted_reason = NULL
+         WHERE id = ?`,
+        [event.id]
+      );
+      audit(user, "event_restored", "event", event.id, {
+        name: event.name,
+        date: event.date,
+        deletedAt: event.deleted_at
+      });
+      createEventSnapshot(event.id, "event_restored", user, {
+        deletedAt: event.deleted_at
+      });
+    });
+    return sendJson(res, 200, {
+      ok: true,
+      restoredEventId: event.id,
+      event: eventDetail(event.id)
+    });
   }
 
   const eventSnapshotsMatch = pathname.match(/^\/api\/events\/([^/]+)\/snapshots$/);
@@ -7798,7 +7884,7 @@ async function handleApi(req, res, url) {
   const closeEventMatch = pathname.match(/^\/api\/events\/([^/]+)\/close$/);
   if (closeEventMatch && method === "POST") {
     requireAdmin(user);
-    const event = get("SELECT * FROM events WHERE id = ?", [closeEventMatch[1]]);
+    const event = get("SELECT * FROM events WHERE id = ? AND deleted_at IS NULL", [closeEventMatch[1]]);
     if (!event) return sendJson(res, 404, { error: "Evento no encontrado" });
     run("UPDATE events SET status = 'finalizado', closed_at = CURRENT_TIMESTAMP WHERE id = ?", [event.id]);
     ensureDraftDeliveryNote(event);
@@ -8484,7 +8570,7 @@ async function handleApi(req, res, url) {
   if (recommendationsMatch && method === "GET") {
     requireAdmin(user);
     const eventId = url.searchParams.get("eventId");
-    const event = eventId ? get("SELECT * FROM events WHERE id = ?", [eventId]) : null;
+    const event = eventId ? get("SELECT * FROM events WHERE id = ? AND deleted_at IS NULL", [eventId]) : null;
     if (eventPerformed(event)) {
       return sendJson(res, 409, { error: "Evento efectuado: el equipo queda en modo revision" });
     }
@@ -8494,7 +8580,7 @@ async function handleApi(req, res, url) {
   if (pathname === "/api/time-entries/clock" && method === "POST") {
     requireUser(user);
     const body = await readBody(req);
-    const event = get("SELECT * FROM events WHERE id = ?", [body.eventId]);
+    const event = get("SELECT * FROM events WHERE id = ? AND deleted_at IS NULL", [body.eventId]);
     if (!event) return sendJson(res, 404, { error: "Evento no encontrado" });
     let employeeId = body.employeeId;
     if (user.role === "employee") {
@@ -8990,7 +9076,7 @@ async function handleApi(req, res, url) {
   const eventDocumentsMatch = pathname.match(/^\/api\/events\/([^/]+)\/documents$/);
   if (eventDocumentsMatch && method === "POST") {
     requireAdmin(user);
-    const event = get("SELECT id FROM events WHERE id = ?", [eventDocumentsMatch[1]]);
+    const event = get("SELECT id FROM events WHERE id = ? AND deleted_at IS NULL", [eventDocumentsMatch[1]]);
     if (!event) return sendJson(res, 404, { error: "Evento no encontrado" });
     const body = await readBody(req);
     const id = randomId("edoc");
@@ -9098,7 +9184,7 @@ async function handleApi(req, res, url) {
        JOIN clients ON clients.id = events.client_id
        LEFT JOIN employees leaders ON leaders.id = events.team_leader_id
        LEFT JOIN delivery_notes ON delivery_notes.event_id = events.id
-       WHERE assignments.employee_id = ? AND assignments.status != 'bloqueado'
+       WHERE assignments.employee_id = ? AND assignments.status != 'bloqueado' AND events.deleted_at IS NULL
     `;
     const upcomingServicesRaw = all(
       `${serviceSql} AND events.date >= ? AND events.status != 'finalizado'

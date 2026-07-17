@@ -12,6 +12,7 @@ const state = {
   employeeServiceDate: todayIso(),
   selectedEventId: null,
   selectedEventSnapshotId: null,
+  eventTrashMode: false,
   assignmentEventId: null,
   assignmentCandidateId: null,
   editEventId: null,
@@ -587,12 +588,13 @@ async function loadAdminData(force = false) {
     : needsRoles
       ? api("/api/work-roles").then((result) => ({ settings: {}, roles: result.roles || [] }))
       : Promise.resolve({ settings: {}, roles: [] });
-  const [dashboard, live, clients, employees, events, calendar, backups, incidents, availability, documents, timeEntries, finance, allowances, settings, users, imports, auditLogs] = await Promise.all([
+  const [dashboard, live, clients, employees, events, deletedEvents, calendar, backups, incidents, availability, documents, timeEntries, finance, allowances, settings, users, imports, auditLogs] = await Promise.all([
     userCan("dashboard") ? api("/api/dashboard") : Promise.resolve(emptyDashboard),
     userCan("live") ? api("/api/live") : Promise.resolve(emptyLive),
     needsClients ? api("/api/clients") : Promise.resolve({ clients: [] }),
     needsEmployees ? api("/api/employees") : Promise.resolve({ employees: [] }),
     needsEvents ? api("/api/events") : Promise.resolve({ events: [] }),
+    needsEvents && state.user.role === "super_admin" ? api("/api/events?deleted=only") : Promise.resolve({ events: [] }),
     userCan("calendar") ? api("/api/calendar") : Promise.resolve({ events: [], googleStatus: {} }),
     userCan("backups") ? api("/api/backups") : Promise.resolve({ backups: [], automation: {} }),
     userCan("incidents") ? api("/api/incidents") : Promise.resolve({ incidents: [] }),
@@ -606,13 +608,13 @@ async function loadAdminData(force = false) {
     userCan("imports") ? api("/api/imports") : Promise.resolve({ imports: [] }),
     state.user.role === "super_admin" ? api("/api/audit-logs") : Promise.resolve({ logs: [] })
   ]);
-  state.data = { dashboard, live, clients: clients.clients, employees: employees.employees, events: events.events, calendarEvents: calendar.events, googleStatus: calendar.googleStatus, backups: backups.backups, backupAutomation: backups.automation, incidents: incidents.incidents, incidentDetection: incidents.attendanceDetection, availability: availability.availability, documents: documents.documents, documentCompliance: documents.compliance, timeEntries: timeEntries.entries, finance: finance.finance, allowances: allowances.allowances, settings: settings.settings, roles: settings.roles, users: users.users, imports: imports.imports, auditLogs: auditLogs.logs };
+  state.data = { dashboard, live, clients: clients.clients, employees: employees.employees, events: events.events, deletedEvents: deletedEvents.events, calendarEvents: calendar.events, googleStatus: calendar.googleStatus, backups: backups.backups, backupAutomation: backups.automation, incidents: incidents.incidents, incidentDetection: incidents.attendanceDetection, availability: availability.availability, documents: documents.documents, documentCompliance: documents.compliance, timeEntries: timeEntries.entries, finance: finance.finance, allowances: allowances.allowances, settings: settings.settings, roles: settings.roles, users: users.users, imports: imports.imports, auditLogs: auditLogs.logs };
   state.selectedEventId ||= dashboard.live[0]?.id || events.events[0]?.id;
   state.assignmentEventId ||= dashboard.live[0]?.id || events.events[0]?.id;
 }
 
 async function loadSelectedEventSnapshots(force = false) {
-  const event = (state.data.events || []).find((item) => item.id === state.selectedEventId);
+  const event = [...(state.data.events || []), ...(state.data.deletedEvents || [])].find((item) => item.id === state.selectedEventId);
   if (!event) return;
   if (!force && state.eventSnapshots[event.id]) return;
   try {
@@ -1633,6 +1635,7 @@ function auditActionLabel(action) {
     event_closed: "Evento cerrado",
     event_duplicated: "Evento duplicado",
     event_deleted: "Evento eliminado",
+    event_restored: "Evento restaurado",
     client_created: "Cliente creado",
     client_updated: "Cliente actualizado",
     client_archived: "Cliente eliminado con historico",
@@ -1683,6 +1686,7 @@ function auditActionLabel(action) {
 }
 
 function auditTone(action) {
+  if (action.includes("restored") || action.includes("activated")) return "green";
   if (action.includes("deleted") || action.includes("deactivated") || action.includes("restore")) return "red";
   if (action.includes("backup") || action.includes("signed") || action.includes("login")) return "green";
   if (action.includes("updated") || action.includes("corrected")) return "blue";
@@ -1751,7 +1755,10 @@ function cardTemplate(card) {
   `;
 }
 
-function eventsTable(events) {
+function eventsTable(events, { deleted = false } = {}) {
+  if (!events.length) {
+    return `<div class="empty">${deleted ? "No hay eventos en la papelera." : "Todavia no hay eventos en esta vista."}</div>`;
+  }
   return `
     <div class="table-wrap">
       <table class="data-table">
@@ -1776,7 +1783,9 @@ function eventsTable(events) {
               <td>
                 <div class="table-actions">
                   <button class="btn compact" data-select-event="${event.id}">${icon("search")} Ver</button>
-                  ${assignmentEventLocked(event) ? "" : `<button class="btn compact primary" data-edit-event="${event.id}">${icon("pen")} Editar</button>`}
+                  ${deleted
+                    ? `<button class="btn compact primary" data-restore-event="${event.id}">${icon("refresh")} Restaurar</button>`
+                    : assignmentEventLocked(event) ? "" : `<button class="btn compact primary" data-edit-event="${event.id}">${icon("pen")} Editar</button>`}
                 </div>
               </td>
             </tr>
@@ -2120,6 +2129,7 @@ function eventInspector(event) {
     `;
   }
   if (state.editEventId === event.id) return eventEditForm(event);
+  if (event.deleted_at) return deletedEventInspector(event);
   const locked = assignmentEventLocked(event);
   const canDeleteEvent = state.user?.role === "super_admin";
   return `
@@ -2167,6 +2177,27 @@ function eventInspector(event) {
       <button class="btn">${icon("chart")} Rentabilidad</button>
       ${canDeleteEvent ? `<button class="btn red-outline event-danger-action" data-delete-event="${event.id}">${icon("trash")} Eliminar evento</button>` : ""}
     </div>
+  `;
+}
+
+function deletedEventInspector(event) {
+  return `
+    <div><span class="tag red">Eliminado</span></div>
+    <h2>${esc(event.name)}</h2>
+    <div class="muted">${esc(event.client_name)} · ${esc(event.location)}</div>
+    <div class="inspector-section">
+      <div class="role-row"><span>Fecha servicio</span><strong>${shortDate(event.date)}</strong></div>
+      <div class="role-row"><span>Horario</span><strong>${esc(event.start_time)} - ${esc(event.end_time)}</strong></div>
+      <div class="role-row"><span>Eliminado</span><strong>${esc(shortDateTime(event.deleted_at))}</strong></div>
+      <div class="role-row"><span>Personal</span><strong>${event.assigned_count} / ${event.required_total}</strong></div>
+      <div class="role-row"><span>Fichajes</span><strong>${event.clocked_count}</strong></div>
+      <div class="role-row"><span>Incidencias</span><strong>${event.incident_count}</strong></div>
+    </div>
+    <div class="inspector-section">
+      <p class="muted">Restaurar devolvera el evento al calendario, al listado operativo y conservara asignaciones, fichajes, incidencias, documentos y albaran.</p>
+      <button class="btn primary full" type="button" data-restore-event="${esc(event.id)}">${icon("refresh")} Restaurar evento</button>
+    </div>
+    ${eventHistoryPanel(event)}
   `;
 }
 
@@ -2504,19 +2535,36 @@ function updateEventDraftSummaries() {
 }
 
 function eventsView() {
-  const selected = state.data.events.find((event) => event.id === state.selectedEventId);
+  const activeEvents = state.data.events || [];
+  const deletedEvents = state.data.deletedEvents || [];
+  const showingDeleted = Boolean(state.eventTrashMode);
+  const visibleEvents = showingDeleted ? deletedEvents : activeEvents;
+  const selected = visibleEvents.find((event) => event.id === state.selectedEventId);
   return `
     <div class="page-head">
-      <div><h1>Eventos</h1><p>Crear, duplicar, editar y cerrar servicios.</p></div>
-      <button class="btn primary" data-new-event>${icon("plus")} Crear evento</button>
+      <div><h1>Eventos</h1><p>${showingDeleted ? "Recupera servicios eliminados por error." : "Crear, duplicar, editar y cerrar servicios."}</p></div>
+      <div class="filters-row">
+        ${state.user?.role === "super_admin" ? `<button class="btn ${showingDeleted ? "primary" : ""}" data-event-trash-toggle>${icon(showingDeleted ? "calendar" : "trash")} ${showingDeleted ? "Eventos activos" : `Eliminados (${deletedEvents.length})`}</button>` : ""}
+        ${showingDeleted ? "" : `<button class="btn primary" data-new-event>${icon("plus")} Crear evento</button>`}
+      </div>
     </div>
     <section class="split-grid">
       <div class="panel">
-        <div class="panel-head"><h2>Todos los eventos</h2></div>
-        ${eventsTable(state.data.events)}
+        <div class="panel-head"><h2>${showingDeleted ? "Eventos eliminados" : "Todos los eventos"}</h2></div>
+        ${eventsTable(visibleEvents, { deleted: showingDeleted })}
       </div>
-      ${selected ? `<aside class="panel inspector">${eventInspector(selected)}</aside>` : createEventForm()}
+      ${selected ? `<aside class="panel inspector">${eventInspector(selected)}</aside>` : showingDeleted ? deletedEventsEmptyState() : createEventForm()}
     </section>
+  `;
+}
+
+function deletedEventsEmptyState() {
+  return `
+    <aside class="panel inspector">
+      <span class="tag green">Papelera limpia</span>
+      <h2>Sin eventos eliminados</h2>
+      <p class="muted">Cuando elimines un evento, aparecera aqui para poder restaurarlo con todo su historial.</p>
+    </aside>
   `;
 }
 
@@ -5423,6 +5471,15 @@ async function handleClick(event) {
     return renderAdmin();
   }
 
+  if (target.dataset.eventTrashToggle !== undefined) {
+    state.eventTrashMode = !state.eventTrashMode;
+    const list = state.eventTrashMode ? (state.data.deletedEvents || []) : (state.data.events || []);
+    state.selectedEventId = list[0]?.id || null;
+    state.editEventId = null;
+    state.selectedEventSnapshotId = null;
+    return renderAdmin();
+  }
+
   if (target.dataset.eventSnapshot) {
     state.selectedEventSnapshotId =
       state.selectedEventSnapshotId === target.dataset.eventSnapshot ? null : target.dataset.eventSnapshot;
@@ -5493,6 +5550,7 @@ async function handleClick(event) {
   }
 
   if (target.dataset.newEvent !== undefined) {
+    state.eventTrashMode = false;
     state.selectedEventId = null;
     state.selectedEventSnapshotId = null;
     state.editEventId = null;
@@ -5572,6 +5630,7 @@ async function handleClick(event) {
   }
 
   if (target.dataset.editEvent) {
+    state.eventTrashMode = false;
     state.editEventId = target.dataset.editEvent;
     state.selectedEventId = target.dataset.editEvent;
     return renderAdmin();
@@ -5591,16 +5650,31 @@ async function handleClick(event) {
 
   if (target.dataset.deleteEvent) {
     const event = (state.data.events || []).find((item) => item.id === target.dataset.deleteEvent);
-    const confirmation = window.prompt(`Para eliminar "${event?.name || "este evento"}", escribe ELIMINAR`);
+    const confirmation = window.prompt(`Para mover "${event?.name || "este evento"}" a Eventos eliminados, escribe ELIMINAR`);
     if (confirmation !== "ELIMINAR") {
       return toast("Eliminacion cancelada");
     }
-    await api(`/api/events/${target.dataset.deleteEvent}`, { method: "DELETE" });
-    state.selectedEventId = null;
+    const result = await api(`/api/events/${target.dataset.deleteEvent}`, { method: "DELETE" });
+    state.eventTrashMode = true;
+    state.selectedEventId = result.deletedEventId || null;
     state.selectedEventSnapshotId = null;
     state.editEventId = null;
     state.assignmentEventId = null;
-    toast("Evento eliminado");
+    toast("Evento movido a eliminados. Puedes restaurarlo si fue un error.");
+    return renderAdmin(true);
+  }
+
+  if (target.dataset.restoreEvent) {
+    const event = (state.data.deletedEvents || []).find((item) => item.id === target.dataset.restoreEvent);
+    const confirmation = window.confirm(`Restaurar "${event?.name || "este evento"}" y devolverlo al calendario?`);
+    if (!confirmation) return toast("Restauracion cancelada");
+    const result = await api(`/api/events/${target.dataset.restoreEvent}/restore`, { method: "POST" });
+    state.eventTrashMode = false;
+    state.selectedEventId = result.event?.id || result.restoredEventId || null;
+    state.selectedEventSnapshotId = null;
+    state.editEventId = null;
+    state.assignmentEventId = result.event?.id || result.restoredEventId || null;
+    toast("Evento restaurado con toda su informacion");
     return renderAdmin(true);
   }
 

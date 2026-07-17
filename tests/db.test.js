@@ -26,13 +26,15 @@ test("new installations create schema and seed data once", () => {
 
   assert.equal(users, 4);
   assert.equal(events, 7);
-  assert.equal(migrations, 22);
+  assert.equal(migrations, 23);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('employees') WHERE name = 'shirt_size'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('documents') WHERE name = 'storage_path'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('delivery_notes') WHERE name = 'signature_image'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('events') WHERE name = 'google_calendar_event_id'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('events') WHERE name = 'google_sync_status'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('events') WHERE name = 'location_source'").count, 1);
+  assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('events') WHERE name = 'deleted_at'").count, 1);
+  assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'index' AND name = 'idx_events_deleted_at'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'event_documents'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'event_snapshots'").count, 1);
   assert.equal(dbModule.get("SELECT COUNT(*) AS count FROM pragma_table_info('event_snapshots') WHERE name = 'payload_hash'").count, 1);
