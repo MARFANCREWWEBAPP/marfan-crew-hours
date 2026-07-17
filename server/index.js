@@ -1598,6 +1598,73 @@ function importClean(value) {
   return text;
 }
 
+function identityKey(value) {
+  return importClean(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function duplicateConflictPayload(type, record, field) {
+  const label = type === "client" ? "cliente" : "operario";
+  return {
+    error: `Posible duplicado: ya existe un ${label} con ese ${field}`,
+    duplicate: {
+      type,
+      id: record.id,
+      name: record.name,
+      field
+    }
+  };
+}
+
+function clientDuplicateConflict({ clientId = "", name = "", legalName = "", taxId = "", email = "", phone = "" }) {
+  const cleanEmail = cleanContactEmail(email);
+  if (cleanEmail) {
+    const client = get(
+      "SELECT * FROM clients WHERE archived_at IS NULL AND lower(email) = ? AND id != ? LIMIT 1",
+      [cleanEmail, clientId]
+    );
+    if (client) return duplicateConflictPayload("client", client, "email");
+  }
+
+  const phoneKey = phoneLoginKey(phone);
+  if (phoneKey) {
+    const client = all(
+      "SELECT * FROM clients WHERE archived_at IS NULL AND id != ? AND phone IS NOT NULL AND trim(phone) != ''",
+      [clientId]
+    ).find((item) => phoneLoginKey(item.phone) === phoneKey);
+    if (client) return duplicateConflictPayload("client", client, "telefono");
+  }
+
+  const taxKey = identityKey(taxId);
+  if (taxKey.length >= 5) {
+    const client = all("SELECT * FROM clients WHERE archived_at IS NULL AND id != ?", [clientId])
+      .find((item) => identityKey(item.tax_id) === taxKey);
+    if (client) return duplicateConflictPayload("client", client, "CIF/NIF");
+  }
+
+  const names = [identityKey(name), identityKey(legalName)].filter((item) => item.length >= 6);
+  if (names.length) {
+    const client = all("SELECT * FROM clients WHERE archived_at IS NULL AND id != ?", [clientId])
+      .find((item) => {
+        const existingNames = [identityKey(item.name), identityKey(item.legal_name)].filter((value) => value.length >= 6);
+        return names.some((value) => existingNames.includes(value));
+      });
+    if (client) return duplicateConflictPayload("client", client, "nombre");
+  }
+  return null;
+}
+
+function employeeDuplicateConflict({ employeeId = "", dni = "" }) {
+  const dniKey = identityKey(dni);
+  if (dniKey.length < 5) return null;
+  const employee = all("SELECT * FROM employees WHERE archived_at IS NULL AND id != ?", [employeeId])
+    .find((item) => identityKey(item.dni) === dniKey);
+  return employee ? duplicateConflictPayload("employee", employee, "DNI") : null;
+}
+
 function importHeaderKey(value) {
   return importClean(value)
     .normalize("NFD")
@@ -5607,7 +5674,58 @@ function daysSinceTimestamp(value) {
   return Math.max(0, Math.floor((Date.now() - ms) / (24 * 60 * 60 * 1000)));
 }
 
-function securityReportRisk(user) {
+function addContactCollisionMember(groups, kind, value, member) {
+  const cleanValue = String(value || "").trim();
+  if (!cleanValue) return;
+  const key = `${kind}:${cleanValue}`;
+  if (!groups.has(key)) groups.set(key, { key, kind, value: cleanValue, members: [] });
+  const group = groups.get(key);
+  if (!group.members.some((item) => item.memberKey === member.memberKey)) group.members.push(member);
+}
+
+function userContactCollisionSignals(users) {
+  const groups = new Map();
+  for (const user of users || []) {
+    const ownerKey = `user:${user.id}`;
+    const base = {
+      type: "user",
+      id: user.id,
+      userId: user.id,
+      ownerKey,
+      label: user.name || user.id
+    };
+    addContactCollisionMember(groups, "email", cleanContactEmail(user.email), { ...base, memberKey: `user:${user.id}:email` });
+    addContactCollisionMember(groups, "telefono", phoneLoginKey(user.phone), { ...base, memberKey: `user:${user.id}:phone` });
+  }
+  const employees = all("SELECT id, user_id, name, email, phone FROM employees WHERE archived_at IS NULL");
+  for (const employee of employees) {
+    const ownerKey = employee.user_id ? `user:${employee.user_id}` : `employee:${employee.id}`;
+    const base = {
+      type: "employee",
+      id: employee.id,
+      userId: employee.user_id || "",
+      ownerKey,
+      label: employee.name || employee.id
+    };
+    addContactCollisionMember(groups, "email", cleanContactEmail(employee.email), { ...base, memberKey: `employee:${employee.id}:email` });
+    addContactCollisionMember(groups, "telefono", phoneLoginKey(employee.phone), { ...base, memberKey: `employee:${employee.id}:phone` });
+  }
+
+  const signals = new Map();
+  for (const group of groups.values()) {
+    const owners = new Set(group.members.map((member) => member.ownerKey));
+    if (owners.size < 2) continue;
+    const label = `${group.kind}: ${group.value}`;
+    for (const member of group.members) {
+      if (member.type !== "user") continue;
+      if (!signals.has(member.userId)) signals.set(member.userId, new Set());
+      signals.get(member.userId).add(label);
+    }
+  }
+  return new Map(Array.from(signals.entries()).map(([userId, labels]) => [userId, Array.from(labels).sort()]));
+}
+
+function securityReportRisk(user, context = {}) {
   const issues = [];
   let score = 0;
   const passwordDays = daysSinceTimestamp(user.passwordChangedAt);
@@ -5616,6 +5734,7 @@ function securityReportRisk(user) {
   const locked = Boolean(user.lockedUntil);
   const permissionProfile = permissionProfileForUser(user);
   const deniedPermissionCount = Number(user.deniedPermissionCount || 0);
+  const contactCollisions = context.contactCollisions?.get(user.id) || [];
 
   if (!user.active) {
     issues.push("bloqueado");
@@ -5664,11 +5783,16 @@ function securityReportRisk(user) {
     issues.push(`permisos denegados x${deniedPermissionCount}`);
     score += Math.min(3, deniedPermissionCount + 1);
   }
+  if (contactCollisions.length) {
+    issues.push(`contacto duplicado x${contactCollisions.length}`);
+    score += Math.min(4, contactCollisions.length + 2);
+  }
 
   const level = score >= 5 ? "alto" : score >= 2 ? "medio" : "ok";
   const recommendedAction = (() => {
     if (locked) return "Desbloquear tras verificar identidad";
     if (deniedPermissionCount > 0) return "Revisar permisos denegados";
+    if (contactCollisions.length) return "Resolver contacto duplicado";
     if (user.role !== "employee" && user.active && activityDays !== null && activityDays > ADMIN_INACTIVITY_LIMIT_DAYS) return "Revisar y bloquear si no procede";
     if (user.mustChangePassword || (user.role !== "employee" && passwordDays !== null && passwordDays > PASSWORD_ROTATION_LIMIT_DAYS)) return "Forzar cambio de clave";
     if (user.role !== "employee" && (reviewDays === null || reviewDays > ACCESS_REVIEW_LIMIT_DAYS)) return "Revisar permisos";
@@ -5678,12 +5802,14 @@ function securityReportRisk(user) {
     return "Sin accion inmediata";
   })();
 
-  return { level, score, issues, recommendedAction, passwordDays, reviewDays, activityDays };
+  return { level, score, issues, recommendedAction, passwordDays, reviewDays, activityDays, contactCollisions };
 }
 
 function userSecurityReportRows() {
-  return listUsers().map((user) => {
-    const risk = securityReportRisk(user);
+  const users = listUsers();
+  const contactCollisions = userContactCollisionSignals(users);
+  return users.map((user) => {
+    const risk = securityReportRisk(user, { contactCollisions });
     const permissionProfile = permissionProfileForUser(user);
     const suggestedProfile = suggestedPermissionProfileForUser(user);
     return {
@@ -5712,6 +5838,7 @@ function userSecurityReportRows() {
       recuperacion_pendiente: user.recoveryPending ? "si" : "no",
       permisos_denegados_7d: user.deniedPermissionCount || 0,
       ultimo_permiso_denegado: user.deniedPermissionLastAt || "",
+      contactos_duplicados: risk.contactCollisions.join(" | "),
       ficha_operario: user.employeeId || "",
       estado_operario: user.employeeStatus || "",
       id_usuario: user.id
@@ -8028,6 +8155,14 @@ async function handleApi(req, res, url) {
   if (pathname === "/api/clients" && method === "POST") {
     requireAdmin(user);
     const body = await readBody(req);
+    const duplicate = clientDuplicateConflict({
+      name: body.name,
+      legalName: body.legalName || body.name,
+      taxId: body.taxId,
+      email: body.email,
+      phone: body.phone
+    });
+    if (duplicate) return sendJson(res, 409, duplicate);
     const id = randomId("cli");
     run(
       `INSERT INTO clients (id, name, legal_name, tax_id, contact_name, email, phone, address, province, notes)
@@ -8058,6 +8193,15 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const existing = get("SELECT * FROM clients WHERE id = ?", [clientMatch[1]]);
     if (!existing) return sendJson(res, 404, { error: "Cliente no encontrado" });
+    const duplicate = clientDuplicateConflict({
+      clientId: existing.id,
+      name: body.name ?? existing.name,
+      legalName: body.legalName ?? existing.legal_name,
+      taxId: body.taxId ?? existing.tax_id,
+      email: body.email ?? existing.email,
+      phone: body.phone ?? existing.phone
+    });
+    if (duplicate) return sendJson(res, 409, duplicate);
     run(
       `UPDATE clients
        SET name = ?, legal_name = ?, tax_id = ?, contact_name = ?, email = ?, phone = ?,
@@ -8110,6 +8254,8 @@ async function handleApi(req, res, url) {
     const email = cleanContactEmail(body.email);
     const phone = cleanContactPhone(body.phone);
     const wantsPortal = body.portalAccess !== false;
+    const duplicate = employeeDuplicateConflict({ employeeId: id, dni: body.dni });
+    if (duplicate) return sendJson(res, 409, duplicate);
     validateAdminEmployeeContact({ employeeId: id, email, phone, requireContact: wantsPortal });
     let portal = { userId: null, created: false };
     const portalPassword = wantsPortal ? employeePortalPasswordForCreate(body, phone) : null;
@@ -8190,6 +8336,11 @@ async function handleApi(req, res, url) {
     const nextPhone = body.phone === undefined ? cleanContactPhone(existing.phone) : cleanContactPhone(body.phone);
     const nextStatus = body.status ?? existing.status;
     const wantsPortal = body.portalAccess === true || body.portalAccess === "true";
+    const duplicate = employeeDuplicateConflict({
+      employeeId: existing.id,
+      dni: body.dni === undefined ? existing.dni : body.dni
+    });
+    if (duplicate) return sendJson(res, 409, duplicate);
     validateAdminEmployeeContact({
       employeeId: existing.id,
       userId: existing.user_id || "",

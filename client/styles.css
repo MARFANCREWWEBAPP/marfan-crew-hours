@@ -399,6 +399,20 @@ button:disabled {
   opacity: 0.48;
 }
 
+.is-submitting {
+  position: relative;
+}
+
+.is-submitting button[type="submit"] .icon {
+  animation: submit-spin 0.9s linear infinite;
+}
+
+@keyframes submit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .btn.red {
   background: var(--red);
   border-color: var(--red);
@@ -1208,6 +1222,79 @@ button:disabled {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.user-contact-collisions {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.collision-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.collision-head > div {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 3px 10px;
+  align-items: center;
+}
+
+.collision-head strong {
+  font-size: 26px;
+  line-height: 1;
+}
+
+.collision-head small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.collision-list {
+  display: grid;
+  gap: 8px;
+}
+
+.collision-row {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fffafa;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.collision-main {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.collision-main strong,
+.collision-main small {
+  min-width: 0;
+}
+
+.collision-main small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 730;
+  overflow-wrap: anywhere;
+}
+
+.collision-members {
+  display: flex;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
@@ -3438,19 +3525,23 @@ button:disabled {
     align-items: stretch;
   }
 
-  .queue-head,
-  .queue-row {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
+	  .queue-head,
+	  .collision-head,
+	  .collision-row,
+	  .queue-row {
+	    display: grid;
+	    grid-template-columns: 1fr;
+	  }
 
-  .queue-row {
-    align-items: stretch;
-  }
+	  .collision-row,
+	  .queue-row {
+	    align-items: stretch;
+	  }
 
-  .queue-actions {
-    justify-content: flex-start;
-  }
+	  .collision-members,
+	  .queue-actions {
+	    justify-content: flex-start;
+	  }
 
   .user-portal-health .btn {
     width: 100%;

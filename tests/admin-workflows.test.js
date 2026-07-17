@@ -681,6 +681,36 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 	    assert.equal(forcedPasswordAudit.status, 200);
 	    assert.equal(forcedPasswordAudit.json.logs.some((item) => item.entity_id === bulkOne.json.user.id), true);
 
+	    const duplicateContactAdmin = await jsonRequest(baseUrl, "/api/users", {
+	      method: "POST",
+	      token: superToken,
+	      body: {
+	        role: "admin",
+	        name: "Admin Contacto Duplicado",
+	        email: "contacto.duplicado@marfancrew.test",
+	        phone: "600111030",
+	        password: "Duplicado2026"
+	      }
+	    });
+	    assert.equal(duplicateContactAdmin.status, 201);
+	    const duplicateContactEmployee = await jsonRequest(baseUrl, "/api/employees", {
+	      method: "POST",
+	      token,
+	      body: {
+	        name: "Operario Contacto Historico",
+	        phone: "600111031",
+	        email: "operario.contacto.historico@marfancrew.test",
+	        role: "Montaje",
+	        portalAccess: false
+	      }
+	    });
+	    assert.equal(duplicateContactEmployee.status, 201);
+	    const duplicateContactDb = new DatabaseSync(path.join(tmp, "marfan.sqlite"));
+	    duplicateContactDb
+	      .prepare("UPDATE employees SET phone = ? WHERE id = ?")
+	      .run("600111030", duplicateContactEmployee.json.employee.id);
+	    duplicateContactDb.close();
+
 	    const securityReport = await jsonRequest(baseUrl, "/api/users/security-report", { token: superToken });
 	    assert.equal(securityReport.status, 200);
 	    assert.ok(securityReport.json.summary.total >= 1);
@@ -693,6 +723,10 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 	    const financeProfileReportRow = securityReport.json.rows.find((item) => item.id_usuario === bulkTwo.json.user.id);
 	    assert.equal(financeProfileReportRow.perfil_permisos, "Finanzas");
 	    assert.equal(financeProfileReportRow.permisos_personalizados, "no");
+	    const duplicateContactReportRow = securityReport.json.rows.find((item) => item.id_usuario === duplicateContactAdmin.json.user.id);
+	    assert.match(duplicateContactReportRow.senales, /contacto duplicado/i);
+	    assert.match(duplicateContactReportRow.contactos_duplicados, /telefono: 600111030/);
+	    assert.match(duplicateContactReportRow.accion_recomendada, /contacto duplicado/i);
 	    const securityReportCsv = await fetch(`${baseUrl}/api/users/security-report?format=csv`, {
 	      headers: { authorization: `Bearer ${superToken}` }
 	    });
@@ -702,6 +736,7 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 	    assert.match(securityReportCsvText, /riesgo;puntuacion;accion_recomendada/);
 	    assert.match(securityReportCsvText, /perfil_permisos;permisos_personalizados/);
 	    assert.match(securityReportCsvText, /permisos_denegados_7d;ultimo_permiso_denegado/);
+	    assert.match(securityReportCsvText, /contactos_duplicados/);
 	    assert.match(securityReportCsvText, /bulk\.operaciones\.uno@marfancrew\.test/);
 	    const securityReportAudit = await jsonRequest(baseUrl, "/api/audit-logs?action=users_security_report_exported&entity=user", { token: superToken });
 	    assert.equal(securityReportAudit.status, 200);
@@ -1013,6 +1048,28 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
       body: { name: "Cliente permitido permisos", legalName: "Cliente permitido permisos SL" }
     });
     assert.equal(allowedClientCreate.status, 201);
+    const duplicateClientCreate = await jsonRequest(baseUrl, "/api/clients", {
+      method: "POST",
+      token: unrestrictedLogin.json.token,
+      body: { name: "Cliente permitido permisos", legalName: "Cliente permitido permisos copia SL" }
+    });
+    assert.equal(duplicateClientCreate.status, 409);
+    assert.match(duplicateClientCreate.json.error, /nombre/i);
+    assert.equal(duplicateClientCreate.json.duplicate.id, allowedClientCreate.json.client.id);
+    const clientDuplicateBase = await jsonRequest(baseUrl, "/api/clients", {
+      method: "POST",
+      token: unrestrictedLogin.json.token,
+      body: { name: "Cliente Control Duplicados", legalName: "Cliente Control Duplicados SL", taxId: "BCTRL001" }
+    });
+    assert.equal(clientDuplicateBase.status, 201);
+    const duplicateClientUpdate = await jsonRequest(baseUrl, `/api/clients/${allowedClientCreate.json.client.id}`, {
+      method: "PATCH",
+      token: unrestrictedLogin.json.token,
+      body: { taxId: "BCTRL001" }
+    });
+    assert.equal(duplicateClientUpdate.status, 409);
+    assert.match(duplicateClientUpdate.json.error, /CIF\/NIF/i);
+    assert.equal(duplicateClientUpdate.json.duplicate.id, clientDuplicateBase.json.client.id);
 
     const leader = await jsonRequest(baseUrl, "/api/employees", {
       method: "POST",
@@ -1194,6 +1251,41 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     });
     assert.equal(duplicateLeaderPhone.status, 409);
     assert.match(duplicateLeaderPhone.json.error, /telefono/i);
+    const employeeDniBase = await jsonRequest(baseUrl, "/api/employees", {
+      method: "POST",
+      token,
+      body: {
+        name: "Operario DNI Base",
+        phone: "600111020",
+        email: "dni.base@marfancrew.test",
+        role: "Montaje",
+        dni: "DNI-DUP-001",
+        portalAccess: false
+      }
+    });
+    assert.equal(employeeDniBase.status, 201);
+    const duplicateEmployeeDni = await jsonRequest(baseUrl, "/api/employees", {
+      method: "POST",
+      token,
+      body: {
+        name: "Operario DNI Repetido",
+        phone: "600111021",
+        email: "dni.repetido@marfancrew.test",
+        role: "Montaje",
+        dni: "DNI DUP 001",
+        portalAccess: false
+      }
+    });
+    assert.equal(duplicateEmployeeDni.status, 409);
+    assert.match(duplicateEmployeeDni.json.error, /DNI/i);
+    assert.equal(duplicateEmployeeDni.json.duplicate.id, employeeDniBase.json.employee.id);
+    const duplicateEmployeeDniUpdate = await jsonRequest(baseUrl, `/api/employees/${phonePasswordEmployee.json.employee.id}`, {
+      method: "PATCH",
+      token,
+      body: { dni: "DNI-DUP-001" }
+    });
+    assert.equal(duplicateEmployeeDniUpdate.status, 409);
+    assert.match(duplicateEmployeeDniUpdate.json.error, /DNI/i);
 
     const lockedAssignment = await jsonRequest(baseUrl, "/api/assignments", {
       method: "POST",
