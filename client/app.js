@@ -2147,6 +2147,150 @@ function userDetailKpi(label, value, tone = "blue") {
   `;
 }
 
+function userLifecycleStatus(user, duplicateContactUserIds = null, employee = null) {
+  const hasDuplicateContact = duplicateContactUserIds ? duplicateContactUserIds.has(user.id) : userHasDuplicateContactRisk(user);
+  if (!user.active) {
+    return {
+      label: "Acceso bloqueado",
+      tone: "red",
+      detail: "Usuario sin acceso. Revisa motivo, sesiones y responsable antes de reactivar."
+    };
+  }
+  if (userIsLocked(user) || userDeniedPermissionRisk(user) || hasDuplicateContact || userInactiveRisk(user)) {
+    return {
+      label: "Riesgo activo",
+      tone: "red",
+      detail: "Hay alertas que conviene resolver antes de tocar permisos o claves."
+    };
+  }
+  if ((user.role === "employee" && !employee) || !user.email && !user.phone || user.mustChangePassword || user.recoveryPending || !user.lastLoginAt) {
+    return {
+      label: "Alta pendiente",
+      tone: "amber",
+      detail: "Falta cerrar acceso, contacto, primera entrada o ficha operativa."
+    };
+  }
+  if (user.role !== "employee" && (userPasswordStale(user) || userAccessReviewStale(user) || userSecurityDueSoon(user))) {
+    return {
+      label: "Revision preventiva",
+      tone: "amber",
+      detail: "El acceso funciona, pero necesita higiene de seguridad o revision periodica."
+    };
+  }
+  if (userHasCustomPermissions(user)) {
+    return {
+      label: "Optimizar permisos",
+      tone: "blue",
+      detail: "Conviene pasar sus permisos a un perfil mantenible para evitar excepciones."
+    };
+  }
+  return {
+    label: "Operativo",
+    tone: "green",
+    detail: "Cuenta lista para trabajar con acceso, permisos y seguridad bajo control."
+  };
+}
+
+function checklistAction(label, attrs = "", primary = false) {
+  if (!label || !attrs) return "";
+  return `<button class="btn compact ${primary ? "primary" : "ghost"}" type="button" ${attrs}>${esc(label)}</button>`;
+}
+
+function userLifecycleChecklist(user, duplicateContactUserIds = null, employee = null, isSuper = false) {
+  const hasDuplicateContact = duplicateContactUserIds ? duplicateContactUserIds.has(user.id) : userHasDuplicateContactRisk(user);
+  const sessions = Number(user.activeSessionCount || 0);
+  const isAdminLike = user.role !== "employee";
+  return [
+    {
+      label: "Contacto de acceso",
+      detail: user.email || user.phone ? "Email o telefono preparado para login y comunicaciones." : "Falta email o telefono para identificar el acceso.",
+      done: Boolean(user.email || user.phone),
+      action: ""
+    },
+    {
+      label: "Contacto unico",
+      detail: hasDuplicateContact ? "Hay otro usuario u operario con el mismo email o telefono." : "Sin duplicados detectados en usuarios y operarios.",
+      done: !hasDuplicateContact,
+      action: checklistAction("Ver duplicados", `data-user-security-filter="duplicate_contact"`, false)
+    },
+    {
+      label: "Portal operario",
+      detail: user.role === "employee"
+        ? employee ? "Ficha operativa vinculada al portal empleado." : "El usuario empleado no tiene ficha operativa vinculada."
+        : "No aplica a administradores.",
+      done: user.role !== "employee" || Boolean(employee),
+      action: user.role === "employee" && !employee ? checklistAction("Sanear portal", "data-repair-employee-portals", true) : ""
+    },
+    {
+      label: "Clave privada",
+      detail: user.mustChangePassword || user.recoveryPending || !user.lastLoginAt
+        ? "Pendiente de primer acceso, recuperacion o cambio de clave."
+        : "Clave privada establecida por el usuario.",
+      done: !user.mustChangePassword && !user.recoveryPending && Boolean(user.lastLoginAt),
+      action: user.active ? checklistAction("Codigo", `data-access-code-user="${esc(user.id)}"`, true) : ""
+    },
+    {
+      label: "Revision de acceso",
+      detail: isAdminLike ? userAccessReviewStale(user) ? "Permisos y rol necesitan revision formal." : "Revision de permisos vigente." : "Portal empleado con permisos limitados.",
+      done: !isAdminLike || !userAccessReviewStale(user),
+      action: isAdminLike ? checklistAction("Marcar revisado", `data-review-user="${esc(user.id)}"`, !userAccessReviewStale(user) ? false : true) : ""
+    },
+    {
+      label: "Permisos mantenibles",
+      detail: user.role === "admin" && userHasCustomPermissions(user)
+        ? "Permisos a medida: mas dificil de auditar y mantener."
+        : "Perfil de permisos claro para su rol.",
+      done: !(user.role === "admin" && userHasCustomPermissions(user)),
+      action: user.role === "admin" && userHasCustomPermissions(user)
+        ? checklistAction("Preparar perfil", `data-user-prepare-action="${esc(user.id)}" data-suggested-bulk-action="suggested_profile"`, true)
+        : ""
+    },
+    {
+      label: "Sesiones controladas",
+      detail: sessions > 1 ? `${sessions} sesiones abiertas. Conviene cerrar las antiguas.` : sessions === 1 ? "Una sesion activa." : "Sin sesiones abiertas.",
+      done: sessions <= 1,
+      action: sessions > 0 ? checklistAction(sessions > 1 ? "Cerrar sesiones" : "Ver sesion", sessions > 1 ? `data-revoke-sessions="${esc(user.id)}"` : `data-user-sessions="${esc(user.id)}"`, sessions > 1) : ""
+    },
+    {
+      label: "Estado operativo",
+      detail: user.active ? "Acceso habilitado." : "Usuario bloqueado y fuera de operativa.",
+      done: Boolean(user.active),
+      action: !user.active && isSuper ? checklistAction("Activar", `data-user-active="${esc(user.id)}" data-next-active="true"`, true) : ""
+    }
+  ];
+}
+
+function userLifecyclePanel(user, duplicateContactUserIds = null, employee = null, isSuper = false) {
+  const status = userLifecycleStatus(user, duplicateContactUserIds, employee);
+  const checklist = userLifecycleChecklist(user, duplicateContactUserIds, employee, isSuper);
+  const done = checklist.filter((item) => item.done).length;
+  const percent = Math.round((done / checklist.length) * 100);
+  return `
+    <div class="user-lifecycle-panel ${status.tone}">
+      <div class="lifecycle-head">
+        <div>
+          <span class="tag ${status.tone}">${esc(status.label)}</span>
+          <strong>${esc(percent)}%</strong>
+          <small>${esc(status.detail)}</small>
+        </div>
+        <div class="lifecycle-progress" aria-hidden="true"><span style="width:${percent}%"></span></div>
+      </div>
+      <div class="lifecycle-checklist">
+        ${checklist.map((item) => `
+          <div class="lifecycle-item ${item.done ? "done" : "pending"}">
+            <span class="lifecycle-check">${item.done ? icon("check") : icon("alert")}</span>
+            <div>
+              <strong>${esc(item.label)}</strong>
+              <small>${esc(item.detail)}</small>
+            </div>
+            ${isSuper ? item.action : ""}
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
 function userPermissionModuleGrid(user) {
   if (user.role === "super_admin") return `<div class="user-permission-modules"><span class="tag red">Acceso total</span></div>`;
   if (user.role === "employee") return `<div class="user-permission-modules"><span class="tag blue">Portal empleado</span></div>`;
@@ -2195,6 +2339,7 @@ function userDetailDrawer(user, duplicateContactUserIds, isSuper) {
         ${user.role === "admin" ? userDetailKpi("permisos", `${activePermissions}/${adminPermissionDefs.length}`, activePermissions >= adminPermissionDefs.length - 2 ? "amber" : "blue") : ""}
         ${employee ? userDetailKpi("ficha operario", employee.status || "vinculada", employee.status === "activo" ? "green" : "amber") : user.role === "employee" ? userDetailKpi("ficha operario", "sin ficha", "amber") : ""}
       </div>
+      ${userLifecyclePanel(user, duplicateContactUserIds, employee, isSuper)}
       <div class="inspector-section">
         <h3>Contacto y acceso</h3>
         <div class="role-row"><span>Email</span><strong>${esc(user.email || "-")}</strong></div>

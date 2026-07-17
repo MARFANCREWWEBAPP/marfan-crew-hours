@@ -2527,6 +2527,144 @@ button:disabled {
   font-weight: 820;
 }
 
+.user-lifecycle-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-left: 4px solid var(--blue);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.user-lifecycle-panel.green {
+  border-left-color: var(--green);
+  background: #fbfffd;
+}
+
+.user-lifecycle-panel.amber {
+  border-left-color: var(--amber);
+  background: #fffdf8;
+}
+
+.user-lifecycle-panel.red {
+  border-left-color: var(--red);
+  background: #fffafa;
+}
+
+.lifecycle-head {
+  display: grid;
+  gap: 8px;
+}
+
+.lifecycle-head > div:first-child {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 10px;
+  align-items: center;
+}
+
+.lifecycle-head strong {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.lifecycle-head small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 740;
+}
+
+.lifecycle-progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eef2f6;
+}
+
+.lifecycle-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--blue);
+}
+
+.user-lifecycle-panel.green .lifecycle-progress span {
+  background: var(--green);
+}
+
+.user-lifecycle-panel.amber .lifecycle-progress span {
+  background: var(--amber);
+}
+
+.user-lifecycle-panel.red .lifecycle-progress span {
+  background: var(--red);
+}
+
+.lifecycle-checklist {
+  display: grid;
+  gap: 7px;
+}
+
+.lifecycle-item {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.lifecycle-item.done {
+  background: rgba(20, 163, 101, 0.04);
+}
+
+.lifecycle-item.pending {
+  background: rgba(247, 181, 0, 0.06);
+}
+
+.lifecycle-check {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--amber);
+  background: #fff8e1;
+}
+
+.lifecycle-item.done .lifecycle-check {
+  color: var(--green);
+  background: #e9f8f0;
+}
+
+.lifecycle-check svg {
+  width: 15px;
+  height: 15px;
+}
+
+.lifecycle-item strong,
+.lifecycle-item small {
+  display: block;
+  min-width: 0;
+}
+
+.lifecycle-item strong {
+  font-size: 12px;
+}
+
+.lifecycle-item small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1.25;
+}
+
 .user-detail-contact-form,
 .user-detail-permission-form {
   display: grid;
@@ -4648,7 +4786,9 @@ button:disabled {
   .bulk-preview-head,
   .bulk-preview-row,
   .security-action-head,
-  .security-secret-box {
+  .security-secret-box,
+  .lifecycle-head > div:first-child,
+  .lifecycle-item {
     grid-template-columns: 1fr;
   }
 

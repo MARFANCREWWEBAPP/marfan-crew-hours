@@ -6606,9 +6606,21 @@ function deliveryPricingContext(event) {
   return { baseAddress, includedKm, kilometrePrice };
 }
 
+function deliveryNoteServicePrice(event) {
+  const note = event.deliveryNote || {};
+  const signed = Boolean(Number(note.locked || 0));
+  const firstUsefulPrice = (...values) => {
+    const numeric = values.map((value) => Number(value)).filter((value) => Number.isFinite(value));
+    return numeric.find((value) => value > 0) ?? numeric[0] ?? 0;
+  };
+  const lockedPrice = firstUsefulPrice(note.service_price, event.service_price, event.budget);
+  const livePrice = firstUsefulPrice(event.service_price, note.service_price, event.budget);
+  return signed ? lockedPrice : livePrice;
+}
+
 function deliveryNotePdf(event) {
   const note = event.deliveryNote || {};
-  const servicePrice = Number(note.service_price ?? event.service_price ?? event.budget ?? 0);
+  const servicePrice = deliveryNoteServicePrice(event);
   const pricingContext = deliveryPricingContext(event);
   const rows = deliveryNoteRows(event);
   const logo = pdfLogoImage();
@@ -6619,8 +6631,8 @@ function deliveryNotePdf(event) {
   const pages = [];
   const moneyText = (value) => `${Number(value || 0).toFixed(2)} EUR`;
   const signed = Boolean(note.locked);
-  const firstPageRows = 10;
-  const nextPageRows = 15;
+  const firstPageRows = 6;
+  const nextPageRows = 10;
   const chunks = [];
   if (!rows.length) {
     chunks.push([]);
@@ -6643,11 +6655,12 @@ function deliveryNotePdf(event) {
   const drawCard = (draw, x, y, w, h, label, value, tone = "light") => {
     const bg = tone === "dark" ? [0.024, 0.063, 0.11] : tone === "green" ? [0.027, 0.58, 0.33] : [1, 1, 1];
     const border = tone === "dark" || tone === "green" ? bg : [0.84, 0.87, 0.91];
+    const valueSize = tone === "green" ? (String(value || "").length > 13 ? 17 : 20) : 12;
     draw.fill(...bg);
     draw.stroke(...border);
     draw.rect(x, y, w, h, "B");
-    draw.text(label.toUpperCase(), x + 12, y + h - 18, 7, "F2", tone === "light" ? [0.39, 0.45, 0.55] : [0.84, 0.91, 0.97], 40);
-    draw.text(value, x + 12, y + 14, tone === "green" ? 18 : 11, "F2", tone === "light" ? [0.06, 0.09, 0.16] : [1, 1, 1], 64);
+    draw.text(label.toUpperCase(), x + 12, y + h - 18, 7.4, "F2", tone === "light" ? [0.39, 0.45, 0.55] : [0.84, 0.91, 0.97], 42);
+    draw.text(value, x + 12, y + 16, valueSize, "F2", tone === "light" ? [0.06, 0.09, 0.16] : [1, 1, 1], tone === "green" ? 20 : 68);
   };
   const drawHeader = (draw, pageIndex) => {
     draw.fill(0.965, 0.976, 0.988);
@@ -6672,48 +6685,50 @@ function deliveryNotePdf(event) {
     draw.text("Precio, equipo, kilometraje y firma de cliente", 330, 14, 7, "F1", [0.78, 0.86, 0.94], 54);
   };
   const drawCrewTable = (draw, chunk, topY, rowYStart, baseIndex = 0) => {
-    draw.text("Equipo, horario y pluses", 40, topY + 25, 12, "F2", [0.024, 0.063, 0.11], 40);
+    draw.text("Equipo, horario y pluses", 40, topY + 27, 13, "F2", [0.024, 0.063, 0.11], 42);
     draw.fill(0.024, 0.063, 0.11);
-    draw.rect(40, topY, 515, 20);
+    draw.rect(40, topY, 515, 24);
     const columns = [
-      ["Operario", 50],
-      ["Rol", 190],
-      ["Horario", 302],
-      ["Km", 378],
-      ["Dieta", 420],
-      ["Noct.", 468],
-      ["Extras", 512]
+      ["Operario", 54],
+      ["Rol", 212],
+      ["Horario", 332],
+      ["Km", 397],
+      ["Dieta", 432],
+      ["Noct.", 476],
+      ["Extras", 518]
     ];
-    for (const [label, x] of columns) draw.text(label, x, topY + 6, 7.5, "F2", [1, 1, 1], 18);
+    for (const [label, x] of columns) draw.text(label, x, topY + 8, 8, "F2", [1, 1, 1], 18);
     let y = rowYStart;
     if (!chunk.length) {
       draw.fill(1, 1, 1);
       draw.stroke(0.89, 0.91, 0.94);
-      draw.rect(40, y - 6, 515, 24, "B");
-      draw.text("Sin operarios asignados", 50, y + 2, 8, "F1", [0.39, 0.45, 0.55], 40);
+      draw.rect(40, y - 7, 515, 30, "B");
+      draw.text("Sin operarios asignados", 54, y + 3, 9, "F1", [0.39, 0.45, 0.55], 40);
       return;
     }
     for (const [{ assignment, allowance }, offset] of chunk.map((item, index) => [item, index])) {
       const rowIndex = baseIndex + offset;
       draw.fill(rowIndex % 2 ? 1 : 0.985, rowIndex % 2 ? 1 : 0.988, rowIndex % 2 ? 1 : 0.992);
       draw.stroke(0.89, 0.91, 0.94);
-      draw.rect(40, y - 6, 515, 20, "B");
-      draw.text(assignment.name, 50, y, 7.5, "F1", [0.06, 0.09, 0.16], 30);
-      draw.text(assignment.role, 190, y, 7.5, "F1", [0.06, 0.09, 0.16], 24);
-      draw.text(`${event.start_time}-${event.end_time}`, 302, y, 7.5, "F1", [0.06, 0.09, 0.16], 16);
-      draw.text(Number(allowance.km || 0).toFixed(1), 378, y, 7.5, "F1", [0.06, 0.09, 0.16], 8);
-      draw.text(Number(allowance.diet || 0).toFixed(2), 420, y, 7.5, "F1", [0.06, 0.09, 0.16], 9);
-      draw.text(Number(allowance.night_hours || 0).toFixed(1), 468, y, 7.5, "F1", [0.06, 0.09, 0.16], 8);
-      draw.text(Number(allowance.extras || 0).toFixed(2), 512, y, 7.5, "F1", [0.06, 0.09, 0.16], 9);
-      y -= 21;
+      draw.rect(40, y - 7, 515, 27, "B");
+      draw.text(assignment.name, 54, y + 3, 8.2, "F2", [0.06, 0.09, 0.16], 32);
+      draw.text(assignment.role, 212, y + 3, 8.2, "F1", [0.06, 0.09, 0.16], 26);
+      draw.text(`${event.start_time}-${event.end_time}`, 332, y + 3, 8.2, "F1", [0.06, 0.09, 0.16], 14);
+      draw.text(Number(allowance.km || 0).toFixed(1), 397, y + 3, 8.2, "F1", [0.06, 0.09, 0.16], 8);
+      draw.text(Number(allowance.diet || 0).toFixed(2), 432, y + 3, 8.2, "F1", [0.06, 0.09, 0.16], 9);
+      draw.text(Number(allowance.night_hours || 0).toFixed(1), 476, y + 3, 8.2, "F1", [0.06, 0.09, 0.16], 8);
+      draw.text(Number(allowance.extras || 0).toFixed(2), 518, y + 3, 8.2, "F1", [0.06, 0.09, 0.16], 9);
+      y -= 28;
     }
   };
   const drawSignature = (draw) => {
+    const yBase = 70;
+    const boxHeight = 128;
     draw.fill(1, 1, 1);
     draw.stroke(0.84, 0.87, 0.91);
-    draw.rect(40, 90, 245, 118, "B");
-    draw.rect(310, 90, 245, 118, "B");
-    draw.text("Firma cliente", 56, 184, 11, "F2", [0.024, 0.063, 0.11], 28);
+    draw.rect(40, yBase, 245, boxHeight, "B");
+    draw.rect(310, yBase, 245, boxHeight, "B");
+    draw.text("Firma cliente", 56, yBase + 100, 12, "F2", [0.024, 0.063, 0.11], 28);
     if (signatureImage && signatureIndex >= 0) {
       const aspect = signatureImage.width / signatureImage.height;
       let signatureWidth = 205;
@@ -6722,18 +6737,20 @@ function deliveryNotePdf(event) {
         signatureHeight = 38;
         signatureWidth = signatureHeight * aspect;
       }
-      draw.image(signatureIndex, 56, 138, signatureWidth, signatureHeight);
-      draw.text("Firma grafica capturada digitalmente", 56, 128, 7.5, "F1", [0.39, 0.45, 0.55], 48);
+      draw.image(signatureIndex, 56, yBase + 52, signatureWidth, signatureHeight);
+      draw.text("Firma grafica capturada digitalmente", 56, yBase + 42, 7.8, "F1", [0.39, 0.45, 0.55], 48);
     } else {
-      draw.text(note.signature_image ? "Firma guardada, imagen no legible en PDF" : "Firma grafica no capturada", 56, 154, 8, "F1", [0.39, 0.45, 0.55], 52);
+      draw.fill(0.965, 0.976, 0.988);
+      draw.rect(56, yBase + 50, 198, 34, "f");
+      draw.text(note.signature_image ? "Firma guardada, imagen no legible en PDF" : "Firma grafica no capturada", 66, yBase + 63, 8.2, "F1", [0.39, 0.45, 0.55], 52);
     }
-    draw.text(`Nombre: ${note.signature_name || ""}`, 56, 114, 8.5, "F1", [0.06, 0.09, 0.16], 52);
-    draw.text(`DNI/NIF: ${note.signature_dni || ""}`, 56, 100, 8.5, "F1", [0.06, 0.09, 0.16], 40);
-    draw.text("Control MARFAN", 326, 184, 11, "F2", [0.024, 0.063, 0.11], 28);
-    draw.text(`Estado: ${signed ? "Firmado y bloqueado" : "Pendiente"}`, 326, 162, 8.5, "F2", signed ? [0.03, 0.46, 0.28] : [0.71, 0.28, 0.03], 42);
-    draw.text(`Fecha firma: ${note.signed_at || ""}`, 326, 146, 8, "F1", [0.16, 0.22, 0.31], 44);
-    draw.text(`Observaciones: ${note.client_notes || ""}`, 326, 128, 8, "F1", [0.16, 0.22, 0.31], 50);
-    draw.text(`Notas servicio: ${event.notes || ""}`, 326, 112, 7.5, "F1", [0.39, 0.45, 0.55], 58);
+    draw.text(`Nombre: ${note.signature_name || ""}`, 56, yBase + 22, 8.8, "F1", [0.06, 0.09, 0.16], 52);
+    draw.text(`DNI/NIF: ${note.signature_dni || ""}`, 56, yBase + 8, 8.8, "F1", [0.06, 0.09, 0.16], 40);
+    draw.text("Control MARFAN", 326, yBase + 100, 12, "F2", [0.024, 0.063, 0.11], 28);
+    draw.text(`Estado: ${signed ? "Firmado y bloqueado" : "Pendiente"}`, 326, yBase + 76, 9, "F2", signed ? [0.03, 0.46, 0.28] : [0.71, 0.28, 0.03], 42);
+    draw.text(`Fecha firma: ${note.signed_at || ""}`, 326, yBase + 58, 8.2, "F1", [0.16, 0.22, 0.31], 44);
+    draw.text(`Observaciones: ${note.client_notes || ""}`, 326, yBase + 40, 8.2, "F1", [0.16, 0.22, 0.31], 50);
+    draw.text(`Notas servicio: ${event.notes || ""}`, 326, yBase + 20, 7.8, "F1", [0.39, 0.45, 0.55], 58);
   };
   chunks.forEach((chunk, pageIndex) => {
     const ops = [];
@@ -6748,21 +6765,21 @@ function deliveryNotePdf(event) {
     draw.rect(412, 700, 143, 24, "B");
     draw.text(signed ? "FIRMADO Y BLOQUEADO" : "PENDIENTE DE FIRMA", 425, 708, 8, "F2", signed ? [0.03, 0.46, 0.28] : [0.71, 0.28, 0.03], 34);
     if (isFirst) {
-      drawCard(draw, 40, 618, 330, 58, "Cliente", `${event.client_name} · ${event.location}`, "light");
-      drawCard(draw, 390, 618, 165, 58, "Precio servicio", moneyText(servicePrice), "green");
-      drawCard(draw, 40, 546, 120, 54, "Fecha", event.date, "light");
-      drawCard(draw, 174, 546, 120, 54, "Horario", `${event.start_time}-${event.end_time}`, "light");
-      drawCard(draw, 308, 546, 120, 54, "Jefe equipo", event.team_leader_name || "Pendiente", "light");
-      drawCard(draw, 442, 546, 113, 54, "Equipo", `${rows.length} operarios`, "dark");
-      draw.text("Datos de facturacion", 40, 514, 12, "F2", [0.024, 0.063, 0.11], 40);
+      drawCard(draw, 40, 610, 335, 66, "Cliente", `${event.client_name} - ${event.location}`, "light");
+      drawCard(draw, 395, 610, 160, 66, "Precio servicio", moneyText(servicePrice), "green");
+      drawCard(draw, 40, 532, 120, 58, "Fecha", event.date, "light");
+      drawCard(draw, 174, 532, 120, 58, "Horario", `${event.start_time}-${event.end_time}`, "light");
+      drawCard(draw, 308, 532, 120, 58, "Jefe equipo", event.team_leader_name || "Pendiente", "light");
+      drawCard(draw, 442, 532, 113, 58, "Equipo", `${rows.length} operarios`, "dark");
+      draw.text("Datos de facturacion", 40, 500, 13, "F2", [0.024, 0.063, 0.11], 40);
       draw.fill(1, 1, 1);
       draw.stroke(0.84, 0.87, 0.91);
-      draw.rect(40, 456, 515, 44, "B");
-      draw.text(`Direccion: ${event.address || event.location}`, 54, 482, 8, "F1", [0.16, 0.22, 0.31], 105);
-      draw.text(`Base ${pricingContext.baseAddress} -> ${Number(event.base_distance_km || 0).toFixed(1)} km`, 54, 466, 8, "F1", [0.16, 0.22, 0.31], 80);
-      draw.text(`Roles ${moneyText(event.role_price_total)} · Nocturnidad ${moneyText(event.night_price_total)} · Km ${moneyText(event.distance_price_total)}`, 300, 466, 8, "F2", [0.06, 0.09, 0.16], 70);
-      draw.text(`Km incluidos ${pricingContext.includedKm.toFixed(1)} · Facturables ${Number(event.billable_km || 0).toFixed(1)} · Vehiculos ${Number(event.vehicle_count || 1)} · ${pricingContext.kilometrePrice.toFixed(2)} EUR/km`, 300, 482, 8, "F1", [0.16, 0.22, 0.31], 70);
-      drawCrewTable(draw, chunk, 399, 379, 0);
+      draw.rect(40, 438, 515, 46, "B");
+      draw.text(`Direccion: ${event.address || event.location}`, 54, 466, 8.3, "F1", [0.16, 0.22, 0.31], 82);
+      draw.text(`Base ${pricingContext.baseAddress} -> ${Number(event.base_distance_km || 0).toFixed(1)} km`, 54, 450, 8.3, "F1", [0.16, 0.22, 0.31], 78);
+      draw.text(`Km incluidos ${pricingContext.includedKm.toFixed(1)} | Facturables ${Number(event.billable_km || 0).toFixed(1)} | Vehiculos ${Number(event.vehicle_count || 1)} | ${pricingContext.kilometrePrice.toFixed(2)} EUR/km`, 300, 466, 8.2, "F1", [0.16, 0.22, 0.31], 72);
+      draw.text(`Roles ${moneyText(event.role_price_total)} | Nocturnidad ${moneyText(event.night_price_total)} | Km ${moneyText(event.distance_price_total)}`, 300, 450, 8.4, "F2", [0.06, 0.09, 0.16], 72);
+      drawCrewTable(draw, chunk, 392, 363, 0);
       if (!isLast) {
         draw.fill(1, 1, 1);
         draw.stroke(0.84, 0.87, 0.91);
@@ -6770,11 +6787,11 @@ function deliveryNotePdf(event) {
         draw.text("El equipo continua en las paginas siguientes. La firma se muestra al cierre del documento.", 54, 132, 8, "F2", [0.39, 0.45, 0.55], 104);
       }
     } else {
-      drawCard(draw, 40, 626, 155, 44, "Cliente", event.client_name, "light");
-      drawCard(draw, 210, 626, 150, 44, "Fecha", event.date, "light");
-      drawCard(draw, 375, 626, 180, 44, "Equipo total", `${rows.length} operarios`, "dark");
+      drawCard(draw, 40, 626, 155, 50, "Cliente", event.client_name, "light");
+      drawCard(draw, 210, 626, 150, 50, "Fecha", event.date, "light");
+      drawCard(draw, 375, 626, 180, 50, "Equipo total", `${rows.length} operarios`, "dark");
       const baseIndex = firstPageRows + (pageIndex - 1) * nextPageRows;
-      drawCrewTable(draw, chunk, 584, 564, baseIndex);
+      drawCrewTable(draw, chunk, 584, 552, baseIndex);
     }
     if (isLast) drawSignature(draw);
     drawFooter(draw);
@@ -6785,7 +6802,7 @@ function deliveryNotePdf(event) {
 
 function deliveryNoteHtml(event) {
   const note = event.deliveryNote || {};
-  const servicePrice = Number(note.service_price ?? event.service_price ?? event.budget ?? 0);
+  const servicePrice = deliveryNoteServicePrice(event);
   const pricingContext = deliveryPricingContext(event);
   const rows = deliveryNoteRows(event).map(({ assignment, allowance }) => {
     return `
