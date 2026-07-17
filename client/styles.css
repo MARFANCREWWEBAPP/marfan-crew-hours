@@ -1782,6 +1782,96 @@ button:disabled {
   justify-content: flex-end;
 }
 
+.user-bulk-pending {
+  margin-top: 12px;
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+  border-color: rgba(10, 115, 232, 0.28);
+  background: #f7fbff;
+}
+
+.bulk-preview-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.bulk-preview-head h2 {
+  margin: 5px 0 4px;
+  font-size: 18px;
+}
+
+.bulk-preview-head p {
+  margin: 0;
+}
+
+.bulk-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.bulk-preview-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 8px;
+}
+
+.bulk-preview-stat {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  align-content: start;
+  padding: 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.bulk-preview-stat small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.bulk-preview-list {
+  display: grid;
+  gap: 7px;
+}
+
+.bulk-preview-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px;
+  border: 1px solid var(--line-soft);
+  border-left: 4px solid var(--green);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.bulk-preview-row.fail {
+  border-left-color: var(--amber);
+  background: #fffdf8;
+}
+
+.bulk-preview-row strong,
+.bulk-preview-row small {
+  display: block;
+  min-width: 0;
+}
+
+.bulk-preview-row small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 730;
+}
+
 .bulk-impact.red {
   border-left-color: var(--red);
   background: #fffafa;
@@ -1990,44 +2080,98 @@ button:disabled {
   min-width: 180px;
 }
 
-.user-contact-editor {
-  margin-top: 5px;
+.users-table tr.user-row-active td {
+  background: #f7fbff;
+  box-shadow: inset 3px 0 0 var(--blue);
 }
 
-.user-contact-editor summary {
-  cursor: pointer;
-  color: var(--blue);
-  font-size: 12px;
-  font-weight: 850;
+.users-table tr.user-row-active td:not(:first-child) {
+  box-shadow: none;
 }
 
-.user-contact-grid {
+.users-table tr.user-row-active td:first-child {
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+
+.user-access-cell,
+.user-risk-cell,
+.user-next-action-cell {
   display: grid;
-  gap: 7px;
-  margin: 8px 0;
+  gap: 6px;
+  min-width: 150px;
 }
 
-.user-contact-grid label {
-  display: grid;
-  gap: 4px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 800;
+.user-access-cell {
+  min-width: 180px;
 }
 
-.user-contact-grid input {
-  width: 100%;
-  border: 1px solid var(--line);
+.user-access-cell .filters-row {
+  gap: 5px;
+}
+
+.user-access-cell .permission-summary {
+  min-width: 0;
+}
+
+.user-risk-cell {
+  min-width: 168px;
+}
+
+.user-status-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.user-next-action-cell {
+  min-width: 172px;
+  padding: 8px;
+  border: 1px solid var(--line-soft);
+  border-left: 4px solid var(--green);
   border-radius: 8px;
-  padding: 8px 9px;
-  color: var(--ink);
   background: #fff;
 }
 
-.user-contact-grid input:focus {
-  border-color: var(--blue);
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(10, 115, 232, 0.12);
+.user-next-action-cell strong,
+.user-next-action-cell small {
+  display: block;
+  min-width: 0;
+}
+
+.user-next-action-cell strong {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.user-next-action-cell small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 730;
+  line-height: 1.25;
+}
+
+.user-next-action-cell.green {
+  border-left-color: var(--green);
+  background: #fbfffd;
+}
+
+.user-next-action-cell.blue {
+  border-left-color: var(--blue);
+  background: #f7fbff;
+}
+
+.user-next-action-cell.amber {
+  border-left-color: var(--amber);
+  background: #fffdf8;
+}
+
+.user-next-action-cell.red {
+  border-left-color: var(--red);
+  background: #fffafa;
+}
+
+.user-table-actions {
+  min-width: 156px;
 }
 
 .permission-editor {
@@ -2097,6 +2241,15 @@ button:disabled {
 .risk-meter strong {
   font-size: 16px;
   line-height: 1;
+}
+
+.risk-meter.compact {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 6px 8px;
+}
+
+.risk-meter.compact strong {
+  font-size: 15px;
 }
 
 .risk-meter.green {
@@ -2177,6 +2330,94 @@ button:disabled {
 .recommended-action.blue {
   border-left-color: var(--blue);
   background: #f7fbff;
+}
+
+.user-detail-drawer {
+  display: grid;
+  gap: 14px;
+}
+
+.user-detail-top .filters-row {
+  min-width: 0;
+}
+
+.user-detail-head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.user-detail-head .avatar {
+  width: 52px;
+  height: 52px;
+  font-size: 17px;
+}
+
+.user-detail-head > div {
+  min-width: 0;
+}
+
+.user-detail-head h2,
+.user-detail-head p {
+  margin: 0;
+}
+
+.user-detail-head h2 {
+  font-size: 22px;
+  line-height: 1.12;
+}
+
+.user-detail-head p {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.user-detail-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 8px;
+}
+
+.user-detail-kpi {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  padding: 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.user-detail-kpi small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 820;
+}
+
+.user-detail-contact-form,
+.user-detail-permission-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.user-permission-modules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.user-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
 }
 
 .security-cadence {
@@ -2324,6 +2565,11 @@ button:disabled {
 .tag.dark {
   background: #eaecf0;
   color: #101828;
+}
+
+.tag.muted-tag {
+  background: #f2f4f7;
+  color: #98a2b3;
 }
 
 .tag.google {
@@ -4267,8 +4513,14 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .bulk-preview-head,
+  .bulk-preview-row {
+    grid-template-columns: 1fr;
+  }
+
   .bulk-suggestion-actions,
-  .bulk-next-step-actions {
+  .bulk-next-step-actions,
+  .bulk-preview-actions {
     justify-content: flex-start;
   }
 

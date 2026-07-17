@@ -32,8 +32,10 @@ const state = {
   recommendations: null,
   reportFilters: { from: "", to: "", clientId: "", employeeId: "", status: "", search: "" },
   userFilters: { search: "", role: "all", security: "all" },
+  selectedUserDetailId: null,
   selectedUserIds: [],
   suggestedUserBulkAction: null,
+  userBulkPending: null,
   userBulkResult: null,
   userSessions: null,
   userActivity: null,
@@ -670,6 +672,15 @@ function roleTag(role) {
   return `<span class="tag ${tone}">${label}</span>`;
 }
 
+function roleLabel(role) {
+  const labels = {
+    super_admin: "Super admin",
+    admin: "Administrador",
+    employee: "Empleado"
+  };
+  return labels[role] || role || "Usuario";
+}
+
 function userCan(permission) {
   if (!permission || permission === "audit") return state.user?.role === "super_admin" || permission !== "audit";
   if (state.user?.role === "super_admin") return true;
@@ -1117,6 +1128,10 @@ function closeDetailPanel() {
   if (state.view === "employees") {
     state.selectedEmployeeId = null;
     state.editEmployeeId = null;
+    return;
+  }
+  if (state.view === "users") {
+    state.selectedUserDetailId = null;
   }
 }
 
@@ -2025,24 +2040,11 @@ function userSecuritySummary(user, duplicateContactUserIds = null, canAct = fals
   `;
 }
 
-function userIdentityCell(user, isSuper) {
+function userIdentityCell(user) {
   return `
     <div class="user-identity-cell">
       <strong>${esc(user.name)}</strong>
       <small class="muted">${esc(user.id)}</small>
-      ${isSuper ? `
-        <form class="user-contact-editor" data-form="user-contact" data-user-id="${esc(user.id)}">
-          <details>
-            <summary>Editar datos</summary>
-            <div class="user-contact-grid">
-              <label>Nombre<input name="name" value="${esc(user.name)}" required /></label>
-              <label>Email<input name="email" type="email" value="${esc(user.email || "")}" /></label>
-              <label>Telefono<input name="phone" value="${esc(user.phone || "")}" /></label>
-            </div>
-            <button class="btn compact primary" type="submit">${icon("check")} Guardar datos</button>
-          </details>
-        </form>
-      ` : ""}
     </div>
   `;
 }
@@ -2059,6 +2061,208 @@ function userContactCell(user) {
         <button class="btn compact ghost" type="button" data-copy-text="${esc(identifier)}" data-copy-label="${esc(copyLabel)}" title="Copiar usuario de acceso">${icon("copy")} Copiar</button>
       </div>
     </div>
+  `;
+}
+
+function userAccessCell(user) {
+  const profile = permissionProfileForUser(user);
+  const employeeLine = user.employeeId
+    ? `<small class="muted">Ficha: ${esc(user.employeeRole || "operario")} · ${esc(user.employeeStatus || "vinculada")}</small>`
+    : user.role === "employee"
+      ? `<small class="muted">Ficha operario pendiente</small>`
+      : `<small class="muted">Sin ficha operario vinculada</small>`;
+  return `
+    <div class="user-access-cell">
+      <div class="filters-row">${roleTag(user.role)}<span class="tag ${profile.tone}">${esc(profile.label)}</span></div>
+      ${permissionSummary(user, false)}
+      ${employeeLine}
+    </div>
+  `;
+}
+
+function userSecuritySnapshot(user, duplicateContactUserIds = null) {
+  const risk = userRiskLevel(user, duplicateContactUserIds);
+  const locked = userIsLocked(user);
+  const sessions = Number(user.activeSessionCount || 0);
+  const flags = userQualityFlags(user, duplicateContactUserIds).slice(0, 2);
+  return `
+    <div class="user-risk-cell">
+      <div class="risk-meter compact ${risk.tone}">
+        <span>Riesgo ${esc(risk.label)}</span>
+        <strong>${esc(risk.score)}</strong>
+      </div>
+      <div class="user-status-pills">
+        <span class="tag ${user.active ? "green" : "red"}">${user.active ? "Activo" : "Bloqueado"}</span>
+        ${locked ? `<span class="tag red">Login bloqueado</span>` : `<span class="tag ${sessions ? "blue" : "muted-tag"}">${sessions} sesion${sessions === 1 ? "" : "es"}</span>`}
+        ${user.recoveryPending ? `<span class="tag amber">Recuperacion</span>` : ""}
+        ${flags.map((flag) => `<span class="tag ${flag.tone}">${esc(flag.label)}</span>`).join("")}
+      </div>
+      <small class="muted">Ultimo acceso: ${esc(shortDateTime(user.lastLoginAt))}</small>
+    </div>
+  `;
+}
+
+function userNextActionCell(user, duplicateContactUserIds = null, isSuper = false) {
+  const recommendation = userRecommendedAction(user, duplicateContactUserIds);
+  if (!recommendation) {
+    return `
+      <div class="user-next-action-cell green">
+        <span class="tag green">OK</span>
+        <small>Sin accion prioritaria</small>
+      </div>
+    `;
+  }
+  return `
+    <div class="user-next-action-cell ${recommendation.tone}">
+      <strong>${esc(recommendation.label)}</strong>
+      <small>${esc(recommendation.detail)}</small>
+      ${userRecommendedActionButton(user, recommendation, isSuper)}
+    </div>
+  `;
+}
+
+function userTableActions(user, isSuper) {
+  if (!isSuper) return `<span class="muted">Solo lectura</span>`;
+  const isSelf = user.id === state.user?.id;
+  const sessions = Number(user.activeSessionCount || 0);
+  return `
+    <div class="table-actions user-table-actions">
+      <button class="btn compact primary" type="button" data-select-user-detail="${esc(user.id)}">Ficha</button>
+      <button class="btn compact" type="button" data-user-activity="${esc(user.id)}">Actividad</button>
+      ${sessions > 0 ? `<button class="btn compact" type="button" data-user-sessions="${esc(user.id)}">Sesiones</button>` : ""}
+      ${userIsLocked(user) ? `<button class="btn compact" type="button" data-unlock-user="${esc(user.id)}">Desbloq.</button>` : ""}
+      ${!isSelf ? `<button class="btn compact ${user.active ? "red" : ""}" type="button" data-user-active="${esc(user.id)}" data-next-active="${user.active ? "false" : "true"}">${user.active ? "Bloq." : "Act."}</button>` : `<span class="muted">Tu usuario</span>`}
+    </div>
+  `;
+}
+
+function userDetailKpi(label, value, tone = "blue") {
+  return `
+    <div class="user-detail-kpi">
+      <span class="tag ${tone}">${esc(value)}</span>
+      <small>${esc(label)}</small>
+    </div>
+  `;
+}
+
+function userPermissionModuleGrid(user) {
+  if (user.role === "super_admin") return `<div class="user-permission-modules"><span class="tag red">Acceso total</span></div>`;
+  if (user.role === "employee") return `<div class="user-permission-modules"><span class="tag blue">Portal empleado</span></div>`;
+  return `
+    <div class="user-permission-modules">
+      ${adminPermissionDefs.map(([key, label]) => `
+        <span class="tag ${permissionEnabled(user.permissions, key) ? "blue" : "muted-tag"}">${esc(label)}</span>
+      `).join("")}
+    </div>
+  `;
+}
+
+function userDetailDrawer(user, duplicateContactUserIds, isSuper) {
+  const isSelf = user.id === state.user?.id;
+  const risk = userRiskLevel(user, duplicateContactUserIds);
+  const profile = permissionProfileForUser(user);
+  const recommendation = userRecommendedAction(user, duplicateContactUserIds);
+  const qualityFlags = userQualityFlags(user, duplicateContactUserIds);
+  const activePermissions = user.role === "admin" ? adminPermissionDefs.filter(([key]) => permissionEnabled(user.permissions, key)).length : 0;
+  const employee = user.employeeId
+    ? (state.data.employees || []).find((item) => item.id === user.employeeId || item.user_id === user.id)
+    : (state.data.employees || []).find((item) => item.user_id === user.id);
+  const selected = (state.selectedUserIds || []).includes(user.id);
+  return `
+    <aside class="panel inspector detail-drawer user-detail-drawer">
+      <div class="drawer-top user-detail-top">
+        <div class="filters-row">
+          <span class="tag ${risk.tone}">Riesgo ${esc(risk.label)} · ${esc(risk.score)}</span>
+          <span class="tag ${user.active ? "green" : "red"}">${user.active ? "Activo" : "Bloqueado"}</span>
+          ${user.recoveryPending ? `<span class="tag amber">Recuperacion</span>` : ""}
+        </div>
+        ${detailDrawerCloseButton("Cerrar ficha")}
+      </div>
+      <div class="user-detail-head">
+        <span class="avatar">${initials(user.name || user.id)}</span>
+        <div>
+          <h2>${esc(user.name || "Usuario")}</h2>
+          <p class="muted">${esc(user.email || user.phone || user.id)} · ${esc(roleLabel(user.role))}</p>
+        </div>
+      </div>
+      <div class="user-detail-kpis">
+        ${userDetailKpi("perfil", profile.label, profile.tone)}
+        ${userDetailKpi("sesiones", Number(user.activeSessionCount || 0), Number(user.activeSessionCount || 0) ? "amber" : "green")}
+        ${userDetailKpi("fallos login", Number(user.failedLoginCount || 0), Number(user.failedLoginCount || 0) ? "red" : "green")}
+        ${userDetailKpi("denegados 7d", Number(user.deniedPermissionCount || 0), Number(user.deniedPermissionCount || 0) ? "red" : "green")}
+        ${user.role === "admin" ? userDetailKpi("permisos", `${activePermissions}/${adminPermissionDefs.length}`, activePermissions >= adminPermissionDefs.length - 2 ? "amber" : "blue") : ""}
+        ${employee ? userDetailKpi("ficha operario", employee.status || "vinculada", employee.status === "activo" ? "green" : "amber") : user.role === "employee" ? userDetailKpi("ficha operario", "sin ficha", "amber") : ""}
+      </div>
+      <div class="inspector-section">
+        <h3>Contacto y acceso</h3>
+        <div class="role-row"><span>Email</span><strong>${esc(user.email || "-")}</strong></div>
+        <div class="role-row"><span>Telefono</span><strong>${esc(user.phone || "-")}</strong></div>
+        <div class="role-row"><span>ID usuario</span><strong>${esc(user.id)}</strong></div>
+        ${contactActions({ phone: user.phone, email: user.email, name: user.name })}
+        ${isSuper ? `
+          <form class="user-detail-contact-form" data-form="user-contact" data-user-id="${esc(user.id)}">
+            <div class="form-grid compact">
+              <div class="field"><label>Nombre</label><input name="name" value="${esc(user.name || "")}" required /></div>
+              <div class="field"><label>Email</label><input name="email" type="email" value="${esc(user.email || "")}" /></div>
+              <div class="field"><label>Telefono</label><input name="phone" value="${esc(user.phone || "")}" /></div>
+            </div>
+            <button class="btn compact primary" type="submit">${icon("check")} Guardar datos</button>
+          </form>
+        ` : ""}
+      </div>
+      <div class="inspector-section">
+        <h3>Seguridad</h3>
+        ${userSecuritySummary(user, duplicateContactUserIds, isSuper)}
+        ${qualityFlags.length ? `<div class="requirements-summary">${qualityFlags.map((flag) => `<span class="tag ${flag.tone}">${esc(flag.label)}</span>`).join("")}</div>` : `<span class="tag green">Sin alertas de calidad</span>`}
+      </div>
+      <div class="inspector-section">
+        <h3>Permisos</h3>
+        ${permissionSummary(user, isSuper)}
+        ${userPermissionModuleGrid(user)}
+        ${isSuper && user.role === "admin" ? `
+          <form class="permission-editor user-detail-permission-form" data-form="user-permissions" data-user-id="${esc(user.id)}">
+            ${permissionPresetButtons(true)}
+            ${permissionChecklist(user.permissions, true)}
+            <button class="btn compact primary" type="submit">${icon("check")} Guardar permisos</button>
+          </form>
+        ` : ""}
+      </div>
+      <div class="inspector-section">
+        <h3>Acciones de trabajo</h3>
+        ${recommendation ? `
+          <div class="recommended-action ${recommendation.tone}">
+            <div>
+              <span>Recomendado</span>
+              <strong>${esc(recommendation.label)}</strong>
+              <small>${esc(recommendation.detail)}</small>
+            </div>
+            ${userRecommendedActionButton(user, recommendation, isSuper)}
+          </div>
+        ` : `<span class="tag green">Sin accion critica</span>`}
+        <div class="user-detail-actions">
+          ${isSuper ? `<button class="btn compact" type="button" data-user-detail-select="${esc(user.id)}">${selected ? "Ya seleccionado" : "Seleccionar en lote"}</button>` : ""}
+          ${isSuper ? `<button class="btn compact" type="button" data-user-activity="${esc(user.id)}">Actividad</button>` : ""}
+          ${isSuper && Number(user.activeSessionCount || 0) > 0 ? `<button class="btn compact" type="button" data-user-sessions="${esc(user.id)}">Sesiones</button>` : ""}
+          ${isSuper && Number(user.activeSessionCount || 0) > 0 && !isSelf ? `<button class="btn compact" type="button" data-revoke-sessions="${esc(user.id)}">Cerrar sesiones</button>` : ""}
+          ${isSuper && user.role === "employee" ? `<button class="btn compact" type="button" data-user-role="${esc(user.id)}" data-next-role="admin">Convertir en admin</button>` : ""}
+          ${isSuper && user.role === "admin" ? `<button class="btn compact" type="button" data-user-role="${esc(user.id)}" data-next-role="employee">Pasar a empleado</button>` : ""}
+          ${isSuper && userIsLocked(user) ? `<button class="btn compact" type="button" data-unlock-user="${esc(user.id)}">Desbloquear</button>` : ""}
+          ${isSuper && user.role !== "employee" ? `<button class="btn compact ${userAccessReviewStale(user) ? "primary" : ""}" type="button" data-review-user="${esc(user.id)}">Marcar revisado</button>` : ""}
+          ${isSuper && user.active ? `<button class="btn compact ${user.recoveryPending ? "primary" : ""}" type="button" data-access-code-user="${esc(user.id)}">Codigo</button>` : ""}
+          ${isSuper ? `<button class="btn compact" type="button" data-reset-user="${esc(user.id)}">Nueva clave</button>` : ""}
+          ${isSuper && !isSelf ? `<button class="btn compact ${user.active ? "red" : ""}" type="button" data-user-active="${esc(user.id)}" data-next-active="${user.active ? "false" : "true"}">${user.active ? "Bloquear acceso" : "Activar acceso"}</button>` : ""}
+        </div>
+      </div>
+      ${employee ? `
+        <div class="inspector-section">
+          <h3>Ficha operario vinculada</h3>
+          <div class="role-row"><span>Operario</span><strong>${esc(employee.name || user.name)}</strong></div>
+          <div class="role-row"><span>Rol</span><strong>${esc(employee.role || user.employeeRole || "-")}</strong></div>
+          <div class="role-row"><span>Estado</span><strong>${esc(employee.status || user.employeeStatus || "-")}</strong></div>
+          <button class="btn compact" type="button" data-open-duplicate="employee:${esc(employee.id)}">Abrir ficha operario</button>
+        </div>
+      ` : ""}
+    </aside>
   `;
 }
 
@@ -2183,6 +2387,7 @@ function cleanSelectedUserIds(users) {
 }
 
 function setSuggestedUserBulkAction(action = "", profile = "") {
+  state.userBulkPending = null;
   const cleanAction = String(action || "");
   if (!cleanAction) {
     state.suggestedUserBulkAction = null;
@@ -2201,6 +2406,7 @@ function setSuggestedBulkActionFromTarget(target, fallbackAction = "", fallbackP
 
 function clearSuggestedUserBulkAction() {
   state.suggestedUserBulkAction = null;
+  state.userBulkPending = null;
 }
 
 function userDailyPlanDefinitions(users, duplicateContactUserIds = null) {
@@ -2517,6 +2723,69 @@ function userBulkSuggestedActionPanel(selectedIds) {
         <button class="btn compact ghost" type="button" data-clear-bulk-suggestion>Quitar</button>
       </div>
     </div>
+  `;
+}
+
+function bulkPreviewStat(label, value, tone = "blue") {
+  return `
+    <div class="bulk-preview-stat">
+      <span class="tag ${tone}">${esc(value)}</span>
+      <small>${esc(label)}</small>
+    </div>
+  `;
+}
+
+function userBulkPendingPanel(users, isSuper) {
+  const pending = state.userBulkPending;
+  if (!isSuper || !pending?.preview) return "";
+  const preview = pending.preview;
+  const rows = preview.results || [];
+  const applicable = rows.filter((item) => item.ok);
+  const omitted = rows.filter((item) => !item.ok);
+  const effects = bulkPreviewEffectSummary(preview);
+  const usersById = new Map((users || []).map((user) => [user.id, user]));
+  const executeDisabled = Number(preview.updated || 0) ? "" : "disabled";
+  return `
+    <section class="panel user-bulk-pending">
+      <div class="bulk-preview-head">
+        <div>
+          <span class="tag ${preview.updated ? "blue" : "amber"}">Previsualizacion segura</span>
+          <h2>${esc(userBulkActionLabel(pending.action, pending.profile))}</h2>
+          <p class="muted">${esc(preview.updated || 0)} aplicables · ${esc(preview.skipped || 0)} omitidos · no se ejecuta nada hasta confirmar.</p>
+        </div>
+        <div class="bulk-preview-actions">
+          <button class="btn compact" type="button" data-user-bulk-pending-select="ok" ${applicable.length ? "" : "disabled"}>Seleccionar aplicables</button>
+          <button class="btn compact ghost" type="button" data-user-bulk-pending-select="fail" ${omitted.length ? "" : "disabled"}>Seleccionar omitidos</button>
+          <button class="btn compact ghost" type="button" data-cancel-user-bulk-pending>${icon("close")} Cancelar</button>
+          <button class="btn compact primary" type="button" data-confirm-user-bulk-pending ${executeDisabled}>Ejecutar ahora</button>
+        </div>
+      </div>
+      <div class="bulk-preview-stats">
+        ${bulkPreviewStat("sesiones a cerrar", effects.sessions, effects.sessions ? "amber" : "green")}
+        ${bulkPreviewStat("revision invalidada", effects.reviewsInvalidated, effects.reviewsInvalidated ? "amber" : "green")}
+        ${bulkPreviewStat("quedan revisados", effects.reviewed, effects.reviewed ? "green" : "blue")}
+        ${bulkPreviewStat("claves forzadas", effects.forcedPasswords, effects.forcedPasswords ? "amber" : "green")}
+        ${bulkPreviewStat("bloqueos", effects.inactiveBlocked, effects.inactiveBlocked ? "red" : "green")}
+        ${bulkPreviewStat("perfiles", effects.profileChanges, effects.profileChanges ? "blue" : "green")}
+      </div>
+      <div class="bulk-preview-list">
+        ${rows.slice(0, 18).map((item) => {
+          const user = usersById.get(item.id);
+          return `
+            <div class="bulk-preview-row ${item.ok ? "ok" : "fail"}">
+              <span class="tag ${item.ok ? "green" : "amber"}">${item.ok ? "Aplicable" : "Omitido"}</span>
+              <div>
+                <strong>${esc(user?.name || item.id)}</strong>
+                <small>${esc(user?.email || user?.phone || item.id)}</small>
+                <small>${item.ok ? esc(userBulkActionLabel(pending.action, item.profile || pending.profile)) : esc(item.error || "No aplicable")}</small>
+              </div>
+              <button class="btn compact ghost" type="button" data-open-duplicate="user:${esc(item.id)}">Ficha</button>
+            </div>
+          `;
+        }).join("") || `<div class="empty compact-empty">Sin usuarios en la previsualizacion.</div>`}
+      </div>
+      ${rows.length > 18 ? `<small class="muted">Mostrando 18 de ${esc(rows.length)} usuarios previsualizados.</small>` : ""}
+    </section>
   `;
 }
 
@@ -2844,6 +3113,7 @@ function usersView() {
   const duplicateContactUserIds = userDuplicateContactUserIds(users, state.data.employees || []);
   const priorityMode = usersPriorityMode(state.userFilters || { search: "", role: "all", security: "all" });
   const visibleUsers = sortUsersByOperationalPriority(filteredUsers(users), state.userFilters, duplicateContactUserIds);
+  const selectedUserDetail = users.find((user) => user.id === state.selectedUserDetailId);
   const isSuper = state.user?.role === "super_admin";
   const activeUsers = users.filter((user) => user.active).length;
   const admins = users.filter((user) => user.role !== "employee" && user.active).length;
@@ -2877,6 +3147,7 @@ function usersView() {
     </section>
     ${userCommandCenter(users, isSuper)}
     ${userBulkBar(users, visibleUsers, isSuper)}
+    ${userBulkPendingPanel(users, isSuper)}
     ${userBulkResultPanel(users, isSuper)}
     ${userSessionsPanel()}
     ${userActivityPanel()}
@@ -2891,55 +3162,28 @@ function usersView() {
         </div>
         <div class="table-wrap">
           <table class="data-table users-table">
-            <thead><tr>${isSuper ? `<th class="select-col"><span class="sr-only">Seleccion</span></th>` : ""}<th>Usuario</th><th>Rol</th><th>Contacto</th><th>Ficha operario</th><th>Permisos</th><th>Seguridad</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <thead><tr>${isSuper ? `<th class="select-col"><span class="sr-only">Seleccion</span></th>` : ""}<th>Usuario</th><th>Contacto</th><th>Acceso</th><th>Riesgo</th><th>Siguiente paso</th><th>Acciones</th></tr></thead>
             <tbody>
               ${visibleUsers.map((user) => {
-                const isSelf = user.id === state.user.id;
                 const selected = (state.selectedUserIds || []).includes(user.id);
+                const detailOpen = state.selectedUserDetailId === user.id;
                 return `
-                  <tr>
+                  <tr class="${detailOpen ? "user-row-active" : ""}">
                     ${isSuper ? `<td class="select-col"><input type="checkbox" data-user-select="${esc(user.id)}" ${selected ? "checked" : ""} aria-label="Seleccionar ${esc(user.name)}" /></td>` : ""}
-                    <td>${userIdentityCell(user, isSuper)}</td>
-                    <td>${roleTag(user.role)}</td>
+                    <td>${userIdentityCell(user)}</td>
                     <td>${userContactCell(user)}</td>
-                    <td>${user.employeeId ? `<strong>${esc(user.employeeRole)}</strong><br /><small class="muted">${esc(user.employeeStatus)}</small>` : `<span class="muted">No vinculada</span>`}</td>
-                    <td>
-                      ${isSuper && user.role === "admin" ? `
-                        <form class="permission-editor" data-form="user-permissions" data-user-id="${esc(user.id)}">
-                          ${permissionSummary(user, isSuper)}
-                          <details>
-                            <summary>Editar</summary>
-                            ${permissionPresetButtons(true)}
-                            ${permissionChecklist(user.permissions, true)}
-                            <button class="btn compact primary" type="submit">${icon("check")} Guardar</button>
-                          </details>
-                        </form>
-                      ` : permissionSummary(user, isSuper)}
-                    </td>
-                    <td>${userSecuritySummary(user, duplicateContactUserIds, isSuper)}</td>
-                    <td>${user.active ? statusTag("confirmado") : `<span class="tag red">Bloqueado</span>`}${userRecoveryStatus(user)}</td>
-                    <td>
-                      <div class="table-actions">
-                        ${isSuper && user.role === "employee" ? `<button class="btn compact" data-user-role="${user.id}" data-next-role="admin">Admin</button>` : ""}
-                        ${isSuper && user.role === "admin" ? `<button class="btn compact" data-user-role="${user.id}" data-next-role="employee">Empleado</button>` : ""}
-                        ${isSuper && userIsLocked(user) ? `<button class="btn compact" data-unlock-user="${user.id}">Desbloq.</button>` : ""}
-                        ${isSuper ? `<button class="btn compact" data-user-activity="${user.id}">Actividad</button>` : ""}
-                        ${isSuper && user.role !== "employee" ? `<button class="btn compact ${userAccessReviewStale(user) ? "primary" : ""}" data-review-user="${user.id}">Revisar</button>` : ""}
-                        ${isSuper && Number(user.activeSessionCount || 0) > 0 ? `<button class="btn compact" data-user-sessions="${user.id}">Sesiones</button>` : ""}
-                        ${isSuper && Number(user.activeSessionCount || 0) > 0 && !isSelf ? `<button class="btn compact" data-revoke-sessions="${user.id}">Cerrar sesiones</button>` : ""}
-                        ${isSuper && user.active ? `<button class="btn compact ${user.recoveryPending ? "primary" : ""}" data-access-code-user="${user.id}">Codigo</button>` : ""}
-                        ${isSuper ? `<button class="btn compact ${user.recoveryPending ? "primary" : ""}" data-reset-user="${user.id}">${user.recoveryPending ? "Nueva clave" : "Clave"}</button>` : ""}
-                        ${isSuper && !isSelf ? `<button class="btn compact ${user.active ? "red" : ""}" data-user-active="${user.id}" data-next-active="${user.active ? "false" : "true"}">${user.active ? "Bloq." : "Act."}</button>` : `<span class="muted">${isSelf ? "Tu usuario" : "Solo lectura"}</span>`}
-                      </div>
-                    </td>
+                    <td>${userAccessCell(user)}</td>
+                    <td>${userSecuritySnapshot(user, duplicateContactUserIds)}</td>
+                    <td>${userNextActionCell(user, duplicateContactUserIds, isSuper)}</td>
+                    <td>${userTableActions(user, isSuper)}</td>
                   </tr>
                 `;
-              }).join("") || `<tr><td colspan="${isSuper ? 9 : 8}"><div class="empty">No hay usuarios con esos filtros.</div></td></tr>`}
+              }).join("") || `<tr><td colspan="${isSuper ? 7 : 6}"><div class="empty">No hay usuarios con esos filtros.</div></td></tr>`}
             </tbody>
           </table>
         </div>
       </div>
-      ${emptySelectionPanel("Alta de usuarios", "Usa Crear usuario para abrir una pantalla limpia con control de duplicados, permisos y clave temporal.")}
+      ${selectedUserDetail ? userDetailDrawer(selectedUserDetail, duplicateContactUserIds, isSuper) : emptySelectionPanel("Alta de usuarios", "Usa Crear usuario para abrir una pantalla limpia con control de duplicados, permisos y clave temporal.")}
     </section>
   `;
 }
@@ -6708,6 +6952,7 @@ async function handleClick(event) {
     state.recommendations = null;
     state.searchQuery = "";
     if (state.selectedEventId === "__closed__" && state.view !== "events") state.selectedEventId = null;
+    if (state.view !== "users") state.selectedUserDetailId = null;
     return renderAdmin();
   }
 
@@ -6757,8 +7002,28 @@ async function handleClick(event) {
     const user = (state.data.users || []).find((item) => item.id === target.dataset.userPrepareAction);
     if (!user) return toast("Usuario no encontrado", "error");
     state.selectedUserIds = [user.id];
+    state.selectedUserDetailId = user.id;
     setSuggestedBulkActionFromTarget(target);
     toast(`Accion preparada para ${user.name || "usuario"}`);
+    return renderAdmin();
+  }
+
+  if (target.dataset.selectUserDetail) {
+    const user = (state.data.users || []).find((item) => item.id === target.dataset.selectUserDetail);
+    if (!user) return toast("Usuario no encontrado", "error");
+    state.selectedUserDetailId = user.id;
+    state.createScreen = null;
+    return renderAdmin();
+  }
+
+  if (target.dataset.userDetailSelect) {
+    const user = (state.data.users || []).find((item) => item.id === target.dataset.userDetailSelect);
+    if (!user) return toast("Usuario no encontrado", "error");
+    const selected = new Set(state.selectedUserIds || []);
+    selected.add(user.id);
+    state.selectedUserIds = Array.from(selected);
+    clearSuggestedUserBulkAction();
+    toast(`${user.name || "Usuario"} seleccionado para lote`);
     return renderAdmin();
   }
 
@@ -6917,36 +7182,32 @@ async function handleClick(event) {
     return renderAdmin();
   }
 
-  if (target.dataset.userBulkAction) {
-    const selected = cleanSelectedUserIds(state.data.users || []);
-    if (!selected.length) return toast("Selecciona usuarios primero", "error");
-    const profile = target.dataset.userBulkProfile || (target.dataset.userBulkAction === "permission_profile"
-      ? target.closest(".user-bulk-bar")?.querySelector("[data-user-bulk-profile]")?.value || "operations"
-      : "");
-    const preview = await api("/api/users/bulk/preview", {
-      method: "POST",
-      body: { action: target.dataset.userBulkAction, userIds: selected, profile }
-    });
-    if (!preview.updated) {
-      state.userBulkResult = {
-        action: preview.action,
-        profile: preview.profile,
-        total: preview.total,
-        updated: preview.updated,
-        skipped: preview.skipped,
-        results: preview.results || [],
-        createdAt: new Date().toISOString(),
-      preview: true
-      };
-      clearSuggestedUserBulkAction();
-      toast("No hay usuarios aplicables para esta accion", "error");
-      return renderAdmin();
-    }
-    const ok = window.confirm(userBulkConfirmationMessage(target.dataset.userBulkAction, state.data.users || [], selected, profile, preview));
-    if (!ok) return toast("Operacion cancelada");
+  if (target.dataset.cancelUserBulkPending !== undefined) {
+    state.userBulkPending = null;
+    return renderAdmin();
+  }
+
+  if (target.dataset.userBulkPendingSelect) {
+    const pending = state.userBulkPending;
+    if (!pending?.preview) return toast("No hay previsualizacion activa", "error");
+    const wantOk = target.dataset.userBulkPendingSelect === "ok";
+    const ids = (pending.preview.results || [])
+      .filter((item) => Boolean(item.ok) === wantOk)
+      .map((item) => item.id);
+    state.selectedUserIds = ids;
+    state.userBulkPending = null;
+    clearSuggestedUserBulkAction();
+    toast(`${ids.length} usuario${ids.length === 1 ? "" : "s"} seleccionado${ids.length === 1 ? "" : "s"}`);
+    return renderAdmin();
+  }
+
+  if (target.dataset.confirmUserBulkPending !== undefined) {
+    const pending = state.userBulkPending;
+    if (!pending?.preview) return toast("No hay previsualizacion activa", "error");
+    if (!Number(pending.preview.updated || 0)) return toast("No hay usuarios aplicables para ejecutar", "error");
     const result = await api("/api/users/bulk", {
       method: "PATCH",
-      body: { action: target.dataset.userBulkAction, userIds: selected, profile }
+      body: { action: pending.action, userIds: pending.userIds || [], profile: pending.profile || "" }
     });
     state.userBulkResult = {
       action: result.action,
@@ -6957,10 +7218,34 @@ async function handleClick(event) {
       results: result.results || [],
       createdAt: new Date().toISOString()
     };
+    state.userBulkPending = null;
     state.selectedUserIds = [];
-    clearSuggestedUserBulkAction();
+    state.suggestedUserBulkAction = null;
     toast(`${result.updated || 0} actualizados${result.skipped ? `, ${result.skipped} omitidos` : ""}`);
     return renderAdmin(true);
+  }
+
+  if (target.dataset.userBulkAction) {
+    const selected = cleanSelectedUserIds(state.data.users || []);
+    if (!selected.length) return toast("Selecciona usuarios primero", "error");
+    const profile = target.dataset.userBulkProfile || (target.dataset.userBulkAction === "permission_profile"
+      ? target.closest(".user-bulk-bar")?.querySelector("[data-user-bulk-profile]")?.value || "operations"
+      : "");
+    const preview = await api("/api/users/bulk/preview", {
+      method: "POST",
+      body: { action: target.dataset.userBulkAction, userIds: selected, profile }
+    });
+    state.userBulkPending = {
+      action: preview.action || target.dataset.userBulkAction,
+      profile: preview.profile || profile,
+      userIds: selected,
+      preview,
+      createdAt: new Date().toISOString()
+    };
+    state.userBulkResult = null;
+    state.suggestedUserBulkAction = null;
+    toast(preview.updated ? "Previsualizacion lista. Revisa y ejecuta cuando quieras." : "No hay usuarios aplicables para esta accion", preview.updated ? "info" : "error");
+    return renderAdmin();
   }
 
   if (target.dataset.reviewUser) {
@@ -7200,6 +7485,7 @@ async function handleClick(event) {
     } else if (type === "user") {
       state.view = "users";
       state.userFilters = { search: id, role: "all", security: "all" };
+      state.selectedUserDetailId = id;
     }
     return renderAdmin();
   }
