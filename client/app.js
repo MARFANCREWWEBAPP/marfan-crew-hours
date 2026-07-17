@@ -13,6 +13,7 @@ const state = {
   selectedEventId: null,
   selectedEventSnapshotId: null,
   eventTrashMode: false,
+  createScreen: null,
   assignmentEventId: null,
   assignmentCandidateId: null,
   editEventId: null,
@@ -767,6 +768,7 @@ function refreshGlobalSearchResults() {
 }
 
 function openGlobalSearchResult(type, id) {
+  state.createScreen = null;
   if (type === "event") {
     state.view = "events";
     state.selectedEventId = id;
@@ -2535,6 +2537,14 @@ function updateEventDraftSummaries() {
 }
 
 function eventsView() {
+  if (state.createScreen === "event") {
+    return creationWorkspace({
+      kind: "event",
+      title: "Crear evento",
+      subtitle: "Alta completa del servicio",
+      formHtml: createEventForm()
+    });
+  }
   const activeEvents = state.data.events || [];
   const deletedEvents = state.data.deletedEvents || [];
   const showingDeleted = Boolean(state.eventTrashMode);
@@ -2553,8 +2563,36 @@ function eventsView() {
         <div class="panel-head"><h2>${showingDeleted ? "Eventos eliminados" : "Todos los eventos"}</h2></div>
         ${eventsTable(visibleEvents, { deleted: showingDeleted })}
       </div>
-      ${selected ? `<aside class="panel inspector">${eventInspector(selected)}</aside>` : showingDeleted ? deletedEventsEmptyState() : createEventForm()}
+      ${selected ? `<aside class="panel inspector">${eventInspector(selected)}</aside>` : showingDeleted ? deletedEventsEmptyState() : emptySelectionPanel("Selecciona un evento", "Elige un servicio de la tabla o crea uno nuevo.")}
     </section>
+  `;
+}
+
+function creationWorkspace({ kind, title, subtitle, formHtml }) {
+  return `
+    <section class="creation-screen ${kind ? `creation-${esc(kind)}` : ""}">
+      <div class="creation-head">
+        <button class="btn" type="button" data-cancel-create>${icon("refresh")} Volver</button>
+        <div>
+          <span class="tag blue">Alta</span>
+          <h1>${esc(title)}</h1>
+          <p>${esc(subtitle)}</p>
+        </div>
+      </div>
+      <div class="creation-body">
+        ${formHtml}
+      </div>
+    </section>
+  `;
+}
+
+function emptySelectionPanel(title, detail) {
+  return `
+    <aside class="panel inspector">
+      <span class="tag blue">Detalle</span>
+      <h2>${esc(title)}</h2>
+      <p class="muted">${esc(detail)}</p>
+    </aside>
   `;
 }
 
@@ -2666,6 +2704,14 @@ function clientEditForm(client) {
 }
 
 function clientsView() {
+  if (state.createScreen === "client") {
+    return creationWorkspace({
+      kind: "client",
+      title: "Crear cliente",
+      subtitle: "Datos fiscales y contacto principal",
+      formHtml: clientForm()
+    });
+  }
   const selected = state.data.clients.find((client) => client.id === state.selectedClientId);
   return `
     <div class="page-head">
@@ -2688,7 +2734,7 @@ function clientsView() {
           </table>
         </div>
       </div>
-      ${selected ? clientDetail(selected) : clientForm()}
+      ${selected ? clientDetail(selected) : emptySelectionPanel("Selecciona un cliente", "Elige una ficha de la tabla o crea un cliente nuevo.")}
     </section>
   `;
 }
@@ -2952,6 +2998,14 @@ function employeeEditForm(employee) {
 }
 
 function employeesView() {
+  if (state.createScreen === "employee") {
+    return creationWorkspace({
+      kind: "employee",
+      title: "Crear operario",
+      subtitle: "Ficha laboral, contacto y portal",
+      formHtml: employeeForm()
+    });
+  }
   const selected = state.data.employees.find((employee) => employee.id === state.selectedEmployeeId);
   return `
     <div class="page-head">
@@ -2971,7 +3025,7 @@ function employeesView() {
           </table>
         </div>
       </div>
-      ${selected ? employeeDetail(selected) : employeeForm()}
+      ${selected ? employeeDetail(selected) : emptySelectionPanel("Selecciona un operario", "Elige una ficha de la tabla o crea un operario nuevo.")}
     </section>
   `;
 }
@@ -4945,6 +4999,7 @@ async function handleSubmit(event) {
       const result = await api("/api/events", { method: "POST", body });
       state.selectedEventId = result.event?.id || state.selectedEventId;
       state.assignmentEventId = result.event?.id || state.assignmentEventId;
+      state.createScreen = null;
       toast("Evento creado");
       await renderAdmin(true);
     }
@@ -4976,7 +5031,9 @@ async function handleSubmit(event) {
       await renderAdmin(true);
     }
     if (type === "client") {
-      await api("/api/clients", { method: "POST", body: formData(form) });
+      const result = await api("/api/clients", { method: "POST", body: formData(form) });
+      state.selectedClientId = result.client?.id || state.selectedClientId;
+      state.createScreen = null;
       toast("Cliente creado");
       await renderAdmin(true);
     }
@@ -5008,7 +5065,9 @@ async function handleSubmit(event) {
         body.role = "Jefe de equipo";
         body.skills = Array.from(new Set([...body.skills, "jefe"]));
       }
-      await api("/api/employees", { method: "POST", body });
+      const result = await api("/api/employees", { method: "POST", body });
+      state.selectedEmployeeId = result.employee?.id || state.selectedEmployeeId;
+      state.createScreen = null;
       toast("Operario creado");
       await renderAdmin(true);
     }
@@ -5229,6 +5288,7 @@ async function handleClick(event) {
 
   if (target.dataset.nav) {
     state.view = target.dataset.nav;
+    state.createScreen = null;
     state.recommendations = null;
     state.searchQuery = "";
     return renderAdmin();
@@ -5465,6 +5525,7 @@ async function handleClick(event) {
   }
 
   if (target.dataset.selectEvent) {
+    state.createScreen = null;
     state.selectedEventId = target.dataset.selectEvent;
     state.editEventId = null;
     state.selectedEventSnapshotId = null;
@@ -5472,6 +5533,7 @@ async function handleClick(event) {
   }
 
   if (target.dataset.eventTrashToggle !== undefined) {
+    state.createScreen = null;
     state.eventTrashMode = !state.eventTrashMode;
     const list = state.eventTrashMode ? (state.data.deletedEvents || []) : (state.data.events || []);
     state.selectedEventId = list[0]?.id || null;
@@ -5495,6 +5557,7 @@ async function handleClick(event) {
     });
     const first = result.events?.[0];
     if (first) {
+      state.createScreen = null;
       state.selectedEventId = first.id;
       state.selectedEventSnapshotId = null;
       state.editEventId = first.id;
@@ -5512,6 +5575,7 @@ async function handleClick(event) {
       body: googleEventImportPayload(googleEvent)
     });
     state.selectedEventId = result.event.id;
+    state.createScreen = null;
     state.selectedEventSnapshotId = null;
     state.editEventId = result.event.id;
     state.assignmentEventId = result.event.id;
@@ -5550,6 +5614,7 @@ async function handleClick(event) {
   }
 
   if (target.dataset.newEvent !== undefined) {
+    state.createScreen = "event";
     state.eventTrashMode = false;
     state.selectedEventId = null;
     state.selectedEventSnapshotId = null;
@@ -5557,25 +5622,34 @@ async function handleClick(event) {
     return renderAdmin();
   }
 
+  if (target.dataset.cancelCreate !== undefined) {
+    state.createScreen = null;
+    return renderAdmin();
+  }
+
   if (target.dataset.selectEmployee) {
+    state.createScreen = null;
     state.selectedEmployeeId = target.dataset.selectEmployee;
     state.editEmployeeId = null;
     return renderAdmin();
   }
 
   if (target.dataset.selectClient) {
+    state.createScreen = null;
     state.selectedClientId = target.dataset.selectClient;
     state.editClientId = null;
     return renderAdmin();
   }
 
   if (target.dataset.newClient !== undefined) {
+    state.createScreen = "client";
     state.selectedClientId = null;
     state.editClientId = null;
     return renderAdmin();
   }
 
   if (target.dataset.editClient) {
+    state.createScreen = null;
     state.selectedClientId = target.dataset.editClient;
     state.editClientId = target.dataset.editClient;
     return renderAdmin();
@@ -5600,12 +5674,14 @@ async function handleClick(event) {
   }
 
   if (target.dataset.newEmployee !== undefined) {
+    state.createScreen = "employee";
     state.selectedEmployeeId = null;
     state.editEmployeeId = null;
     return renderAdmin();
   }
 
   if (target.dataset.editEmployee) {
+    state.createScreen = null;
     state.selectedEmployeeId = target.dataset.editEmployee;
     state.editEmployeeId = target.dataset.editEmployee;
     return renderAdmin();
@@ -5631,6 +5707,7 @@ async function handleClick(event) {
 
   if (target.dataset.editEvent) {
     state.eventTrashMode = false;
+    state.createScreen = null;
     state.editEventId = target.dataset.editEvent;
     state.selectedEventId = target.dataset.editEvent;
     return renderAdmin();
