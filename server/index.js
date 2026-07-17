@@ -507,6 +507,7 @@ function listUserActivity(targetId, limit = 80) {
     "password_recovery_created_by_admin",
     "password_reset_completed",
     "password_changed_by_user",
+    "admin_permission_denied",
     "user_updated"
   ]);
   return {
@@ -737,13 +738,23 @@ function adminPermissionRequiresAll(pathname, method) {
   return false;
 }
 
-function enforceAdminRoutePermission(user, pathname, method) {
+function enforceAdminRoutePermission(user, pathname, method, req = null) {
   if (!user || user.role !== "admin") return;
   const allowed = adminPermissionsForRequest(pathname, method);
-  const hasPermission = adminPermissionRequiresAll(pathname, method)
+  const requiresAll = adminPermissionRequiresAll(pathname, method);
+  const hasPermission = requiresAll
     ? userHasAllPermissions(user, allowed)
     : userHasAnyPermission(user, allowed);
   if (!allowed.length || hasPermission) return;
+  const profile = permissionProfileForUser(user);
+  audit(user, "admin_permission_denied", "user", user.id, {
+    method,
+    path: pathname,
+    requiredPermissions: allowed,
+    requiresAll,
+    permissionProfile: profile.label,
+    ip: req ? requestIp(req) : ""
+  });
   const error = new Error("Modulo no permitido para este administrador");
   error.status = 403;
   throw error;
@@ -6596,7 +6607,7 @@ async function handleApi(req, res, url) {
     return handleGoogleOAuthCallback(req, res, url);
   }
 
-  enforceAdminRoutePermission(user, pathname, method);
+  enforceAdminRoutePermission(user, pathname, method, req);
 
   if (pathname === "/api/auth/login" && method === "POST") {
     const body = await readBody(req);

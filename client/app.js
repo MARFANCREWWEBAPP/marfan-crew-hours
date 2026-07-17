@@ -1588,6 +1588,7 @@ function auditActionLabel(action) {
     login_failed: "Login fallido",
     login_account_locked: "Cuenta bloqueada",
     login_blocked: "Login bloqueado",
+    admin_permission_denied: "Permiso denegado",
     logout: "Cierre de sesion",
     user_created: "Usuario creado",
     user_updated: "Usuario actualizado",

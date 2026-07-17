@@ -879,6 +879,19 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
       body: { name: "Cliente bloqueado permisos", legalName: "Cliente bloqueado permisos SL" }
     });
     assert.equal(restrictedClientCreate.status, 403);
+    const deniedPermissionAudit = await jsonRequest(baseUrl, "/api/audit-logs?action=admin_permission_denied&entity=user", { token: superToken });
+    assert.equal(deniedPermissionAudit.status, 200);
+    assert.equal(deniedPermissionAudit.json.logs.some((item) =>
+      item.entity_id === restrictedAdmin.json.user.id &&
+      item.metadata?.path === "/api/clients" &&
+      item.metadata?.requiredPermissions?.includes("clients")
+    ), true);
+    const restrictedActivity = await jsonRequest(baseUrl, `/api/users/${restrictedAdmin.json.user.id}/activity`, {
+      token: superToken
+    });
+    assert.equal(restrictedActivity.status, 200);
+    assert.equal(restrictedActivity.json.logs.some((item) => item.action === "admin_permission_denied"), true);
+    assert.equal(restrictedActivity.json.summary.security >= 1, true);
 
     const employeesNoImportsAdmin = await jsonRequest(baseUrl, "/api/users", {
       method: "POST",
