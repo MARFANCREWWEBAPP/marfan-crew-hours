@@ -1426,17 +1426,39 @@ button:disabled {
 }
 
 .bulk-actions {
-  display: flex;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 8px;
-  align-items: center;
-  justify-content: flex-end;
+  align-items: stretch;
+}
+
+.bulk-action-group {
+  display: flex;
   flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  align-content: flex-start;
+  padding: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.bulk-action-group > span {
+  flex: 0 0 100%;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 .bulk-profile-action {
   display: inline-flex;
   gap: 6px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .bulk-profile-action select {
@@ -1448,6 +1470,76 @@ button:disabled {
   padding: 6px 8px;
   font-size: 12px;
   font-weight: 750;
+}
+
+.bulk-impact {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-left: 4px solid var(--blue);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.bulk-impact.red {
+  border-left-color: var(--red);
+  background: #fffafa;
+}
+
+.bulk-impact.amber {
+  border-left-color: var(--amber);
+  background: #fffdf8;
+}
+
+.bulk-impact.green {
+  border-left-color: var(--green);
+  background: #fbfffd;
+}
+
+.bulk-impact-main {
+  display: grid;
+  gap: 5px;
+}
+
+.bulk-impact-main strong {
+  font-size: 16px;
+}
+
+.bulk-impact-main small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 730;
+}
+
+.bulk-impact-main .danger-note {
+  color: var(--red);
+}
+
+.bulk-impact-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 6px;
+}
+
+.bulk-impact-stat {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 7px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.bulk-impact-stat small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
 }
 
 .user-bulk-result {
@@ -3670,7 +3762,11 @@ button:disabled {
   }
 
   .bulk-actions {
-    justify-content: flex-start;
+    grid-template-columns: 1fr;
+  }
+
+  .bulk-impact {
+    grid-template-columns: 1fr;
   }
 
   .agenda-row {

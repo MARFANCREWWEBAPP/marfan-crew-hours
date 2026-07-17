@@ -1830,6 +1830,7 @@ function userIdentityCell(user, isSuper) {
 function filteredUsers(users) {
   const filters = state.userFilters || { search: "", role: "all", security: "all" };
   const query = searchableText(filters.search || "").trim();
+  const duplicateContactUserIds = userDuplicateContactUserIds(users, state.data.employees || []);
   return users.filter((user) => {
     const roleOk =
       filters.role === "all" ||
@@ -1840,18 +1841,19 @@ function filteredUsers(users) {
     if (!roleOk) return false;
     const securityOk =
       filters.security === "all" ||
-      (filters.security === "attention" && userNeedsAttention(user)) ||
+      (filters.security === "attention" && userNeedsAttention(user, duplicateContactUserIds)) ||
+      (filters.security === "high_risk" && userRiskScore(user, duplicateContactUserIds) >= 6) ||
       (filters.security === "locked" && userIsLocked(user)) ||
       (filters.security === "recovery" && user.recoveryPending) ||
       (filters.security === "temporary" && user.mustChangePassword) ||
       (filters.security === "review" && userAccessReviewStale(user)) ||
       (filters.security === "inactive_risk" && userInactiveRisk(user)) ||
       (filters.security === "denied" && userDeniedPermissionRisk(user)) ||
-      (filters.security === "duplicate_contact" && userHasDuplicateContactRisk(user)) ||
+      (filters.security === "duplicate_contact" && duplicateContactUserIds.has(user.id)) ||
       (filters.security === "permission_custom" && userHasCustomPermissions(user)) ||
       (filters.security === "sessions" && Number(user.activeSessionCount || 0) > 0) ||
       (filters.security === "stale" && userPasswordStale(user)) ||
-      (filters.security === "quality" && userHasQualityIssues(user));
+      (filters.security === "quality" && userHasQualityIssues(user, duplicateContactUserIds));
     if (!securityOk) return false;
     if (!query) return true;
     return searchableText(user.name, user.email, user.phone, user.id, user.role, user.employeeRole, user.employeeStatus).includes(query);
@@ -1863,6 +1865,7 @@ function userCommandCenter(users, isSuper) {
   const duplicateContactGroups = userContactDuplicateGroups(users, state.data.employees || []);
   const duplicateContactUsers = userDuplicateContactUserIds(users, state.data.employees || []);
   const attention = users.filter((user) => userNeedsAttention(user, duplicateContactUsers));
+  const highRisk = users.filter((user) => userRiskScore(user, duplicateContactUsers) >= 6);
   const locked = users.filter(userIsLocked);
   const recovery = users.filter((user) => user.recoveryPending);
   const temporary = users.filter((user) => user.mustChangePassword);
@@ -1893,6 +1896,7 @@ function userCommandCenter(users, isSuper) {
           <select data-user-filter="security">
             <option value="all" ${filters.security === "all" ? "selected" : ""}>Todo</option>
             <option value="attention" ${filters.security === "attention" ? "selected" : ""}>Requiere atencion</option>
+            <option value="high_risk" ${filters.security === "high_risk" ? "selected" : ""}>Riesgo alto</option>
             <option value="locked" ${filters.security === "locked" ? "selected" : ""}>Bloqueos login</option>
             <option value="recovery" ${filters.security === "recovery" ? "selected" : ""}>Recuperaciones</option>
             <option value="temporary" ${filters.security === "temporary" ? "selected" : ""}>Clave temporal</option>
@@ -1910,6 +1914,7 @@ function userCommandCenter(users, isSuper) {
       </div>
       <div class="user-attention-strip">
         <button class="attention-tile ${attention.length ? "hot" : ""} ${filters.security === "attention" ? "active" : ""}" type="button" data-user-security-filter="attention" aria-pressed="${filters.security === "attention"}"><span>${attention.length}</span><strong>Atencion</strong></button>
+        <button class="attention-tile ${highRisk.length ? "hot" : ""} ${filters.security === "high_risk" ? "active" : ""}" type="button" data-user-security-filter="high_risk" aria-pressed="${filters.security === "high_risk"}"><span>${highRisk.length}</span><strong>Riesgo alto</strong></button>
         <button class="attention-tile ${locked.length ? "hot" : ""} ${filters.security === "locked" ? "active" : ""}" type="button" data-user-security-filter="locked" aria-pressed="${filters.security === "locked"}"><span>${locked.length}</span><strong>Bloqueos</strong></button>
         <button class="attention-tile ${recovery.length ? "hot" : ""} ${filters.security === "recovery" ? "active" : ""}" type="button" data-user-security-filter="recovery" aria-pressed="${filters.security === "recovery"}"><span>${recovery.length}</span><strong>Recuperacion</strong></button>
         <button class="attention-tile ${temporary.length ? "hot" : ""} ${filters.security === "temporary" ? "active" : ""}" type="button" data-user-security-filter="temporary" aria-pressed="${filters.security === "temporary"}"><span>${temporary.length}</span><strong>Clave temporal</strong></button>
@@ -1935,6 +1940,72 @@ function cleanSelectedUserIds(users) {
   return selected;
 }
 
+function selectedUsersForBulk(users, selectedIds) {
+  const usersById = new Map((users || []).map((user) => [user.id, user]));
+  return (selectedIds || []).map((id) => usersById.get(id)).filter(Boolean);
+}
+
+function userBulkImpact(users, selectedIds, duplicateContactUserIds = null) {
+  const riskDuplicateContactUserIds = duplicateContactUserIds || userDuplicateContactUserIds(users, state.data.employees || []);
+  const selectedUsers = selectedUsersForBulk(users, selectedIds);
+  return {
+    users: selectedUsers,
+    total: selectedUsers.length,
+    admins: selectedUsers.filter((user) => user.role !== "employee").length,
+    employees: selectedUsers.filter((user) => user.role === "employee").length,
+    inactive: selectedUsers.filter((user) => !user.active).length,
+    locked: selectedUsers.filter(userIsLocked).length,
+    highRisk: selectedUsers.filter((user) => userRiskScore(user, riskDuplicateContactUserIds) >= 6).length,
+    reviewPending: selectedUsers.filter((user) => user.active && user.role !== "employee" && userAccessReviewStale(user)).length,
+    stalePasswords: selectedUsers.filter((user) => user.active && userPasswordStale(user)).length,
+    customPermissions: selectedUsers.filter(userHasCustomPermissions).length,
+    duplicateContacts: selectedUsers.filter((user) => riskDuplicateContactUserIds.has(user.id)).length,
+    activeSessions: selectedUsers.reduce((sum, user) => sum + Number(user.activeSessionCount || 0), 0),
+    selfIncluded: selectedUsers.some((user) => user.id === state.user?.id)
+  };
+}
+
+function bulkImpactStat(label, value, tone = "blue") {
+  return `
+    <div class="bulk-impact-stat">
+      <span class="tag ${tone}">${esc(value)}</span>
+      <small>${esc(label)}</small>
+    </div>
+  `;
+}
+
+function userBulkImpactPanel(users, selectedIds, duplicateContactUserIds = null) {
+  if (!selectedIds.length) return "";
+  const impact = userBulkImpact(users, selectedIds, duplicateContactUserIds);
+  const tone = impact.highRisk || impact.locked || impact.duplicateContacts ? "red" : impact.reviewPending || impact.stalePasswords || impact.customPermissions ? "amber" : "green";
+  const focus = impact.highRisk
+    ? "Prioridad: cerrar riesgos altos antes de cambios de rutina."
+    : impact.stalePasswords
+      ? "Prioridad: renovar claves y cerrar sesiones antiguas."
+      : impact.reviewPending
+        ? "Prioridad: revisar accesos y permisos pendientes."
+        : "Seleccion lista para ejecutar acciones de administracion.";
+  return `
+    <div class="bulk-impact ${tone}">
+      <div class="bulk-impact-main">
+        <span class="tag ${tone}">Impacto seleccion</span>
+        <strong>${esc(impact.total)} usuario${impact.total === 1 ? "" : "s"} en lote</strong>
+        <small>${esc(focus)}</small>
+        ${impact.selfIncluded ? `<small class="danger-note">Incluye tu usuario: las acciones protegidas se omitiran cuando no sean seguras.</small>` : ""}
+      </div>
+      <div class="bulk-impact-stats">
+        ${bulkImpactStat("admins", impact.admins, "blue")}
+        ${bulkImpactStat("operarios", impact.employees, "blue")}
+        ${bulkImpactStat("riesgo alto", impact.highRisk, impact.highRisk ? "red" : "green")}
+        ${bulkImpactStat("sesiones", impact.activeSessions, impact.activeSessions ? "amber" : "green")}
+        ${bulkImpactStat("revision", impact.reviewPending, impact.reviewPending ? "amber" : "green")}
+        ${bulkImpactStat("clave antigua", impact.stalePasswords, impact.stalePasswords ? "amber" : "green")}
+        ${bulkImpactStat("duplicados", impact.duplicateContacts, impact.duplicateContacts ? "red" : "green")}
+      </div>
+    </div>
+  `;
+}
+
 function userBulkBar(users, visibleUsers, isSuper) {
   if (!isSuper) return "";
   const selectedIds = cleanSelectedUserIds(users);
@@ -1944,6 +2015,8 @@ function userBulkBar(users, visibleUsers, isSuper) {
   const visibleSelectedCount = visibleIds.filter((id) => selected.has(id)).length;
   const allVisibleSelected = Boolean(visibleIds.length) && visibleSelectedCount === visibleIds.length;
   const disabled = selectedIds.length ? "" : "disabled";
+  const hasAttention = visibleUsers.some((user) => userNeedsAttention(user, duplicateContactUserIds));
+  const hasHighRisk = visibleUsers.some((user) => userRiskScore(user, duplicateContactUserIds) >= 6);
   return `
     <section class="panel user-bulk-bar">
       <label class="bulk-select">
@@ -1955,27 +2028,41 @@ function userBulkBar(users, visibleUsers, isSuper) {
         <span>${selectedIds.length === 1 ? "usuario seleccionado" : "usuarios seleccionados"}</span>
       </div>
       <div class="bulk-actions">
-        <button class="btn compact" type="button" data-user-select-attention ${visibleUsers.some(userNeedsAttention) ? "" : "disabled"}>${icon("shield")} Seleccionar alertas</button>
-        <button class="btn compact" type="button" data-user-select-stale-passwords ${visibleUsers.some((user) => user.active && userPasswordStale(user)) ? "" : "disabled"}>${icon("key")} Seleccionar claves antiguas</button>
-        <button class="btn compact" type="button" data-user-select-duplicate-contacts ${duplicateContactUserIds.size ? "" : "disabled"}>Seleccionar duplicados</button>
-        <div class="bulk-profile-action">
-          <select data-user-bulk-profile ${disabled}>
-            ${Object.entries(permissionProfiles).map(([id, profile]) => `<option value="${esc(id)}">${esc(profile.label)}</option>`).join("")}
-          </select>
-          <button class="btn compact" type="button" data-user-bulk-action="permission_profile" ${disabled}>Aplicar perfil</button>
+        <div class="bulk-action-group">
+          <span>Seleccion inteligente</span>
+          <button class="btn compact" type="button" data-user-select-high-risk ${hasHighRisk ? "" : "disabled"}>${icon("shield")} Riesgo alto</button>
+          <button class="btn compact" type="button" data-user-select-attention ${hasAttention ? "" : "disabled"}>Alertas</button>
+          <button class="btn compact" type="button" data-user-select-stale-passwords ${visibleUsers.some((user) => user.active && userPasswordStale(user)) ? "" : "disabled"}>${icon("key")} Claves antiguas</button>
+          <button class="btn compact" type="button" data-user-select-duplicate-contacts ${duplicateContactUserIds.size ? "" : "disabled"}>Duplicados</button>
         </div>
-        <button class="btn compact" type="button" data-user-bulk-action="suggested_profile" ${disabled}>Aplicar sugerido</button>
-        <button class="btn compact" type="button" data-user-bulk-action="unlock" ${disabled}>Desbloquear</button>
-        <button class="btn compact" type="button" data-user-bulk-action="force_password_change" ${disabled}>Forzar cambio clave</button>
-        <button class="btn compact" type="button" data-user-bulk-action="mark_reviewed" ${disabled}>Marcar revisado</button>
-        <button class="btn compact red" type="button" data-user-bulk-action="deactivate_inactive" ${disabled}>Bloquear inactivos</button>
-        <button class="btn compact" type="button" data-user-bulk-action="revoke_sessions" ${disabled}>Cerrar sesiones</button>
-        <button class="btn compact" type="button" data-user-bulk-action="activate" ${disabled}>Activar</button>
-        <button class="btn compact red" type="button" data-user-bulk-action="deactivate" ${disabled}>Bloquear acceso</button>
-        <button class="btn compact ghost" type="button" data-user-select-clear ${disabled}>Limpiar</button>
+        <div class="bulk-action-group">
+          <span>Permisos</span>
+          <div class="bulk-profile-action">
+            <select data-user-bulk-profile ${disabled}>
+              ${Object.entries(permissionProfiles).map(([id, profile]) => `<option value="${esc(id)}">${esc(profile.label)}</option>`).join("")}
+            </select>
+            <button class="btn compact" type="button" data-user-bulk-action="permission_profile" ${disabled}>Aplicar perfil</button>
+          </div>
+          <button class="btn compact" type="button" data-user-bulk-action="suggested_profile" ${disabled}>Aplicar sugerido</button>
+          <button class="btn compact" type="button" data-user-bulk-action="mark_reviewed" ${disabled}>Marcar revisado</button>
+        </div>
+        <div class="bulk-action-group">
+          <span>Seguridad</span>
+          <button class="btn compact" type="button" data-user-bulk-action="unlock" ${disabled}>Desbloquear</button>
+          <button class="btn compact" type="button" data-user-bulk-action="force_password_change" ${disabled}>Forzar cambio clave</button>
+          <button class="btn compact" type="button" data-user-bulk-action="revoke_sessions" ${disabled}>Cerrar sesiones</button>
+        </div>
+        <div class="bulk-action-group">
+          <span>Estado</span>
+          <button class="btn compact" type="button" data-user-bulk-action="activate" ${disabled}>Activar</button>
+          <button class="btn compact red" type="button" data-user-bulk-action="deactivate" ${disabled}>Bloquear acceso</button>
+          <button class="btn compact red" type="button" data-user-bulk-action="deactivate_inactive" ${disabled}>Bloquear inactivos</button>
+          <button class="btn compact ghost" type="button" data-user-select-clear ${disabled}>Limpiar</button>
+        </div>
       </div>
+      ${userBulkImpactPanel(users, selectedIds, duplicateContactUserIds)}
     </section>
-	  `;
+  `;
 }
 
 function userBulkActionLabel(action, profile = "") {
@@ -1991,6 +2078,30 @@ function userBulkActionLabel(action, profile = "") {
     force_password_change: "Forzar cambio de clave"
   };
   return labels[action] || "Accion masiva";
+}
+
+function userBulkConfirmationMessage(action, users, selectedIds, profile = "") {
+  const duplicateContactUserIds = userDuplicateContactUserIds(users, state.data.employees || []);
+  const impact = userBulkImpact(users, selectedIds, duplicateContactUserIds);
+  const lines = [
+    `${userBulkActionLabel(action, profile)}`,
+    "",
+    `Seleccionados: ${impact.total}`,
+    `Administradores: ${impact.admins} · Operarios: ${impact.employees}`,
+    `Riesgo alto: ${impact.highRisk} · Sesiones abiertas: ${impact.activeSessions}`,
+    `Revision pendiente: ${impact.reviewPending} · Clave antigua: ${impact.stalePasswords}`
+  ];
+  const warnings = [];
+  if (impact.selfIncluded) warnings.push("Incluye tu usuario; las operaciones no permitidas sobre tu propia cuenta se omitiran.");
+  if (impact.duplicateContacts) warnings.push(`${impact.duplicateContacts} usuario(s) tienen contacto duplicado.`);
+  if (action === "deactivate") warnings.push("Se bloqueara el acceso y se cerraran sesiones de los usuarios afectados.");
+  if (action === "deactivate_inactive") warnings.push("Solo se bloquearan administradores activos que cumplan la regla de inactividad.");
+  if (action === "revoke_sessions") warnings.push("Se cerraran las sesiones abiertas de los usuarios seleccionados.");
+  if (action === "force_password_change") warnings.push("Se forzara cambio de clave y se cerraran sus sesiones actuales.");
+  if (action === "permission_profile" || action === "suggested_profile") warnings.push("Cambiar permisos cierra sesiones y deja el acceso pendiente de revision.");
+  if (warnings.length) lines.push("", ...warnings);
+  lines.push("", "Continuar?");
+  return lines.join("\n");
 }
 
 function userBulkResultPanel(users, isSuper) {
@@ -6057,9 +6168,20 @@ async function handleClick(event) {
   }
 
   if (target.dataset.userSelectAttention !== undefined) {
+    const duplicateContactUserIds = userDuplicateContactUserIds(state.data.users || [], state.data.employees || []);
     state.selectedUserIds = filteredUsers(state.data.users || [])
-      .filter(userNeedsAttention)
+      .filter((user) => userNeedsAttention(user, duplicateContactUserIds))
       .map((user) => user.id);
+    return renderAdmin();
+  }
+
+  if (target.dataset.userSelectHighRisk !== undefined) {
+    const duplicateContactUserIds = userDuplicateContactUserIds(state.data.users || [], state.data.employees || []);
+    state.selectedUserIds = filteredUsers(state.data.users || [])
+      .filter((user) => userRiskScore(user, duplicateContactUserIds) >= 6)
+      .map((user) => user.id);
+    state.userFilters = state.userFilters || { search: "", role: "all", security: "all" };
+    state.userFilters.security = "high_risk";
     return renderAdmin();
   }
 
@@ -6131,48 +6253,26 @@ async function handleClick(event) {
   if (target.dataset.userBulkAction) {
     const selected = cleanSelectedUserIds(state.data.users || []);
     if (!selected.length) return toast("Selecciona usuarios primero", "error");
-    const labels = {
-      activate: "activar los usuarios seleccionados",
-      deactivate: "bloquear el acceso de los usuarios seleccionados",
-      unlock: "desbloquear login de los usuarios seleccionados",
-      revoke_sessions: "cerrar las sesiones de los usuarios seleccionados",
-      permission_profile: "aplicar un perfil de permisos",
-      suggested_profile: "aplicar el perfil sugerido a usuarios con permisos a medida",
-      mark_reviewed: "marcar los accesos seleccionados como revisados",
-      deactivate_inactive: "bloquear solo administradores inactivos",
-      force_password_change: "forzar cambio de clave y cerrar sesiones"
-    };
     const profile = target.dataset.userBulkAction === "permission_profile"
       ? target.closest(".user-bulk-bar")?.querySelector("[data-user-bulk-profile]")?.value || "operations"
       : "";
-    if (target.dataset.userBulkAction === "permission_profile") {
-      const profileLabel = permissionProfiles[profile]?.label || profile;
-      const ok = window.confirm(`Aplicar perfil "${profileLabel}" a los usuarios seleccionados? Solo se actualizaran administradores operativos.`);
-      if (!ok) return toast("Operacion cancelada");
-    }
-    if (target.dataset.userBulkAction === "suggested_profile") {
-      const ok = window.confirm("Aplicar el perfil sugerido a los administradores seleccionados con permisos a medida? Se cerraran sus sesiones y quedaran pendientes de revision.");
-      if (!ok) return toast("Operacion cancelada");
-    }
-    if (["deactivate", "revoke_sessions", "deactivate_inactive", "force_password_change"].includes(target.dataset.userBulkAction)) {
-      const ok = window.confirm(`Confirmas ${labels[target.dataset.userBulkAction]}?`);
-      if (!ok) return toast("Operacion cancelada");
-    }
-	    const result = await api("/api/users/bulk", {
-	      method: "PATCH",
-	      body: { action: target.dataset.userBulkAction, userIds: selected, profile }
-	    });
-	    state.userBulkResult = {
-	      action: result.action,
-	      profile: result.profile,
-	      total: result.total,
-	      updated: result.updated,
-	      skipped: result.skipped,
-	      results: result.results || [],
-	      createdAt: new Date().toISOString()
-	    };
-	    state.selectedUserIds = [];
-	    toast(`${result.updated || 0} actualizados${result.skipped ? `, ${result.skipped} omitidos` : ""}`);
+    const ok = window.confirm(userBulkConfirmationMessage(target.dataset.userBulkAction, state.data.users || [], selected, profile));
+    if (!ok) return toast("Operacion cancelada");
+    const result = await api("/api/users/bulk", {
+      method: "PATCH",
+      body: { action: target.dataset.userBulkAction, userIds: selected, profile }
+    });
+    state.userBulkResult = {
+      action: result.action,
+      profile: result.profile,
+      total: result.total,
+      updated: result.updated,
+      skipped: result.skipped,
+      results: result.results || [],
+      createdAt: new Date().toISOString()
+    };
+    state.selectedUserIds = [];
+    toast(`${result.updated || 0} actualizados${result.skipped ? `, ${result.skipped} omitidos` : ""}`);
     return renderAdmin(true);
   }
 
