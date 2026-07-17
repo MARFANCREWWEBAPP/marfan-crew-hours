@@ -1101,6 +1101,29 @@ function openGlobalSearchResult(type, id) {
   return renderAdmin();
 }
 
+function closeDetailPanel() {
+  state.createScreen = null;
+  state.selectedEventSnapshotId = null;
+  if (state.view === "events") {
+    state.selectedEventId = "__closed__";
+    state.editEventId = null;
+    return;
+  }
+  if (state.view === "clients") {
+    state.selectedClientId = null;
+    state.editClientId = null;
+    return;
+  }
+  if (state.view === "employees") {
+    state.selectedEmployeeId = null;
+    state.editEmployeeId = null;
+  }
+}
+
+function detailDrawerCloseButton(label = "Cerrar detalle") {
+  return `<button class="btn compact ghost drawer-close" type="button" data-close-detail-panel title="${esc(label)}">${icon("close")} Cerrar</button>`;
+}
+
 function dashboardView() {
   const { dashboard } = state.data;
   return `
@@ -2141,6 +2164,8 @@ function userCommandCenter(users, isSuper) {
         <button class="attention-tile ${stale.length ? "hot" : ""} ${filters.security === "stale" ? "active" : ""}" type="button" data-user-security-filter="stale" aria-pressed="${filters.security === "stale"}"><span>${stale.length}</span><strong>Clave antigua</strong></button>
         <button class="attention-tile ${quality.length ? "hot" : ""} ${filters.security === "quality" ? "active" : ""}" type="button" data-user-security-filter="quality" aria-pressed="${filters.security === "quality"}"><span>${quality.length}</span><strong>Calidad ficha</strong></button>
       </div>
+      ${userDailyPlanPanel(users, isSuper)}
+      ${userRunbookPanel(users, isSuper)}
       ${userOperationsHealthPanel(users, isSuper)}
       ${userContactDuplicatePanel(users, isSuper)}
       ${userActionQueue(users, isSuper)}
@@ -2176,6 +2201,166 @@ function setSuggestedBulkActionFromTarget(target, fallbackAction = "", fallbackP
 
 function clearSuggestedUserBulkAction() {
   state.suggestedUserBulkAction = null;
+}
+
+function userDailyPlanDefinitions(users, duplicateContactUserIds = null) {
+  const collisions = duplicateContactUserIds || userDuplicateContactUserIds(users, state.data.employees || []);
+  const portalHealth = employeePortalHealth(users, state.data.employees || []);
+  return [
+    {
+      id: "critical",
+      tone: "red",
+      title: "Abrir riesgos de acceso",
+      detail: "Bloqueos, denegados, duplicados y cuentas inactivas con impacto directo.",
+      label: "Riesgo",
+      filter: "high_risk",
+      select: (user) => userRiskScore(user, collisions) >= 6
+    },
+    {
+      id: "preventive",
+      tone: "amber",
+      title: "Planificar higiene preventiva",
+      detail: "Claves antiguas, revisiones vencidas y controles que vencen pronto.",
+      label: "Preventivo",
+      filter: "attention",
+      select: (user) => user.active && user.role !== "employee" && (userPasswordStale(user) || userAccessReviewStale(user) || userSecurityDueSoon(user))
+    },
+    {
+      id: "profiles",
+      tone: "blue",
+      title: "Reducir permisos a medida",
+      detail: "Estandariza perfiles para evitar excepciones y revisiones manuales.",
+      label: "Permisos",
+      filter: "permission_custom",
+      action: "suggested_profile",
+      select: userHasCustomPermissions
+    },
+    {
+      id: "portal",
+      tone: portalHealth.actionable ? "amber" : "green",
+      title: "Mantener portal operarios",
+      detail: "Crea, vincula y sincroniza accesos de operarios activos.",
+      label: "Portal",
+      count: portalHealth.actionable,
+      portalAction: true,
+      select: () => false
+    }
+  ].map((item) => ({
+    ...item,
+    count: item.count ?? users.filter(item.select).length
+  }));
+}
+
+function userDailyPlanPanel(users, isSuper) {
+  if (!isSuper) return "";
+  const duplicateContactUserIds = userDuplicateContactUserIds(users, state.data.employees || []);
+  const planItems = userDailyPlanDefinitions(users, duplicateContactUserIds);
+  const total = planItems.reduce((sum, item) => sum + item.count, 0);
+  return `
+    <div class="user-daily-plan">
+      <div class="daily-plan-head">
+        <div>
+          <span class="tag ${total ? "blue" : "green"}">Plan de trabajo</span>
+          <strong>${total}</strong>
+          <small>${total ? "acciones agrupadas para trabajar sin cambiar de pantalla" : "sin trabajo pendiente de usuarios"}</small>
+        </div>
+      </div>
+      <div class="daily-plan-grid">
+        ${planItems.map((item) => `
+          <div class="daily-plan-card ${item.tone}">
+            <div>
+              <span class="tag ${item.tone}">${esc(item.label)}</span>
+              <strong>${esc(item.count)}</strong>
+            </div>
+            <h3>${esc(item.title)}</h3>
+            <p>${esc(item.detail)}</p>
+            ${item.portalAction
+              ? `<button class="btn compact ${item.count ? "primary" : ""}" type="button" data-repair-employee-portals ${item.count ? "" : "disabled"}>Sanear portal</button>`
+              : `<button class="btn compact ${item.count ? "primary" : ""}" type="button" data-user-daily-plan="${esc(item.id)}" ${item.count ? "" : "disabled"}>${item.action ? "Preparar lote" : "Abrir plan"}</button>`}
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function userRunbookDefinitions(users, duplicateContactUserIds = null) {
+  const collisions = duplicateContactUserIds || userDuplicateContactUserIds(users, state.data.employees || []);
+  return [
+    {
+      id: "critical",
+      tone: "red",
+      title: "Cierre de riesgos",
+      detail: "Bloqueos, permisos denegados, duplicados o administradores inactivos.",
+      filter: "high_risk",
+      label: "Usuarios criticos",
+      select: (user) => userRiskScore(user, collisions) >= 6
+    },
+    {
+      id: "passwords",
+      tone: "amber",
+      title: "Rotacion de claves",
+      detail: "Fuerza cambio de clave y cierra sesiones antiguas en accesos activos.",
+      filter: "stale",
+      action: "force_password_change",
+      label: "Claves antiguas",
+      select: (user) => user.active && userPasswordStale(user)
+    },
+    {
+      id: "reviews",
+      tone: "amber",
+      title: "Revision de accesos",
+      detail: "Marca permisos revisados tras validar rol, alcance y responsable.",
+      filter: "review",
+      action: "mark_reviewed",
+      label: "Revisiones",
+      select: (user) => user.active && userAccessReviewStale(user)
+    },
+    {
+      id: "profiles",
+      tone: "blue",
+      title: "Estandarizar permisos",
+      detail: "Convierte permisos a perfiles mantenibles y reduce excepciones.",
+      filter: "permission_custom",
+      action: "suggested_profile",
+      label: "Perfiles a ordenar",
+      select: userHasCustomPermissions
+    }
+  ].map((item) => {
+    const count = users.filter(item.select).length;
+    return { ...item, count };
+  });
+}
+
+function userRunbookPanel(users, isSuper) {
+  if (!isSuper) return "";
+  const duplicateContactUserIds = userDuplicateContactUserIds(users, state.data.employees || []);
+  const runbooks = userRunbookDefinitions(users, duplicateContactUserIds);
+  const pending = runbooks.reduce((sum, item) => sum + item.count, 0);
+  return `
+    <div class="user-runbooks">
+      <div class="runbook-head">
+        <div>
+          <span class="tag ${pending ? "blue" : "green"}">Rutinas recomendadas</span>
+          <strong>${pending}</strong>
+          <small>${pending ? "procesos preparados para trabajar en lote" : "sin rutinas pendientes"}</small>
+        </div>
+        <button class="btn compact" type="button" data-users-security-report>${icon("download")} Informe</button>
+      </div>
+      <div class="runbook-list">
+        ${runbooks.map((item) => `
+          <div class="runbook-row ${item.tone} ${item.count ? "ready" : ""}">
+            <span class="tag ${item.tone}">${esc(item.count)}</span>
+            <div>
+              <strong>${esc(item.title)}</strong>
+              <small>${esc(item.detail)}</small>
+            </div>
+            <button class="btn compact ${item.count ? "primary" : ""}" type="button" data-user-runbook="${esc(item.id)}" ${item.count ? "" : "disabled"}>${item.action ? "Preparar" : "Revisar"}</button>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
 }
 
 function selectedUsersForBulk(users, selectedIds) {
@@ -2243,6 +2428,75 @@ function userBulkImpactPanel(users, selectedIds, duplicateContactUserIds = null)
         ${bulkImpactStat("revision", impact.reviewPending, impact.reviewPending ? "amber" : "green")}
         ${bulkImpactStat("clave antigua", impact.stalePasswords, impact.stalePasswords ? "amber" : "green")}
         ${bulkImpactStat("duplicados", impact.duplicateContacts, impact.duplicateContacts ? "red" : "green")}
+      </div>
+    </div>
+  `;
+}
+
+function userBulkActionPredicate(action, duplicateContactUserIds = null) {
+  const currentUserId = state.user?.id;
+  const duplicateIds = duplicateContactUserIds || userDuplicateContactUserIds(state.data.users || [], state.data.employees || []);
+  const predicates = {
+    activate: (user) => !user.active,
+    deactivate: (user) => user.active && user.id !== currentUserId,
+    unlock: userIsLocked,
+    revoke_sessions: (user) => Number(user.activeSessionCount || 0) > 0,
+    suggested_profile: userHasCustomPermissions,
+    mark_reviewed: (user) => user.role !== "employee" && user.active && userAccessReviewStale(user),
+    deactivate_inactive: (user) => user.id !== currentUserId && userInactiveRisk(user),
+    force_password_change: (user) => user.id !== currentUserId && user.active && userPasswordStale(user),
+    duplicate_contact: (user) => duplicateIds.has(user.id)
+  };
+  return predicates[action] || (() => true);
+}
+
+function userBulkNextStep(users, selectedIds, duplicateContactUserIds = null) {
+  const impact = userBulkImpact(users, selectedIds, duplicateContactUserIds);
+  if (!impact.total) return null;
+  const candidate = (action, title, detail, tone = "blue") => {
+    const predicate = userBulkActionPredicate(action, duplicateContactUserIds);
+    const applicable = impact.users.filter(predicate);
+    return {
+      action,
+      title,
+      detail: `${applicable.length}/${impact.total} ${detail}`,
+      tone,
+      count: applicable.length
+    };
+  };
+  const steps = [
+    candidate("unlock", "Desbloquear accesos bloqueados", "usuarios pueden volver a entrar tras verificar identidad.", "red"),
+    candidate("deactivate_inactive", "Bloquear administradores inactivos", "usuarios cumplen regla de inactividad y pueden cerrarse.", "red"),
+    candidate("force_password_change", "Renovar claves antiguas", "usuarios necesitan cambio de clave y cierre de sesiones.", "amber"),
+    candidate("mark_reviewed", "Cerrar revision de accesos", "usuarios tienen permisos pendientes de validar.", "amber"),
+    candidate("suggested_profile", "Estandarizar permisos", "usuarios pueden pasar a un perfil mantenible.", "blue"),
+    candidate("revoke_sessions", "Cerrar sesiones abiertas", "usuarios tienen sesiones activas que conviene refrescar.", "blue"),
+    candidate("activate", "Reactivar usuarios bloqueados", "usuarios estan sin acceso y pueden reactivarse.", "green")
+  ];
+  return steps.find((step) => step.count > 0) || {
+    action: "",
+    title: "Seleccion sin accion critica",
+    detail: `${impact.total}/${impact.total} usuarios no requieren una accion masiva prioritaria ahora.`,
+    tone: "green",
+    count: impact.total
+  };
+}
+
+function userBulkNextStepPanel(users, selectedIds, duplicateContactUserIds = null) {
+  if (!selectedIds.length || state.suggestedUserBulkAction?.action) return "";
+  const nextStep = userBulkNextStep(users, selectedIds, duplicateContactUserIds);
+  if (!nextStep) return "";
+  const hasAction = Boolean(nextStep.action);
+  return `
+    <div class="bulk-next-step ${esc(nextStep.tone)}">
+      <div class="bulk-next-step-main">
+        <span class="tag ${esc(nextStep.tone)}">Siguiente paso</span>
+        <strong>${esc(nextStep.title)}</strong>
+        <small>${esc(nextStep.detail)}</small>
+      </div>
+      <div class="bulk-next-step-actions">
+        ${hasAction ? `<button class="btn compact ghost" type="button" data-user-refine-bulk="${esc(nextStep.action)}">Solo aplicables</button>` : ""}
+        ${hasAction ? `<button class="btn compact primary" type="button" data-user-bulk-action="${esc(nextStep.action)}">Previsualizar</button>` : `<button class="btn compact ghost" type="button" data-user-select-clear>Limpiar</button>`}
       </div>
     </div>
   `;
@@ -2323,6 +2577,7 @@ function userBulkBar(users, visibleUsers, isSuper) {
         </div>
       </div>
       ${userBulkSuggestedActionPanel(selectedIds)}
+      ${userBulkNextStepPanel(users, selectedIds, duplicateContactUserIds)}
       ${userBulkImpactPanel(users, selectedIds, duplicateContactUserIds)}
     </section>
   `;
@@ -3196,7 +3451,7 @@ function googleEventImportPayload(googleEvent) {
 function eventInspector(event) {
   if (event.external) {
     return `
-      <div>${statusTag("google")}</div>
+      <div class="drawer-top"><div>${statusTag("google")}</div>${detailDrawerCloseButton()}</div>
       <h2>${esc(event.name)}</h2>
       <div class="muted">Evento externo de Google Calendar</div>
       <div class="inspector-section">
@@ -3214,12 +3469,20 @@ function eventInspector(event) {
       </div>
     `;
   }
-  if (state.editEventId === event.id) return eventEditForm(event);
+  if (state.editEventId === event.id) {
+    return `
+      <div class="drawer-top">
+        <span class="tag blue">Editando evento</span>
+        ${detailDrawerCloseButton()}
+      </div>
+      ${eventEditForm(event)}
+    `;
+  }
   if (event.deleted_at) return deletedEventInspector(event);
   const locked = assignmentEventLocked(event);
   const canDeleteEvent = state.user?.role === "super_admin";
   return `
-    <div>${statusTag(event.status)}</div>
+    <div class="drawer-top"><div>${statusTag(event.status)}</div>${detailDrawerCloseButton()}</div>
     <h2>${esc(event.name)}</h2>
     <div class="muted">${esc(event.client_name)} · ${esc(event.location)}</div>
     <div class="inspector-section">
@@ -3268,7 +3531,7 @@ function eventInspector(event) {
 
 function deletedEventInspector(event) {
   return `
-    <div><span class="tag red">Eliminado</span></div>
+    <div class="drawer-top"><div><span class="tag red">Eliminado</span></div>${detailDrawerCloseButton()}</div>
     <h2>${esc(event.name)}</h2>
     <div class="muted">${esc(event.client_name)} · ${esc(event.location)}</div>
     <div class="inspector-section">
@@ -3647,7 +3910,7 @@ function eventsView() {
         <div class="panel-head"><h2>${showingDeleted ? "Eventos eliminados" : "Todos los eventos"}</h2></div>
         ${eventsTable(visibleEvents, { deleted: showingDeleted })}
       </div>
-      ${selected ? `<aside class="panel inspector">${eventInspector(selected)}</aside>` : showingDeleted ? deletedEventsEmptyState() : emptySelectionPanel("Selecciona un evento", "Elige un servicio de la tabla o crea uno nuevo.")}
+      ${selected ? `<aside class="panel inspector detail-drawer">${eventInspector(selected)}</aside>` : showingDeleted ? deletedEventsEmptyState() : emptySelectionPanel("Selecciona un evento", "Elige un servicio de la tabla o crea uno nuevo.")}
     </section>
   `;
 }
@@ -3672,7 +3935,7 @@ function creationWorkspace({ kind, title, subtitle, formHtml }) {
 
 function emptySelectionPanel(title, detail) {
   return `
-    <aside class="panel inspector">
+    <aside class="panel inspector empty-inspector">
       <span class="tag blue">Detalle</span>
       <h2>${esc(title)}</h2>
       <p class="muted">${esc(detail)}</p>
@@ -3682,7 +3945,7 @@ function emptySelectionPanel(title, detail) {
 
 function deletedEventsEmptyState() {
   return `
-    <aside class="panel inspector">
+    <aside class="panel inspector empty-inspector">
       <span class="tag green">Papelera limpia</span>
       <h2>Sin eventos eliminados</h2>
       <p class="muted">Cuando elimines un evento, aparecera aqui para poder restaurarlo con todo su historial.</p>
@@ -3722,10 +3985,13 @@ function clientDetail(client) {
   if (state.editClientId === client.id) return clientEditForm(client);
   const metrics = clientMetrics(client);
   return `
-    <aside class="panel inspector">
-      <div class="row-between">
+    <aside class="panel inspector detail-drawer">
+      <div class="row-between drawer-top">
         <span class="tag blue">Cliente</span>
-        <button class="btn" data-edit-client="${client.id}">${icon("pen")} Editar</button>
+        <div class="filters-row">
+          <button class="btn" data-edit-client="${client.id}">${icon("pen")} Editar</button>
+          ${detailDrawerCloseButton()}
+        </div>
       </div>
       <h2>${esc(client.name)}</h2>
       <div class="muted">${esc(client.legal_name || client.tax_id || "Sin razon social")}</div>
@@ -3768,10 +4034,13 @@ function clientDetail(client) {
 
 function clientEditForm(client) {
   return `
-    <form class="panel inspector" data-form="client-edit" data-client-id="${client.id}">
-      <div class="row-between">
+    <form class="panel inspector detail-drawer" data-form="client-edit" data-client-id="${client.id}">
+      <div class="row-between drawer-top">
         <h2>Editar cliente</h2>
-        <button class="btn" type="button" data-cancel-edit-client>${icon("refresh")} Cancelar</button>
+        <div class="filters-row">
+          <button class="btn" type="button" data-cancel-edit-client>${icon("refresh")} Cancelar</button>
+          ${detailDrawerCloseButton()}
+        </div>
       </div>
       <div class="field"><label>Cliente</label><input name="name" required value="${esc(client.name)}" /></div>
       <div class="field"><label>Razon social</label><input name="legalName" value="${esc(client.legal_name || "")}" /></div>
@@ -3950,10 +4219,13 @@ function employeeDetail(employee) {
   const incidents = (state.data.incidents || []).filter((incident) => incident.employee_id === employee.id);
   const entries = (state.data.timeEntries || []).filter((entry) => entry.employee_id === employee.id);
   return `
-    <aside class="panel inspector">
-      <div class="row-between">
+    <aside class="panel inspector detail-drawer">
+      <div class="row-between drawer-top">
         ${statusTag(employee.status === "activo" ? "confirmado" : "pendiente")}
-        <button class="btn" data-edit-employee="${employee.id}">${icon("pen")} Editar</button>
+        <div class="filters-row">
+          <button class="btn" data-edit-employee="${employee.id}">${icon("pen")} Editar</button>
+          ${detailDrawerCloseButton()}
+        </div>
       </div>
       <div class="employee-detail-head">
         ${employeeAvatar(employee)}
@@ -4008,10 +4280,13 @@ function employeeDetail(employee) {
 function employeeEditForm(employee) {
   const photoInputValue = /^https?:\/\//i.test(String(employee.photo_url || "")) ? employee.photo_url : "";
   return `
-    <form class="panel inspector" data-form="employee-edit" data-employee-id="${employee.id}">
-      <div class="row-between">
+    <form class="panel inspector detail-drawer" data-form="employee-edit" data-employee-id="${employee.id}">
+      <div class="row-between drawer-top">
         <h2>Editar operario</h2>
-        <button class="btn" type="button" data-cancel-edit-employee>${icon("refresh")} Cancelar</button>
+        <div class="filters-row">
+          <button class="btn" type="button" data-cancel-edit-employee>${icon("refresh")} Cancelar</button>
+          ${detailDrawerCloseButton()}
+        </div>
       </div>
       <div class="field"><label>Nombre</label><input name="name" required value="${esc(employee.name)}" /></div>
       <div class="field"><label>Rol</label><select name="role">${["Montaje", "Carga y descarga", "Tecnico", "Runner", "Jefe de equipo", "Carretillero", "Limpieza", "Auxiliar produccion", "Operario"].map((role) => `<option ${employee.role === role ? "selected" : ""}>${role}</option>`).join("")}</select></div>
@@ -6432,6 +6707,12 @@ async function handleClick(event) {
     state.createScreen = null;
     state.recommendations = null;
     state.searchQuery = "";
+    if (state.selectedEventId === "__closed__" && state.view !== "events") state.selectedEventId = null;
+    return renderAdmin();
+  }
+
+  if (target.dataset.closeDetailPanel !== undefined) {
+    closeDetailPanel();
     return renderAdmin();
   }
 
@@ -6478,6 +6759,38 @@ async function handleClick(event) {
     state.selectedUserIds = [user.id];
     setSuggestedBulkActionFromTarget(target);
     toast(`Accion preparada para ${user.name || "usuario"}`);
+    return renderAdmin();
+  }
+
+  if (target.dataset.userRunbook) {
+    const users = state.data.users || [];
+    const duplicateContactUserIds = userDuplicateContactUserIds(users, state.data.employees || []);
+    const runbook = userRunbookDefinitions(users, duplicateContactUserIds)
+      .find((item) => item.id === target.dataset.userRunbook);
+    if (!runbook) return toast("Rutina no encontrada", "error");
+    state.userFilters = { search: "", role: "all", security: runbook.filter || "attention" };
+    state.selectedUserIds = filteredUsers(users)
+      .filter(runbook.select)
+      .map((user) => user.id);
+    if (runbook.action) setSuggestedUserBulkAction(runbook.action);
+    else clearSuggestedUserBulkAction();
+    toast(`${state.selectedUserIds.length} usuario${state.selectedUserIds.length === 1 ? "" : "s"} preparado${state.selectedUserIds.length === 1 ? "" : "s"} · ${runbook.title}`);
+    return renderAdmin();
+  }
+
+  if (target.dataset.userDailyPlan) {
+    const users = state.data.users || [];
+    const duplicateContactUserIds = userDuplicateContactUserIds(users, state.data.employees || []);
+    const plan = userDailyPlanDefinitions(users, duplicateContactUserIds)
+      .find((item) => item.id === target.dataset.userDailyPlan);
+    if (!plan) return toast("Plan no encontrado", "error");
+    state.userFilters = { search: "", role: "all", security: plan.filter || "attention" };
+    state.selectedUserIds = filteredUsers(users)
+      .filter(plan.select)
+      .map((user) => user.id);
+    if (plan.action) setSuggestedUserBulkAction(plan.action);
+    else clearSuggestedUserBulkAction();
+    toast(`${state.selectedUserIds.length} usuario${state.selectedUserIds.length === 1 ? "" : "s"} en plan · ${plan.title}`);
     return renderAdmin();
   }
 
@@ -6587,6 +6900,20 @@ async function handleClick(event) {
 
   if (target.dataset.clearBulkSuggestion !== undefined) {
     clearSuggestedUserBulkAction();
+    return renderAdmin();
+  }
+
+  if (target.dataset.userRefineBulk) {
+    const action = target.dataset.userRefineBulk;
+    const users = state.data.users || [];
+    const selected = selectedUsersForBulk(users, cleanSelectedUserIds(users));
+    const duplicateContactUserIds = userDuplicateContactUserIds(users, state.data.employees || []);
+    const predicate = userBulkActionPredicate(action, duplicateContactUserIds);
+    const ids = selected.filter(predicate).map((user) => user.id);
+    if (!ids.length) return toast("No hay usuarios aplicables en esta seleccion", "error");
+    state.selectedUserIds = ids;
+    setSuggestedUserBulkAction(action);
+    toast(`${ids.length} usuario${ids.length === 1 ? "" : "s"} aplicable${ids.length === 1 ? "" : "s"} · ${userBulkActionLabel(action)}`);
     return renderAdmin();
   }
 
@@ -7524,17 +7851,26 @@ function handleInput(event) {
 
 function handleKeydown(event) {
   const target = event.target;
-  if (target?.dataset?.search === undefined) return;
-  if (event.key === "Escape") {
-    state.searchQuery = "";
-    target.value = "";
-    refreshGlobalSearchResults();
+  if (target?.dataset?.search !== undefined) {
+    if (event.key === "Escape") {
+      state.searchQuery = "";
+      target.value = "";
+      refreshGlobalSearchResults();
+      return;
+    }
+    if (event.key === "Enter") {
+      const first = globalSearchResults()[0];
+      if (!first) return;
+      event.preventDefault();
+      openGlobalSearchResult(first.type, first.id);
+    }
+    return;
   }
-  if (event.key === "Enter") {
-    const first = globalSearchResults()[0];
-    if (!first) return;
-    event.preventDefault();
-    openGlobalSearchResult(first.type, first.id);
+  if (event.key === "Escape" && document.querySelector(".detail-drawer")) {
+    const typing = target?.matches?.("input, textarea, select, [contenteditable='true']");
+    if (typing) return;
+    closeDetailPanel();
+    renderAdmin();
   }
 }
 

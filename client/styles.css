@@ -1370,6 +1370,177 @@ button:disabled {
   color: var(--ink);
 }
 
+.user-daily-plan {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.daily-plan-head > div {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 3px 10px;
+  align-items: center;
+}
+
+.daily-plan-head strong {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.daily-plan-head small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.daily-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(205px, 1fr));
+  gap: 8px;
+}
+
+.daily-plan-card {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-left: 4px solid var(--blue);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.daily-plan-card.red {
+  border-left-color: var(--red);
+}
+
+.daily-plan-card.amber {
+  border-left-color: var(--amber);
+}
+
+.daily-plan-card.green {
+  border-left-color: var(--green);
+}
+
+.daily-plan-card > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.daily-plan-card > div strong {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.daily-plan-card h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.daily-plan-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 730;
+  line-height: 1.28;
+}
+
+.user-runbooks {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.runbook-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.runbook-head > div {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 3px 10px;
+  align-items: center;
+}
+
+.runbook-head strong {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.runbook-head small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.runbook-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px;
+}
+
+.runbook-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line-soft);
+  border-left: 4px solid var(--blue);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.runbook-row.ready {
+  background: #fff;
+}
+
+.runbook-row.red {
+  border-left-color: var(--red);
+}
+
+.runbook-row.amber {
+  border-left-color: var(--amber);
+}
+
+.runbook-row.blue {
+  border-left-color: var(--blue);
+}
+
+.runbook-row strong,
+.runbook-row small {
+  display: block;
+  min-width: 0;
+}
+
+.runbook-row strong {
+  font-size: 13px;
+}
+
+.runbook-row small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 730;
+  line-height: 1.25;
+}
+
 .permission-presets {
   display: flex;
   flex-wrap: wrap;
@@ -1555,6 +1726,56 @@ button:disabled {
 }
 
 .bulk-suggestion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.bulk-next-step {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-left: 4px solid var(--blue);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.bulk-next-step.red {
+  border-left-color: var(--red);
+  background: #fffafa;
+}
+
+.bulk-next-step.amber {
+  border-left-color: var(--amber);
+  background: #fffdf8;
+}
+
+.bulk-next-step.green {
+  border-left-color: var(--green);
+  background: #fbfffd;
+}
+
+.bulk-next-step-main strong,
+.bulk-next-step-main small {
+  display: block;
+}
+
+.bulk-next-step-main strong {
+  margin-top: 4px;
+}
+
+.bulk-next-step-main small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 730;
+}
+
+.bulk-next-step-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -3121,8 +3342,64 @@ button:disabled {
 
 .split-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.45fr);
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(420px, 520px);
+  gap: 18px;
+  align-items: start;
+}
+
+.split-grid:has(> .detail-drawer) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.split-grid:has(> .detail-drawer)::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 38;
+  background: rgba(6, 16, 28, 0.08);
+  pointer-events: none;
+}
+
+.detail-drawer {
+  position: fixed;
+  top: 86px;
+  right: 22px;
+  bottom: 22px;
+  z-index: 45;
+  width: clamp(460px, 36vw, 660px);
+  max-width: calc(100vw - var(--sidebar) - 56px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 18px;
+  box-shadow: 0 24px 80px rgba(16, 24, 40, 0.22);
+  border-color: rgba(10, 115, 232, 0.24);
+}
+
+.detail-drawer > .panel {
+  box-shadow: none;
+}
+
+.drawer-top {
+  position: sticky;
+  top: -18px;
+  z-index: 2;
+  margin: -18px -18px 8px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(10px);
+}
+
+.drawer-top.row-between,
+.drawer-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.drawer-close {
+  min-height: 32px;
 }
 
 .list-grid {
@@ -3907,6 +4184,14 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .detail-drawer {
+    top: 78px;
+    right: 16px;
+    bottom: 16px;
+    width: min(620px, calc(100vw - 32px));
+    max-width: calc(100vw - 32px);
+  }
+
   .user-filter-grid {
     grid-template-columns: repeat(2, minmax(180px, 1fr));
   }
@@ -3978,7 +4263,12 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .bulk-suggestion-actions {
+  .bulk-next-step {
+    grid-template-columns: 1fr;
+  }
+
+  .bulk-suggestion-actions,
+  .bulk-next-step-actions {
     justify-content: flex-start;
   }
 
@@ -4056,6 +4346,23 @@ button:disabled {
 
   .workspace {
     padding: 18px 14px 32px;
+  }
+
+  .detail-drawer {
+    top: 12px;
+    right: 10px;
+    bottom: 10px;
+    left: 10px;
+    width: auto;
+    max-width: none;
+    padding: 14px;
+    z-index: 120;
+  }
+
+  .drawer-top {
+    top: -14px;
+    margin: -14px -14px 8px;
+    padding: 10px 14px;
   }
 
   .cards-grid {
