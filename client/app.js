@@ -33,6 +33,7 @@ const state = {
   reportFilters: { from: "", to: "", clientId: "", employeeId: "", status: "", search: "" },
   userFilters: { search: "", role: "all", security: "all" },
   selectedUserDetailId: null,
+  selectedUserCollisionKey: null,
   selectedUserIds: [],
   suggestedUserBulkAction: null,
   userBulkPending: null,
@@ -40,6 +41,7 @@ const state = {
   userSessions: null,
   userActivity: null,
   userSecurityAction: null,
+  employeePortalRepair: null,
   searchQuery: "",
   eventSnapshots: {},
   publicConfigLoaded: false,
@@ -1134,6 +1136,7 @@ function closeDetailPanel() {
   if (state.view === "users") {
     state.selectedUserDetailId = null;
     state.userSecurityAction = null;
+    state.employeePortalRepair = null;
   }
 }
 
@@ -1376,6 +1379,123 @@ function permissionSummary(user, canAct = false) {
         <div class="permission-drift">
           <span>${esc(permissionDeltaText(suggested))}</span>
           ${canAct ? `<button class="btn compact ghost" type="button" data-user-prepare-action="${esc(user.id)}" data-suggested-bulk-action="suggested_profile">Preparar perfil</button>` : ""}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function permissionProfileGovernanceRows(users = state.data.users || []) {
+  const activeAdmins = (users || []).filter((user) => user.active && user.role !== "employee");
+  const profileRows = [
+    {
+      id: "super_admin",
+      label: "Super admin",
+      tone: "red",
+      detail: "Acceso completo reservado para direccion o responsable tecnico.",
+      users: activeAdmins.filter((user) => permissionProfileForUser(user).id === "super_admin")
+    },
+    ...Object.entries(permissionProfiles).map(([id, profile]) => ({
+      id,
+      label: profile.label,
+      tone: id === "full_admin" ? "red" : "blue",
+      detail: profile.hint,
+      users: activeAdmins.filter((user) => permissionProfileForUser(user).id === id)
+    })),
+    {
+      id: "custom",
+      label: "A medida",
+      tone: "amber",
+      detail: "Excepciones que conviene convertir en perfiles mantenibles.",
+      users: activeAdmins.filter(userHasCustomPermissions)
+    }
+  ];
+  return profileRows;
+}
+
+function permissionSuggestionGroups(users = state.data.users || []) {
+  const groups = new Map();
+  for (const user of users || []) {
+    if (!userHasCustomPermissions(user)) continue;
+    const suggested = suggestedPermissionProfileForUser(user);
+    if (!suggested?.id) continue;
+    const group = groups.get(suggested.id) || {
+      id: suggested.id,
+      label: suggested.label,
+      users: [],
+      added: 0,
+      removed: 0
+    };
+    group.users.push(user);
+    group.added += Number(suggested.added || 0);
+    group.removed += Number(suggested.removed || 0);
+    groups.set(suggested.id, group);
+  }
+  return Array.from(groups.values()).sort((a, b) =>
+    b.users.length - a.users.length ||
+    a.label.localeCompare(b.label)
+  );
+}
+
+function permissionGovernancePanel(users, isSuper) {
+  if (!isSuper) return "";
+  const activeAdmins = (users || []).filter((user) => user.active && user.role !== "employee");
+  const customUsers = activeAdmins.filter(userHasCustomPermissions);
+  const broadUsers = activeAdmins.filter((user) =>
+    user.role === "super_admin" ||
+    (user.role === "admin" && activePermissionCount(user) >= adminPermissionDefs.length - 2)
+  );
+  const staleReviews = activeAdmins.filter(userAccessReviewStale);
+  const profileRows = permissionProfileGovernanceRows(users);
+  const suggestions = permissionSuggestionGroups(users);
+  const tone = customUsers.length || broadUsers.length || staleReviews.length ? "amber" : "green";
+  return `
+    <div class="permission-governance ${tone}">
+      <div class="permission-governance-head">
+        <div>
+          <span class="tag ${tone}">Matriz de permisos</span>
+          <strong>${esc(activeAdmins.length)}</strong>
+          <small>${customUsers.length ? `${customUsers.length} permisos a medida por normalizar` : "perfiles administrativos bajo control"}</small>
+        </div>
+        <div class="permission-governance-actions">
+          <button class="btn compact" type="button" data-user-select-broad-permissions ${broadUsers.length ? "" : "disabled"}>Accesos amplios</button>
+          <button class="btn compact primary" type="button" data-user-select-custom-permissions data-suggested-bulk-action="suggested_profile" ${customUsers.length ? "" : "disabled"}>Estandarizar</button>
+        </div>
+      </div>
+      <div class="permission-governance-stats">
+        ${portalRepairStat("admins activos", activeAdmins.length, "blue")}
+        ${portalRepairStat("a medida", customUsers.length, customUsers.length ? "amber" : "green")}
+        ${portalRepairStat("acceso amplio", broadUsers.length, broadUsers.length ? "red" : "green")}
+        ${portalRepairStat("revision vencida", staleReviews.length, staleReviews.length ? "amber" : "green")}
+      </div>
+      <div class="permission-profile-grid">
+        ${profileRows.map((row) => `
+          <div class="permission-profile-card ${row.tone} ${row.users.length ? "active" : ""}">
+            <div>
+              <span class="tag ${row.tone}">${esc(row.users.length)}</span>
+              <strong>${esc(row.label)}</strong>
+            </div>
+            <small>${esc(row.detail)}</small>
+            <div class="permission-profile-users">
+              ${row.users.slice(0, 4).map((user) => `<button class="btn compact ghost" type="button" data-open-duplicate="user:${esc(user.id)}">${esc(user.name || user.id)}</button>`).join("") || `<span class="muted">Sin usuarios</span>`}
+            </div>
+            <button class="btn compact" type="button" data-user-select-permission-profile="${esc(row.id)}" ${row.users.length ? "" : "disabled"}>Seleccionar perfil</button>
+          </div>
+        `).join("")}
+      </div>
+      ${suggestions.length ? `
+        <div class="permission-suggestion-strip">
+          <div>
+            <strong>Perfiles sugeridos</strong>
+            <small class="muted">Agrupa permisos a medida por el perfil mas cercano antes de aplicar cambios.</small>
+          </div>
+          <div class="permission-suggestion-actions">
+            ${suggestions.map((group) => `
+              <button class="btn compact" type="button" data-user-select-suggested-profile="${esc(group.id)}" data-suggested-bulk-action="permission_profile" data-suggested-bulk-profile="${esc(group.id)}">
+                ${esc(group.label)} · ${esc(group.users.length)}
+              </button>
+            `).join("")}
+          </div>
         </div>
       ` : ""}
     </div>
@@ -1746,7 +1866,7 @@ function employeePortalHealth(users = [], employees = []) {
 function userPortalHealthPanel(users, isSuper) {
   if (!isSuper) return "";
   const health = employeePortalHealth(users, state.data.employees || []);
-  const disabled = health.actionable ? "" : "disabled";
+  const disabled = health.ok ? "disabled" : "";
   return `
     <div class="user-portal-health">
       <div class="portal-health-main">
@@ -1762,6 +1882,227 @@ function userPortalHealthPanel(users, isSuper) {
       </div>
       <button class="btn primary" type="button" data-repair-employee-portals ${disabled}>${icon("shield")} Sanear portal</button>
     </div>
+  `;
+}
+
+function employeePortalRepairPlan(users = state.data.users || [], employees = state.data.employees || []) {
+  const usersById = new Map((users || []).map((user) => [user.id, user]));
+  const employeesByUserId = new Map((employees || [])
+    .filter((employee) => employee.user_id)
+    .map((employee) => [employee.user_id, employee]));
+  const groups = {
+    create: [],
+    link: [],
+    sync: [],
+    conflict: [],
+    skipped: [],
+    orphan: []
+  };
+  const add = (type, employee, detail, user = null) => {
+    groups[type].push({
+      employee,
+      user,
+      detail,
+      contact: employee?.email || employee?.phone || user?.email || user?.phone || ""
+    });
+  };
+  const findUserByContact = (employee, excludeUserId = "") => {
+    const emailKey = contactEmailKey(employee.email);
+    const phoneKey = phoneLoginKey(employee.phone);
+    if (!emailKey && !phoneKey) return null;
+    return (users || []).find((user) => {
+      if (excludeUserId && user.id === excludeUserId) return false;
+      return (emailKey && contactEmailKey(user.email) === emailKey) || (phoneKey && phoneLoginKey(user.phone) === phoneKey);
+    }) || null;
+  };
+  const needsSync = (user, employee) => {
+    const shouldBeActive = employee.status === "activo";
+    return (
+      user.role !== "employee" ||
+      String(user.name || "") !== String(employee.name || "") ||
+      contactEmailKey(user.email) !== contactEmailKey(employee.email) ||
+      phoneLoginKey(user.phone) !== phoneLoginKey(employee.phone) ||
+      Boolean(user.active) !== shouldBeActive
+    );
+  };
+
+  for (const employee of employees || []) {
+    if (employee.user_id) {
+      const linkedUser = usersById.get(employee.user_id);
+      if (!linkedUser) {
+        add("conflict", employee, "La ficha apunta a un usuario inexistente.");
+        continue;
+      }
+      if (linkedUser.role !== "employee") {
+        add("conflict", employee, "La ficha esta vinculada a un administrador.", linkedUser);
+        continue;
+      }
+      if (!employee.email && !employee.phone) {
+        if (employee.status !== "activo" && linkedUser.active) add("sync", employee, "Se desactivara el portal por estado del operario.", linkedUser);
+        else add("skipped", employee, "Ficha vinculada sin email ni telefono. Se conserva el contacto actual.", linkedUser);
+        continue;
+      }
+      const duplicate = findUserByContact(employee, linkedUser.id);
+      if (duplicate) {
+        add("conflict", employee, `Otro usuario ya usa este contacto: ${duplicate.name || duplicate.id}.`, linkedUser);
+        continue;
+      }
+      if (needsSync(linkedUser, employee)) add("sync", employee, "Se igualaran nombre, contacto, rol y estado.", linkedUser);
+      continue;
+    }
+
+    if (employee.status !== "activo") {
+      add("skipped", employee, "Operario no activo. No se crea portal.");
+      continue;
+    }
+    if (!phoneLoginKey(employee.phone)) {
+      add("skipped", employee, "Necesita telefono valido para crear acceso automatico.");
+      continue;
+    }
+    const candidate = findUserByContact(employee);
+    if (candidate) {
+      if (candidate.role !== "employee") {
+        add("conflict", employee, "El contacto pertenece a un administrador.", candidate);
+        continue;
+      }
+      const alreadyLinked = employeesByUserId.get(candidate.id);
+      if (alreadyLinked && alreadyLinked.id !== employee.id) {
+        add("conflict", employee, `Usuario ya vinculado a ${alreadyLinked.name}.`, candidate);
+        continue;
+      }
+      add("link", employee, "Se vinculara con el usuario empleado existente.", candidate);
+      continue;
+    }
+    add("create", employee, "Se creara portal con telefono como clave temporal.");
+  }
+
+  for (const user of users || []) {
+    if (user.role === "employee" && !user.employeeId && !employeesByUserId.has(user.id)) {
+      groups.orphan.push({ user, detail: "Usuario empleado sin ficha operativa vinculada.", contact: user.email || user.phone || user.id });
+    }
+  }
+
+  const actionable = groups.create.length + groups.link.length + groups.sync.length;
+  return {
+    ...groups,
+    actionable,
+    total: actionable + groups.conflict.length + groups.skipped.length + groups.orphan.length
+  };
+}
+
+function portalRepairStat(label, value, tone = "blue") {
+  return `
+    <div>
+      <span class="tag ${tone}">${esc(value)}</span>
+      <small>${esc(label)}</small>
+    </div>
+  `;
+}
+
+function portalRepairRow(item, type) {
+  const labels = {
+    create: ["Crear", "blue"],
+    link: ["Vincular", "green"],
+    sync: ["Sincronizar", "amber"],
+    conflict: ["Conflicto", "red"],
+    skipped: ["Omitido", "muted-tag"],
+    orphan: ["Sin ficha", "amber"],
+    ok: ["Correcto", "green"]
+  };
+  const [label, tone] = labels[type] || labels.skipped;
+  const employee = item.employee;
+  const user = item.user;
+  return `
+    <div class="portal-repair-row ${tone}">
+      <span class="tag ${tone}">${esc(label)}</span>
+      <div>
+        <strong>${esc(employee?.name || user?.name || "Registro")}</strong>
+        <small>${esc(item.detail || "")}</small>
+        <small>${esc(item.contact || employee?.role || user?.role || "")}</small>
+      </div>
+      ${employee ? `<button class="btn compact ghost" type="button" data-open-duplicate="employee:${esc(employee.id)}">Operario</button>` : user ? `<button class="btn compact ghost" type="button" data-open-duplicate="user:${esc(user.id)}">Usuario</button>` : ""}
+    </div>
+  `;
+}
+
+function employeePortalRepairPanel(users, isSuper) {
+  if (!isSuper || !state.employeePortalRepair?.type) return "";
+  const panel = state.employeePortalRepair;
+  if (panel.type === "result") {
+    const result = panel.result || {};
+    const rows = result.results || [];
+    const tone = Number(result.conflicts || 0) ? "amber" : "green";
+    return `
+      <section class="panel portal-repair-panel result">
+        <div class="security-action-head">
+          <div>
+            <span class="tag ${tone}">Portal saneado</span>
+            <h2>Resultado del portal de operarios</h2>
+            <p class="muted">${esc(result.created || 0)} creados · ${esc(result.linked || 0)} vinculados · ${esc(result.synced || 0)} sincronizados · ${esc(result.conflicts || 0)} conflictos.</p>
+          </div>
+          <button class="btn compact ghost" type="button" data-close-employee-portal-repair>${icon("close")} Cerrar</button>
+        </div>
+        <div class="portal-repair-stats">
+          ${portalRepairStat("revisados", result.checked || 0, "blue")}
+          ${portalRepairStat("creados", result.created || 0, "green")}
+          ${portalRepairStat("vinculados", result.linked || 0, "green")}
+          ${portalRepairStat("sincronizados", result.synced || 0, "amber")}
+          ${portalRepairStat("desactivados", result.deactivated || 0, result.deactivated ? "red" : "green")}
+          ${portalRepairStat("conflictos", result.conflicts || 0, result.conflicts ? "red" : "green")}
+        </div>
+        <div class="portal-repair-list">
+          ${rows.slice(0, 18).map((row) => portalRepairRow({
+            employee: { id: row.employeeId, name: row.employeeName },
+            user: row.userId ? { id: row.userId, name: row.userId } : null,
+            detail: row.detail,
+            contact: row.userId || ""
+          }, row.action === "created" ? "create" : row.action === "linked" ? "link" : row.action === "synced" ? "sync" : row.action === "conflict" ? "conflict" : row.action === "ok" ? "ok" : "skipped")).join("") || `<div class="empty compact-empty">No hubo cambios registrados.</div>`}
+        </div>
+        ${rows.length > 18 ? `<small class="muted">Mostrando 18 de ${esc(rows.length)} registros.</small>` : ""}
+      </section>
+    `;
+  }
+
+  const plan = employeePortalRepairPlan(users, state.data.employees || []);
+  const previewRows = [
+    ...plan.conflict.slice(0, 4).map((item) => [item, "conflict"]),
+    ...plan.create.slice(0, 4).map((item) => [item, "create"]),
+    ...plan.link.slice(0, 4).map((item) => [item, "link"]),
+    ...plan.sync.slice(0, 4).map((item) => [item, "sync"]),
+    ...plan.orphan.slice(0, 3).map((item) => [item, "orphan"]),
+    ...plan.skipped.slice(0, 3).map((item) => [item, "skipped"])
+  ].slice(0, 14);
+  const tone = plan.conflict.length ? "amber" : plan.actionable ? "blue" : "green";
+  return `
+    <section class="panel portal-repair-panel ${tone}">
+      <div class="security-action-head">
+        <div>
+          <span class="tag ${tone}">Revision previa</span>
+          <h2>Sanear portal de operarios</h2>
+          <p class="muted">Crea accesos que faltan, vincula usuarios compatibles y sincroniza datos sin tocar claves existentes.</p>
+        </div>
+        <button class="btn compact ghost" type="button" data-close-employee-portal-repair>${icon("close")} Cerrar</button>
+      </div>
+      <div class="portal-repair-stats">
+        ${portalRepairStat("a crear", plan.create.length, plan.create.length ? "blue" : "green")}
+        ${portalRepairStat("a vincular", plan.link.length, plan.link.length ? "green" : "blue")}
+        ${portalRepairStat("a sincronizar", plan.sync.length, plan.sync.length ? "amber" : "green")}
+        ${portalRepairStat("conflictos", plan.conflict.length, plan.conflict.length ? "red" : "green")}
+        ${portalRepairStat("usuarios sin ficha", plan.orphan.length, plan.orphan.length ? "amber" : "green")}
+        ${portalRepairStat("omitidos", plan.skipped.length, plan.skipped.length ? "amber" : "green")}
+      </div>
+      <div class="security-action-warning ${tone === "green" ? "blue" : tone}">
+        <strong>${plan.actionable ? `${plan.actionable} acciones automaticas preparadas` : "No hay acciones automaticas necesarias"}</strong>
+        <small>${plan.conflict.length ? "Hay conflictos que se mostraran para resolver manualmente. La accion automatica omitira los casos no seguros." : "La ejecucion quedara registrada en auditoria y se podra revisar el resultado al terminar."}</small>
+      </div>
+      <div class="portal-repair-list">
+        ${previewRows.map(([item, type]) => portalRepairRow(item, type)).join("") || `<div class="empty compact-empty">Portal de operarios limpio. No hay trabajo automatico pendiente.</div>`}
+      </div>
+      <div class="security-action-actions">
+        <button class="btn compact ghost" type="button" data-close-employee-portal-repair>Cancelar</button>
+        <button class="btn compact primary" type="button" data-confirm-employee-portal-repair ${plan.actionable ? "" : "disabled"}>${icon("shield")} Ejecutar saneado</button>
+      </div>
+    </section>
   `;
 }
 
@@ -1874,10 +2215,65 @@ function userOperationsHealthPanel(users, isSuper) {
   `;
 }
 
+function contactCollisionSeverity(group) {
+  const hasUser = group.members.some((member) => member.type === "user");
+  const hasEmployee = group.members.some((member) => member.type === "employee");
+  if (group.hasAdmin || group.userIds.length > 1) return { tone: "red", label: "Critico", detail: "Puede abrir accesos cruzados o recuperaciones incorrectas." };
+  if (hasUser && hasEmployee) return { tone: "amber", label: "Revisar", detail: "Puede mezclar portal empleado y ficha operativa." };
+  return { tone: "blue", label: "Dato repetido", detail: "Conviene unificar o corregir la ficha duplicada." };
+}
+
+function contactCollisionAdvice(group) {
+  if (group.hasAdmin) return "Prioridad: confirma que ningun administrador comparte email o telefono con otra ficha antes de enviar claves o codigos.";
+  if (group.userIds.length > 1) return "Prioridad: deja un unico usuario con este contacto y cambia el resto a email o telefono propio.";
+  const hasEmployee = group.members.some((member) => member.type === "employee");
+  if (hasEmployee) return "Prioridad: valida si el contacto debe vivir en el portal empleado o solo en la ficha operativa.";
+  return "Prioridad: abre las fichas afectadas y decide cual conserva este contacto.";
+}
+
+function contactCollisionFocusPanel(group) {
+  if (!group) return "";
+  const severity = contactCollisionSeverity(group);
+  return `
+    <div class="collision-focus ${severity.tone}">
+      <div class="collision-focus-head">
+        <div>
+          <span class="tag ${severity.tone}">${esc(severity.label)}</span>
+          <h3>${esc(contactCollisionKindLabel(group.kind))}: ${esc(group.value)}</h3>
+          <p>${esc(severity.detail)}</p>
+        </div>
+        <button class="btn compact ghost" type="button" data-close-user-collision>${icon("close")} Cerrar</button>
+      </div>
+      <div class="collision-advice">
+        <strong>${esc(contactCollisionAdvice(group))}</strong>
+        <small>Resuelve primero la ficha que tiene acceso al sistema. Despues actualiza la ficha secundaria para que no comparta el mismo dato.</small>
+      </div>
+      <div class="collision-focus-list">
+        ${group.members.map((member) => `
+          <div class="collision-focus-row">
+            <span class="tag ${member.type === "user" ? "blue" : "green"}">${member.type === "user" ? "Usuario" : "Operario"}</span>
+            <div>
+              <strong>${esc(member.label)}</strong>
+              <small>${esc(member.meta)}</small>
+            </div>
+            <button class="btn compact" type="button" data-open-duplicate="${esc(member.type)}:${esc(member.id)}">Abrir ficha</button>
+          </div>
+        `).join("")}
+      </div>
+      <div class="collision-focus-actions">
+        <button class="btn compact" type="button" data-copy-text="${esc(group.value)}" data-copy-label="Contacto copiado">${icon("copy")} Copiar contacto</button>
+        <button class="btn compact" type="button" data-user-security-filter="duplicate_contact">Ver todos</button>
+        <button class="btn compact primary" type="button" data-user-select-duplicate-group="${esc(group.key)}" ${group.userIds.length ? "" : "disabled"}>Seleccionar usuarios</button>
+      </div>
+    </div>
+  `;
+}
+
 function userContactDuplicatePanel(users, isSuper) {
   if (!isSuper) return "";
   const groups = userContactDuplicateGroups(users, state.data.employees || []);
   const userCount = new Set(groups.flatMap((group) => group.userIds)).size;
+  const selectedGroup = groups.find((group) => group.key === state.selectedUserCollisionKey);
   return `
     <div class="user-contact-collisions ${groups.length ? "warn" : "ok"}">
       <div class="collision-head">
@@ -1889,10 +2285,11 @@ function userContactDuplicatePanel(users, isSuper) {
         <button class="btn compact" type="button" data-user-select-duplicate-contacts ${groups.length ? "" : "disabled"}>Seleccionar usuarios</button>
       </div>
       ${groups.length ? `
+        ${contactCollisionFocusPanel(selectedGroup)}
         <div class="collision-list">
           ${groups.slice(0, 6).map((group) => `
-            <div class="collision-row">
-              <span class="tag ${group.hasAdmin ? "red" : "amber"}">${contactCollisionKindLabel(group.kind)}</span>
+            <div class="collision-row ${state.selectedUserCollisionKey === group.key ? "active" : ""}">
+              <span class="tag ${contactCollisionSeverity(group).tone}">${contactCollisionKindLabel(group.kind)}</span>
               <div class="collision-main">
                 <strong>${esc(group.members.length)} fichas comparten ${esc(group.value)}</strong>
                 <div class="collision-members">
@@ -1902,7 +2299,10 @@ function userContactDuplicatePanel(users, isSuper) {
                 </div>
                 <small>${esc(group.members.map((member) => `${member.label} (${member.meta})`).join(" · "))}</small>
               </div>
-              <button class="btn compact" type="button" data-user-select-duplicate-group="${esc(group.key)}" ${group.userIds.length ? "" : "disabled"}>Seleccionar grupo</button>
+              <div class="collision-row-actions">
+                <button class="btn compact primary" type="button" data-user-collision-focus="${esc(group.key)}">Resolver</button>
+                <button class="btn compact ghost" type="button" data-user-select-duplicate-group="${esc(group.key)}" ${group.userIds.length ? "" : "disabled"}>Seleccionar</button>
+              </div>
             </div>
           `).join("")}
         </div>
@@ -2517,6 +2917,7 @@ function userCommandCenter(users, isSuper) {
       </div>
       ${userDailyPlanPanel(users, isSuper)}
       ${userRunbookPanel(users, isSuper)}
+      ${permissionGovernancePanel(users, isSuper)}
       ${userOperationsHealthPanel(users, isSuper)}
       ${userContactDuplicatePanel(users, isSuper)}
       ${userActionQueue(users, isSuper)}
@@ -2559,6 +2960,7 @@ function clearSuggestedUserBulkAction() {
 function userDailyPlanDefinitions(users, duplicateContactUserIds = null) {
   const collisions = duplicateContactUserIds || userDuplicateContactUserIds(users, state.data.employees || []);
   const portalHealth = employeePortalHealth(users, state.data.employees || []);
+  const portalWork = portalHealth.actionable + portalHealth.blockedByContact;
   return [
     {
       id: "critical",
@@ -2590,11 +2992,11 @@ function userDailyPlanDefinitions(users, duplicateContactUserIds = null) {
     },
     {
       id: "portal",
-      tone: portalHealth.actionable ? "amber" : "green",
+      tone: portalWork ? "amber" : "green",
       title: "Mantener portal operarios",
       detail: "Crea, vincula y sincroniza accesos de operarios activos.",
       label: "Portal",
-      count: portalHealth.actionable,
+      count: portalWork,
       portalAction: true,
       select: () => false
     }
@@ -2794,6 +3196,7 @@ function userBulkActionPredicate(action, duplicateContactUserIds = null) {
     deactivate: (user) => user.active && user.id !== currentUserId,
     unlock: userIsLocked,
     revoke_sessions: (user) => Number(user.activeSessionCount || 0) > 0,
+    permission_profile: (user) => user.role === "admin",
     suggested_profile: userHasCustomPermissions,
     mark_reviewed: (user) => user.role !== "employee" && user.active && userAccessReviewStale(user),
     deactivate_inactive: (user) => user.id !== currentUserId && userInactiveRisk(user),
@@ -3146,6 +3549,18 @@ function userSecurityActionCopy(action) {
       detail: "Registra que rol, permisos y responsable han sido validados.",
       button: "Marcar revisado",
       tone: "blue"
+    },
+    set_active: {
+      title: "Cambiar estado de acceso",
+      detail: "Activa o bloquea el acceso del usuario con registro en auditoria.",
+      button: "Confirmar estado",
+      tone: "red"
+    },
+    change_role: {
+      title: "Cambiar rol de usuario",
+      detail: "Actualiza el tipo de acceso y deja los permisos pendientes de revision.",
+      button: "Confirmar rol",
+      tone: "amber"
     }
   };
   return labels[action] || labels.access_code;
@@ -3159,14 +3574,22 @@ function userSecurityActionResultPanel(action, user) {
       ? "Clave temporal actualizada"
       : action.type === "review_access_result"
         ? "Acceso revisado"
-        : "Sesiones cerradas";
+        : action.type === "set_active_result"
+          ? action.active ? "Acceso activado" : "Acceso bloqueado"
+          : action.type === "change_role_result"
+            ? "Rol actualizado"
+            : "Sesiones cerradas";
   const detail = action.type === "access_code_result"
     ? `Caduca ${shortDateTime(action.expiresAt)}. El usuario debe entrar en recuperacion y crear su clave privada.`
     : action.type === "reset_password_result"
       ? "La clave queda marcada como temporal y debe cambiarse en el siguiente acceso."
       : action.type === "review_access_result"
         ? "Permisos y rol quedan revisados desde administracion."
-        : `${Number(action.revoked || 0)} sesion${Number(action.revoked || 0) === 1 ? "" : "es"} cerrada${Number(action.revoked || 0) === 1 ? "" : "s"}.`;
+        : action.type === "set_active_result"
+          ? action.active ? "El usuario puede volver a entrar si sus credenciales son validas." : "El usuario queda sin acceso y sus sesiones se cierran."
+          : action.type === "change_role_result"
+            ? `Nuevo rol: ${roleLabel(action.nextRole)}. Revisa permisos antes de cerrar la ficha.`
+            : `${Number(action.revoked || 0)} sesion${Number(action.revoked || 0) === 1 ? "" : "es"} cerrada${Number(action.revoked || 0) === 1 ? "" : "s"}.`;
   return `
     <section class="panel user-security-action-panel result">
       <div class="security-action-head">
@@ -3196,6 +3619,7 @@ function userSecurityActionPanel(users, isSuper) {
   if (!user) return "";
   if (action.type.endsWith("_result")) return userSecurityActionResultPanel(action, user);
   const copy = userSecurityActionCopy(action.type);
+  const actionTone = action.type === "set_active" ? action.nextActive ? "blue" : "red" : copy.tone;
   const sessions = Number(user.activeSessionCount || 0);
   const session = action.sessionId
     ? (state.userSessions?.sessions || []).find((item) => item.id === action.sessionId)
@@ -3206,21 +3630,27 @@ function userSecurityActionPanel(users, isSuper) {
       ? "Se copiara la clave al portapapeles para enviarla por un canal seguro."
       : action.type === "review_access"
         ? "Se guardara una revision de acceso con fecha, usuario responsable y trazabilidad."
-        : "La sesion se cerrara al confirmar y quedara registrada en auditoria.";
+        : action.type === "set_active"
+          ? action.nextActive ? "Se reactivara el acceso. Revisa despues que el contacto y permisos sean correctos." : "Se bloqueara el acceso y se cerraran sesiones activas de este usuario."
+          : action.type === "change_role"
+            ? "Cambiar rol puede alterar el alcance de acceso. Revisa permisos y sesiones tras confirmar."
+            : "La sesion se cerrara al confirmar y quedara registrada en auditoria.";
   return `
-    <section class="panel user-security-action-panel ${copy.tone}">
+    <section class="panel user-security-action-panel ${actionTone}">
       <div class="security-action-head">
         <div>
-          <span class="tag ${copy.tone}">Accion segura</span>
+          <span class="tag ${actionTone}">Accion segura</span>
           <h2>${esc(copy.title)}</h2>
           <p class="muted">${esc(user.name || "Usuario")} · ${esc(copy.detail)}</p>
         </div>
         <button class="btn compact ghost" type="button" data-close-user-security-action>${icon("close")} Cerrar</button>
       </div>
-      <form class="security-action-form" data-form="user-security-action" data-security-action="${esc(action.type)}" data-user-id="${esc(user.id)}" ${action.sessionId ? `data-session-id="${esc(action.sessionId)}"` : ""}>
+      <form class="security-action-form" data-form="user-security-action" data-security-action="${esc(action.type)}" data-user-id="${esc(user.id)}" ${action.sessionId ? `data-session-id="${esc(action.sessionId)}"` : ""} ${action.nextActive !== undefined ? `data-next-active="${esc(action.nextActive ? "true" : "false")}"` : ""} ${action.nextRole ? `data-next-role="${esc(action.nextRole)}"` : ""}>
         <div class="security-action-summary">
           <div><span>Usuario</span><strong>${esc(user.email || user.phone || user.id)}</strong></div>
           <div><span>Rol</span><strong>${esc(roleLabel(user.role))}</strong></div>
+          ${action.type === "change_role" ? `<div><span>Nuevo rol</span><strong>${esc(roleLabel(action.nextRole))}</strong></div>` : ""}
+          ${action.type === "set_active" ? `<div><span>Nuevo estado</span><strong>${esc(action.nextActive ? "Activo" : "Bloqueado")}</strong></div>` : ""}
           <div><span>Sesiones</span><strong>${esc(sessions)}</strong></div>
           ${session ? `<div><span>Dispositivo</span><strong>${esc(shortDevice(session.userAgent) || "Dispositivo")}</strong></div>` : ""}
         </div>
@@ -3238,17 +3668,63 @@ function userSecurityActionPanel(users, isSuper) {
             <small class="muted">Minimo 8 caracteres con letras y numeros. Se marcara cambio obligatorio.</small>
           </div>
         ` : ""}
-        <div class="security-action-warning ${copy.tone}">
+        <div class="security-action-warning ${actionTone}">
           <strong>${esc(copy.button)}</strong>
           <small>${esc(warningText)}</small>
         </div>
         <div class="security-action-actions">
           <button class="btn compact ghost" type="button" data-close-user-security-action>Cancelar</button>
-          <button class="btn compact ${copy.tone === "red" ? "red" : "primary"}" type="submit">${copy.button}</button>
+          <button class="btn compact ${actionTone === "red" ? "red" : "primary"}" type="submit">${copy.button}</button>
         </div>
       </form>
     </section>
   `;
+}
+
+function hoursUntil(value) {
+  if (!value) return null;
+  const date = new Date(String(value).replace(" ", "T"));
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.floor((date.getTime() - Date.now()) / (60 * 60 * 1000));
+}
+
+function sessionRisk(session) {
+  const idleDays = daysSince(session.lastSeenAt || session.createdAt);
+  const expiresHours = hoursUntil(session.expiresAt);
+  if (session.currentSession) {
+    return { tone: "green", label: "Actual", detail: "Sesion usada ahora por administracion." };
+  }
+  if (idleDays !== null && idleDays >= 14) {
+    return { tone: "red", label: "Antigua", detail: `Sin uso desde hace ${idleDays} dias.` };
+  }
+  if (idleDays !== null && idleDays >= 3) {
+    return { tone: "amber", label: "Revisar", detail: `Sin uso desde hace ${idleDays} dias.` };
+  }
+  if (expiresHours !== null && expiresHours <= 24) {
+    return { tone: "blue", label: "Caduca pronto", detail: `Caduca en ${Math.max(0, expiresHours)} horas.` };
+  }
+  return { tone: "green", label: "Reciente", detail: "Uso reciente y sin alertas." };
+}
+
+function sessionDeviceLabel(session) {
+  const device = shortDevice(session.userAgent) || "Dispositivo";
+  const agent = String(session.userAgent || "");
+  if (/Safari/i.test(agent) && !/Chrome|Chromium/i.test(agent)) return `${device} · Safari`;
+  if (/Chrome|Chromium/i.test(agent)) return `${device} · Chrome`;
+  if (/Firefox/i.test(agent)) return `${device} · Firefox`;
+  return device;
+}
+
+function sessionSecuritySummary(sessions = []) {
+  const risks = sessions.map(sessionRisk);
+  const stale = risks.filter((risk) => risk.tone === "red" || risk.label === "Revisar").length;
+  const expiring = sessions.filter((session) => {
+    const hours = hoursUntil(session.expiresAt);
+    return hours !== null && hours <= 24;
+  }).length;
+  const current = sessions.filter((session) => session.currentSession).length;
+  const ipCount = new Set(sessions.map((session) => session.ipAddress).filter(Boolean)).size;
+  return { stale, expiring, current, ipCount };
 }
 
 function userSessionsPanel() {
@@ -3256,6 +3732,9 @@ function userSessionsPanel() {
   if (!panel?.userId) return "";
   const user = (state.data.users || []).find((item) => item.id === panel.userId) || panel.user || {};
   const sessions = panel.sessions || [];
+  const summary = sessionSecuritySummary(sessions);
+  const revokable = sessions.filter((session) => !session.currentSession).length || (user.id !== state.user?.id ? sessions.length : 0);
+  const panelTone = summary.stale ? "amber" : sessions.length > 1 ? "blue" : "green";
   return `
     <section class="panel user-session-panel">
       <div class="panel-head">
@@ -3264,23 +3743,36 @@ function userSessionsPanel() {
           <p class="muted">${esc(user.name || "Usuario")} · ${sessions.length} abiertas</p>
         </div>
         <div class="filters-row">
+          <span class="tag ${panelTone}">${summary.stale ? `${summary.stale} revisar` : sessions.length > 1 ? "Varias sesiones" : "Controlado"}</span>
+          <button class="btn compact ${summary.stale ? "red" : ""}" type="button" data-revoke-sessions="${esc(panel.userId)}" ${revokable ? "" : "disabled"}>Cerrar otras</button>
           <button class="btn compact" type="button" data-user-sessions="${esc(panel.userId)}">${icon("refresh")} Actualizar</button>
           <button class="btn compact ghost" type="button" data-close-user-sessions>${icon("close")} Cerrar</button>
         </div>
       </div>
+      <div class="session-summary">
+        ${portalRepairStat("sesiones", sessions.length, sessions.length > 1 ? "blue" : "green")}
+        ${portalRepairStat("actual", summary.current, summary.current ? "green" : "blue")}
+        ${portalRepairStat("a revisar", summary.stale, summary.stale ? "amber" : "green")}
+        ${portalRepairStat("caducan pronto", summary.expiring, summary.expiring ? "blue" : "green")}
+        ${portalRepairStat("IPs", summary.ipCount, summary.ipCount > 1 ? "amber" : "green")}
+      </div>
       <div class="session-list">
-        ${sessions.map((session) => `
-          <div class="session-row">
+        ${sessions.map((session) => {
+          const risk = sessionRisk(session);
+          return `
+          <div class="session-row ${risk.tone}">
+            <span class="tag ${risk.tone}">${esc(risk.label)}</span>
             <div>
-              <strong>${esc(shortDevice(session.userAgent) || "Dispositivo")}</strong>
-              <small class="muted">${esc(session.ipAddress || "IP no registrada")}</small>
+              <strong>${esc(sessionDeviceLabel(session))}</strong>
+              <small class="muted">${esc(session.ipAddress || "IP no registrada")} · creada ${esc(shortDateTime(session.createdAt))}</small>
               <small>Ultimo uso: ${esc(shortDateTime(session.lastSeenAt))} · Caduca: ${esc(shortDateTime(session.expiresAt))}</small>
+              <small>${esc(risk.detail)}</small>
             </div>
             <div class="session-actions">
               ${session.currentSession ? `<span class="tag green">Sesion actual</span>` : `<button class="btn compact red" type="button" data-revoke-session="${esc(session.id)}" data-session-user="${esc(panel.userId)}">Cerrar sesion</button>`}
             </div>
           </div>
-        `).join("") || `<div class="empty">Sin sesiones activas.</div>`}
+        `; }).join("") || `<div class="empty">Sin sesiones activas.</div>`}
       </div>
     </section>
   `;
@@ -3432,6 +3924,7 @@ function usersView() {
     ${userBulkBar(users, visibleUsers, isSuper)}
     ${userBulkPendingPanel(users, isSuper)}
     ${userBulkResultPanel(users, isSuper)}
+    ${employeePortalRepairPanel(users, isSuper)}
     ${userSecurityActionPanel(users, isSuper)}
     ${userSessionsPanel()}
     ${userActivityPanel()}
@@ -6904,6 +7397,39 @@ async function submitUserSecurityAction(form) {
     await renderAdmin(true);
     return;
   }
+  if (action === "set_active") {
+    const nextActive = form.dataset.nextActive === "true";
+    await api(`/api/users/${userId}`, {
+      method: "PATCH",
+      body: { active: nextActive }
+    });
+    state.userSecurityAction = {
+      type: "set_active_result",
+      userId,
+      active: nextActive,
+      createdAt: new Date().toISOString()
+    };
+    toast(nextActive ? "Usuario activado" : "Usuario bloqueado");
+    await renderAdmin(true);
+    return;
+  }
+  if (action === "change_role") {
+    const nextRole = form.dataset.nextRole;
+    if (!["super_admin", "admin", "employee"].includes(nextRole)) throw new Error("Rol no valido");
+    await api(`/api/users/${userId}`, {
+      method: "PATCH",
+      body: { role: nextRole }
+    });
+    state.userSecurityAction = {
+      type: "change_role_result",
+      userId,
+      nextRole,
+      createdAt: new Date().toISOString()
+    };
+    toast("Rol actualizado");
+    await renderAdmin(true);
+    return;
+  }
   if (action === "revoke_sessions") {
     const result = await api(`/api/users/${userId}/sessions`, { method: "DELETE" });
     state.userSessions = null;
@@ -7332,6 +7858,8 @@ async function handleClick(event) {
     if (state.view !== "users") {
       state.selectedUserDetailId = null;
       state.userSecurityAction = null;
+      state.selectedUserCollisionKey = null;
+      state.employeePortalRepair = null;
     }
     return renderAdmin();
   }
@@ -7485,11 +8013,26 @@ async function handleClick(event) {
     return renderAdmin();
   }
 
+  if (target.dataset.userCollisionFocus) {
+    const group = userContactDuplicateGroups(state.data.users || [], state.data.employees || [])
+      .find((item) => item.key === target.dataset.userCollisionFocus);
+    if (!group) return toast("Duplicado no encontrado", "error");
+    state.selectedUserCollisionKey = group.key;
+    state.userFilters.security = "duplicate_contact";
+    return renderAdmin();
+  }
+
+  if (target.dataset.closeUserCollision !== undefined) {
+    state.selectedUserCollisionKey = null;
+    return renderAdmin();
+  }
+
   if (target.dataset.userSelectDuplicateGroup) {
     state.userFilters = state.userFilters || { search: "", role: "all", security: "all" };
     const group = userContactDuplicateGroups(state.data.users || [], state.data.employees || [])
       .find((item) => item.key === target.dataset.userSelectDuplicateGroup);
     state.selectedUserIds = group?.userIds || [];
+    state.selectedUserCollisionKey = group?.key || null;
     state.userFilters.security = "duplicate_contact";
     clearSuggestedUserBulkAction();
     return renderAdmin();
@@ -7524,6 +8067,52 @@ async function handleClick(event) {
       .filter(userHasCustomPermissions)
       .map((user) => user.id);
     setSuggestedBulkActionFromTarget(target, "suggested_profile");
+    return renderAdmin();
+  }
+
+  if (target.dataset.userSelectPermissionProfile) {
+    const profileId = target.dataset.userSelectPermissionProfile;
+    const ids = (state.data.users || [])
+      .filter((user) => user.active && user.role !== "employee" && permissionProfileForUser(user).id === profileId)
+      .map((user) => user.id);
+    if (!ids.length) return toast("No hay usuarios en ese perfil", "error");
+    state.userFilters = {
+      search: "",
+      role: "admins",
+      security: profileId === "custom" ? "permission_custom" : "all"
+    };
+    state.selectedUserIds = ids;
+    if (profileId === "custom") setSuggestedUserBulkAction("suggested_profile");
+    else clearSuggestedUserBulkAction();
+    toast(`${ids.length} usuario${ids.length === 1 ? "" : "s"} seleccionado${ids.length === 1 ? "" : "s"} · ${profileId === "custom" ? "A medida" : permissionProfiles[profileId]?.label || "Perfil"}`);
+    return renderAdmin();
+  }
+
+  if (target.dataset.userSelectSuggestedProfile) {
+    const profileId = target.dataset.userSelectSuggestedProfile;
+    const ids = (state.data.users || [])
+      .filter((user) => userHasCustomPermissions(user) && suggestedPermissionProfileForUser(user)?.id === profileId)
+      .map((user) => user.id);
+    if (!ids.length) return toast("No hay usuarios para ese perfil sugerido", "error");
+    state.userFilters = { search: "", role: "admins", security: "permission_custom" };
+    state.selectedUserIds = ids;
+    setSuggestedBulkActionFromTarget(target, "permission_profile", profileId);
+    toast(`${ids.length} usuario${ids.length === 1 ? "" : "s"} preparado${ids.length === 1 ? "" : "s"} · ${permissionProfiles[profileId]?.label || profileId}`);
+    return renderAdmin();
+  }
+
+  if (target.dataset.userSelectBroadPermissions !== undefined) {
+    const ids = (state.data.users || [])
+      .filter((user) =>
+        user.active &&
+        (user.role === "super_admin" || (user.role === "admin" && activePermissionCount(user) >= adminPermissionDefs.length - 2))
+      )
+      .map((user) => user.id);
+    if (!ids.length) return toast("No hay accesos amplios pendientes", "error");
+    state.userFilters = { search: "", role: "admins", security: "all" };
+    state.selectedUserIds = ids;
+    clearSuggestedUserBulkAction();
+    toast(`${ids.length} acceso${ids.length === 1 ? "" : "s"} amplio${ids.length === 1 ? "" : "s"} seleccionado${ids.length === 1 ? "" : "s"}`);
     return renderAdmin();
   }
 
@@ -7640,9 +8229,25 @@ async function handleClick(event) {
   }
 
   if (target.dataset.repairEmployeePortals !== undefined) {
-    const ok = window.confirm("Sanear portal de operarios? Se crearan accesos solo para operarios activos con telefono valido, se vincularan usuarios empleado compatibles y se sincronizaran datos. No cambia contrasenas existentes.");
-    if (!ok) return toast("Operacion cancelada");
+    state.employeePortalRepair = {
+      type: "confirm",
+      createdAt: new Date().toISOString()
+    };
+    return renderAdmin();
+  }
+
+  if (target.dataset.closeEmployeePortalRepair !== undefined) {
+    state.employeePortalRepair = null;
+    return renderAdmin();
+  }
+
+  if (target.dataset.confirmEmployeePortalRepair !== undefined) {
     const result = await api("/api/users/employee-portals/repair", { method: "PATCH" });
+    state.employeePortalRepair = {
+      type: "result",
+      result,
+      createdAt: new Date().toISOString()
+    };
     toast(`${result.created || 0} creados · ${result.linked || 0} vinculados · ${result.synced || 0} sincronizados${result.conflicts ? ` · ${result.conflicts} conflictos` : ""}`);
     return renderAdmin(true);
   }
@@ -8067,21 +8672,27 @@ async function handleClick(event) {
   }
 
   if (target.dataset.userRole) {
-    await api(`/api/users/${target.dataset.userRole}`, {
-      method: "PATCH",
-      body: { role: target.dataset.nextRole }
-    });
-    toast("Permiso actualizado");
-    return renderAdmin(true);
+    const user = (state.data.users || []).find((item) => item.id === target.dataset.userRole);
+    if (!user) return toast("Usuario no encontrado", "error");
+    state.selectedUserDetailId = user.id;
+    state.userSecurityAction = {
+      type: "change_role",
+      userId: user.id,
+      nextRole: target.dataset.nextRole
+    };
+    return renderAdmin();
   }
 
   if (target.dataset.userActive) {
-    await api(`/api/users/${target.dataset.userActive}`, {
-      method: "PATCH",
-      body: { active: target.dataset.nextActive === "true" }
-    });
-    toast(target.dataset.nextActive === "true" ? "Usuario activado" : "Usuario bloqueado");
-    return renderAdmin(true);
+    const user = (state.data.users || []).find((item) => item.id === target.dataset.userActive);
+    if (!user) return toast("Usuario no encontrado", "error");
+    state.selectedUserDetailId = user.id;
+    state.userSecurityAction = {
+      type: "set_active",
+      userId: user.id,
+      nextActive: target.dataset.nextActive === "true"
+    };
+    return renderAdmin();
   }
 
   if (target.dataset.unlockUser) {
