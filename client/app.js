@@ -39,6 +39,7 @@ const state = {
   userBulkResult: null,
   userSessions: null,
   userActivity: null,
+  userSecurityAction: null,
   searchQuery: "",
   eventSnapshots: {},
   publicConfigLoaded: false,
@@ -1132,6 +1133,7 @@ function closeDetailPanel() {
   }
   if (state.view === "users") {
     state.selectedUserDetailId = null;
+    state.userSecurityAction = null;
   }
 }
 
@@ -2968,6 +2970,142 @@ function userBulkResultPanel(users, isSuper) {
   `;
 }
 
+function userSecurityActionCopy(action) {
+  const labels = {
+    access_code: {
+      title: "Generar codigo temporal",
+      detail: "Invalidara codigos anteriores y caducara en 30 minutos.",
+      button: "Generar codigo",
+      tone: "amber"
+    },
+    reset_password: {
+      title: "Nueva clave temporal",
+      detail: "El usuario debera cambiarla al entrar y la accion quedara auditada.",
+      button: "Guardar clave",
+      tone: "amber"
+    },
+    revoke_sessions: {
+      title: "Cerrar sesiones",
+      detail: "Cierra todas las sesiones abiertas de este usuario excepto las protegidas por seguridad.",
+      button: "Cerrar sesiones",
+      tone: "red"
+    },
+    revoke_session: {
+      title: "Cerrar una sesion",
+      detail: "Finaliza solo el dispositivo seleccionado.",
+      button: "Cerrar sesion",
+      tone: "red"
+    },
+    review_access: {
+      title: "Marcar acceso revisado",
+      detail: "Registra que rol, permisos y responsable han sido validados.",
+      button: "Marcar revisado",
+      tone: "blue"
+    }
+  };
+  return labels[action] || labels.access_code;
+}
+
+function userSecurityActionResultPanel(action, user) {
+  const value = action.recoveryCode || action.password || "";
+  const title = action.type === "access_code_result"
+    ? "Codigo temporal generado"
+    : action.type === "reset_password_result"
+      ? "Clave temporal actualizada"
+      : action.type === "review_access_result"
+        ? "Acceso revisado"
+        : "Sesiones cerradas";
+  const detail = action.type === "access_code_result"
+    ? `Caduca ${shortDateTime(action.expiresAt)}. El usuario debe entrar en recuperacion y crear su clave privada.`
+    : action.type === "reset_password_result"
+      ? "La clave queda marcada como temporal y debe cambiarse en el siguiente acceso."
+      : action.type === "review_access_result"
+        ? "Permisos y rol quedan revisados desde administracion."
+        : `${Number(action.revoked || 0)} sesion${Number(action.revoked || 0) === 1 ? "" : "es"} cerrada${Number(action.revoked || 0) === 1 ? "" : "s"}.`;
+  return `
+    <section class="panel user-security-action-panel result">
+      <div class="security-action-head">
+        <div>
+          <span class="tag green">Accion completada</span>
+          <h2>${esc(title)}</h2>
+          <p class="muted">${esc(user?.name || "Usuario")} · ${esc(detail)}</p>
+        </div>
+        <button class="btn compact ghost" type="button" data-close-user-security-action>${icon("close")} Cerrar</button>
+      </div>
+      ${value ? `
+        <div class="security-secret-box">
+          <span>${esc(action.type === "access_code_result" ? "Codigo" : "Clave temporal")}</span>
+          <strong>${esc(value)}</strong>
+          <button class="btn compact primary" type="button" data-copy-text="${esc(value)}" data-copy-label="${esc(action.type === "access_code_result" ? "Codigo copiado" : "Clave copiada")}">${icon("copy")} Copiar</button>
+        </div>
+      ` : ""}
+      <small class="muted">${action.copied ? "Copiado automaticamente al portapapeles." : "Si el copiado automatico falla, usa el boton Copiar."}</small>
+    </section>
+  `;
+}
+
+function userSecurityActionPanel(users, isSuper) {
+  const action = state.userSecurityAction;
+  if (!isSuper || !action?.type) return "";
+  const user = (users || []).find((item) => item.id === action.userId);
+  if (!user) return "";
+  if (action.type.endsWith("_result")) return userSecurityActionResultPanel(action, user);
+  const copy = userSecurityActionCopy(action.type);
+  const sessions = Number(user.activeSessionCount || 0);
+  const session = action.sessionId
+    ? (state.userSessions?.sessions || []).find((item) => item.id === action.sessionId)
+    : null;
+  const warningText = action.type === "access_code"
+    ? "Se copiara el codigo al portapapeles y aparecera aqui sin bloquear la pantalla."
+    : action.type === "reset_password"
+      ? "Se copiara la clave al portapapeles para enviarla por un canal seguro."
+      : action.type === "review_access"
+        ? "Se guardara una revision de acceso con fecha, usuario responsable y trazabilidad."
+        : "La sesion se cerrara al confirmar y quedara registrada en auditoria.";
+  return `
+    <section class="panel user-security-action-panel ${copy.tone}">
+      <div class="security-action-head">
+        <div>
+          <span class="tag ${copy.tone}">Accion segura</span>
+          <h2>${esc(copy.title)}</h2>
+          <p class="muted">${esc(user.name || "Usuario")} · ${esc(copy.detail)}</p>
+        </div>
+        <button class="btn compact ghost" type="button" data-close-user-security-action>${icon("close")} Cerrar</button>
+      </div>
+      <form class="security-action-form" data-form="user-security-action" data-security-action="${esc(action.type)}" data-user-id="${esc(user.id)}" ${action.sessionId ? `data-session-id="${esc(action.sessionId)}"` : ""}>
+        <div class="security-action-summary">
+          <div><span>Usuario</span><strong>${esc(user.email || user.phone || user.id)}</strong></div>
+          <div><span>Rol</span><strong>${esc(roleLabel(user.role))}</strong></div>
+          <div><span>Sesiones</span><strong>${esc(sessions)}</strong></div>
+          ${session ? `<div><span>Dispositivo</span><strong>${esc(shortDevice(session.userAgent) || "Dispositivo")}</strong></div>` : ""}
+        </div>
+        ${action.type === "reset_password" ? `
+          <div class="field password-field">
+            <label>Clave temporal</label>
+            <div class="password-control">
+              <input name="password" type="password" minlength="8" value="${esc(action.password || secureTemporaryPassword())}" required />
+              <div class="password-actions">
+                <button class="btn compact" type="button" data-generate-password>${icon("key")} Generar</button>
+                <button class="btn compact" type="button" data-toggle-password>${icon("eye")} Ver</button>
+                <button class="btn compact" type="button" data-copy-password>${icon("copy")} Copiar</button>
+              </div>
+            </div>
+            <small class="muted">Minimo 8 caracteres con letras y numeros. Se marcara cambio obligatorio.</small>
+          </div>
+        ` : ""}
+        <div class="security-action-warning ${copy.tone}">
+          <strong>${esc(copy.button)}</strong>
+          <small>${esc(warningText)}</small>
+        </div>
+        <div class="security-action-actions">
+          <button class="btn compact ghost" type="button" data-close-user-security-action>Cancelar</button>
+          <button class="btn compact ${copy.tone === "red" ? "red" : "primary"}" type="submit">${copy.button}</button>
+        </div>
+      </form>
+    </section>
+  `;
+}
+
 function userSessionsPanel() {
   const panel = state.userSessions;
   if (!panel?.userId) return "";
@@ -3149,6 +3287,7 @@ function usersView() {
     ${userBulkBar(users, visibleUsers, isSuper)}
     ${userBulkPendingPanel(users, isSuper)}
     ${userBulkResultPanel(users, isSuper)}
+    ${userSecurityActionPanel(users, isSuper)}
     ${userSessionsPanel()}
     ${userActivityPanel()}
     <section class="split-grid users-view" style="margin-top:16px">
@@ -6566,11 +6705,100 @@ async function submitLogin(form) {
   await renderApp(true);
 }
 
+async function submitUserSecurityAction(form) {
+  const action = form.dataset.securityAction;
+  const userId = form.dataset.userId;
+  const user = (state.data.users || []).find((item) => item.id === userId);
+  if (!user) throw new Error("Usuario no encontrado");
+  state.selectedUserDetailId = userId;
+  if (action === "reset_password") {
+    const password = formData(form).password || "";
+    if (password.length < 8) throw new Error("La contrasena debe tener al menos 8 caracteres");
+    if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+      throw new Error("La contrasena debe incluir letras y numeros");
+    }
+    await api(`/api/users/${userId}`, {
+      method: "PATCH",
+      body: { password, mustChangePassword: true }
+    });
+    const copied = await copyText(password).catch(() => false);
+    state.userSecurityAction = {
+      type: "reset_password_result",
+      userId,
+      password,
+      copied,
+      createdAt: new Date().toISOString()
+    };
+    toast(copied ? "Clave temporal actualizada y copiada" : "Clave temporal actualizada");
+    await renderAdmin(true);
+    return;
+  }
+  if (action === "access_code") {
+    const result = await api(`/api/users/${userId}/access-code`, { method: "POST" });
+    const copied = await copyText(result.recoveryCode).catch(() => false);
+    state.userSecurityAction = {
+      type: "access_code_result",
+      userId,
+      recoveryCode: result.recoveryCode,
+      expiresAt: result.expiresAt,
+      copied,
+      createdAt: new Date().toISOString()
+    };
+    toast(copied ? "Codigo generado y copiado" : "Codigo generado");
+    await renderAdmin(true);
+    return;
+  }
+  if (action === "review_access") {
+    await api(`/api/users/${userId}/access-review`, { method: "POST" });
+    state.userSecurityAction = {
+      type: "review_access_result",
+      userId,
+      createdAt: new Date().toISOString()
+    };
+    toast("Acceso revisado");
+    await renderAdmin(true);
+    return;
+  }
+  if (action === "revoke_sessions") {
+    const result = await api(`/api/users/${userId}/sessions`, { method: "DELETE" });
+    state.userSessions = null;
+    state.userSecurityAction = {
+      type: "revoke_sessions_result",
+      userId,
+      revoked: result.revoked || 0,
+      createdAt: new Date().toISOString()
+    };
+    toast(`${result.revoked || 0} sesiones cerradas`);
+    await renderAdmin(true);
+    return;
+  }
+  if (action === "revoke_session") {
+    const sessionId = form.dataset.sessionId;
+    const result = await api(`/api/users/${userId}/sessions/${sessionId}`, { method: "DELETE" });
+    state.userSessions = {
+      userId,
+      user,
+      sessions: result.sessions || []
+    };
+    state.userSecurityAction = {
+      type: "revoke_sessions_result",
+      userId,
+      revoked: result.revoked || 0,
+      createdAt: new Date().toISOString()
+    };
+    toast(`${result.revoked || 0} sesion cerrada`);
+    await renderAdmin(true);
+    return;
+  }
+  throw new Error("Accion de seguridad no reconocida");
+}
+
 function submittingLabel(type) {
   if (type === "login") return "Entrando...";
   if (type?.includes("import")) return "Procesando...";
   if (type?.includes("document")) return "Subiendo...";
   if (type === "reset-password" || type === "password-change") return "Protegiendo...";
+  if (type === "user-security-action") return "Ejecutando...";
   return "Guardando...";
 }
 
@@ -6636,6 +6864,10 @@ async function handleSubmit(event) {
       state.user = result.user;
       toast("Contrasena privada guardada");
       await renderApp(true);
+      return;
+    }
+    if (type === "user-security-action") {
+      await submitUserSecurityAction(form);
       return;
     }
     if (type === "event") {
@@ -6952,7 +7184,10 @@ async function handleClick(event) {
     state.recommendations = null;
     state.searchQuery = "";
     if (state.selectedEventId === "__closed__" && state.view !== "events") state.selectedEventId = null;
-    if (state.view !== "users") state.selectedUserDetailId = null;
+    if (state.view !== "users") {
+      state.selectedUserDetailId = null;
+      state.userSecurityAction = null;
+    }
     return renderAdmin();
   }
 
@@ -7251,11 +7486,12 @@ async function handleClick(event) {
   if (target.dataset.reviewUser) {
     const user = (state.data.users || []).find((item) => item.id === target.dataset.reviewUser);
     if (!user || user.role === "employee") return toast("Solo aplica a administradores", "error");
-    const ok = window.confirm(`Marcar como revisado el acceso de ${user.name}?`);
-    if (!ok) return toast("Operacion cancelada");
-    await api(`/api/users/${target.dataset.reviewUser}/access-review`, { method: "POST" });
-    toast("Acceso revisado");
-    return renderAdmin(true);
+    state.selectedUserDetailId = target.dataset.reviewUser;
+    state.userSecurityAction = {
+      type: "review_access",
+      userId: target.dataset.reviewUser
+    };
+    return renderAdmin();
   }
 
   if (target.dataset.repairEmployeePortals !== undefined) {
@@ -7744,53 +7980,46 @@ async function handleClick(event) {
   }
 
   if (target.dataset.revokeSession) {
-    const user = (state.data.users || []).find((item) => item.id === target.dataset.sessionUser);
-    const ok = window.confirm(`Cerrar esta sesion de ${user?.name || "este usuario"}?`);
-    if (!ok) return toast("Operacion cancelada");
-    const result = await api(`/api/users/${target.dataset.sessionUser}/sessions/${target.dataset.revokeSession}`, { method: "DELETE" });
-    state.userSessions = {
+    state.selectedUserDetailId = target.dataset.sessionUser;
+    state.userSecurityAction = {
+      type: "revoke_session",
       userId: target.dataset.sessionUser,
-      user,
-      sessions: result.sessions || []
+      sessionId: target.dataset.revokeSession
     };
-    toast(`${result.revoked || 0} sesion cerrada`);
-    return renderAdmin(true);
+    return renderAdmin();
   }
 
   if (target.dataset.revokeSessions) {
-    const user = (state.data.users || []).find((item) => item.id === target.dataset.revokeSessions);
-    const ok = window.confirm(`Cerrar todas las sesiones de ${user?.name || "este usuario"}?`);
-    if (!ok) return toast("Operacion cancelada");
-    const result = await api(`/api/users/${target.dataset.revokeSessions}/sessions`, { method: "DELETE" });
-    toast(`${result.revoked || 0} sesiones cerradas`);
-    return renderAdmin(true);
+    state.selectedUserDetailId = target.dataset.revokeSessions;
+    state.userSecurityAction = {
+      type: "revoke_sessions",
+      userId: target.dataset.revokeSessions
+    };
+    return renderAdmin();
   }
 
   if (target.dataset.accessCodeUser) {
-    const user = (state.data.users || []).find((item) => item.id === target.dataset.accessCodeUser);
-    const ok = window.confirm(`Generar codigo temporal para ${user?.name || "este usuario"}? El codigo anterior quedara invalidado y caduca en 30 minutos.`);
-    if (!ok) return toast("Operacion cancelada");
-    const result = await api(`/api/users/${target.dataset.accessCodeUser}/access-code`, { method: "POST" });
-    const copied = await copyText(result.recoveryCode).catch(() => false);
-    window.alert(`Codigo de acceso para ${result.user?.name || user?.name || "usuario"}:\n\n${result.recoveryCode}\n\nCaduca: ${shortDateTime(result.expiresAt)}\nEl usuario debe entrar en "Tengo codigo de recuperacion" y crear su contrasena privada.`);
-    toast(copied ? "Codigo generado y copiado" : "Codigo generado");
-    return renderAdmin(true);
+    state.selectedUserDetailId = target.dataset.accessCodeUser;
+    state.userSecurityAction = {
+      type: "access_code",
+      userId: target.dataset.accessCodeUser
+    };
+    return renderAdmin();
   }
 
   if (target.dataset.resetUser) {
-    const password = window.prompt("Nueva contrasena temporal segura", secureTemporaryPassword());
-    if (!password) return;
-    if (password.length < 8) return toast("La contrasena debe tener al menos 8 caracteres", "error");
-    if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) {
-      return toast("La contrasena debe incluir letras y numeros", "error");
-    }
-    await api(`/api/users/${target.dataset.resetUser}`, {
-      method: "PATCH",
-      body: { password, mustChangePassword: true }
-    });
-    await copyText(password).catch(() => false);
-    toast("Contrasena temporal actualizada y copiada");
-    return renderAdmin(true);
+    state.selectedUserDetailId = target.dataset.resetUser;
+    state.userSecurityAction = {
+      type: "reset_password",
+      userId: target.dataset.resetUser,
+      password: secureTemporaryPassword()
+    };
+    return renderAdmin();
+  }
+
+  if (target.dataset.closeUserSecurityAction !== undefined) {
+    state.userSecurityAction = null;
+    return renderAdmin();
   }
 
   if (target.dataset.resolveIncident) {
