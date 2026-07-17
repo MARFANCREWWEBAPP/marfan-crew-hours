@@ -28,6 +28,7 @@ const state = {
   reportFilters: { from: "", to: "", clientId: "", employeeId: "", status: "", search: "" },
   userFilters: { search: "", role: "all", security: "all" },
   selectedUserIds: [],
+  userBulkResult: null,
   userSessions: null,
   userActivity: null,
   searchQuery: "",
@@ -369,6 +370,42 @@ function employeeDuplicateMatches(form) {
   return sortDuplicateMatches(matches);
 }
 
+function userDuplicateMatches(form) {
+  const matches = new Map();
+  const emailKey = contactEmailKey(formFieldValue(form, "email"));
+  const phoneKey = phoneLoginKey(formFieldValue(form, "phone"));
+  if (!emailKey && !phoneKey) return [];
+  for (const user of state.data.users || []) {
+    const reasons = [];
+    if (emailKey && contactEmailKey(user.email) === emailKey) reasons.push("email de acceso");
+    if (phoneKey && phoneLoginKey(user.phone) === phoneKey) reasons.push("telefono de acceso");
+    if (!reasons.length) continue;
+    addDuplicateMatch(matches, {
+      type: "user",
+      id: user.id,
+      label: user.name,
+      meta: `${user.role === "employee" ? "Portal empleado" : "Usuario administracion"} · ${user.email || user.phone || user.id}`,
+      reasons,
+      tone: "red"
+    });
+  }
+  for (const employee of state.data.employees || []) {
+    const reasons = [];
+    if (emailKey && contactEmailKey(employee.email) === emailKey) reasons.push("email de operario");
+    if (phoneKey && phoneLoginKey(employee.phone) === phoneKey) reasons.push("telefono de operario");
+    if (!reasons.length) continue;
+    addDuplicateMatch(matches, {
+      type: "employee",
+      id: employee.id,
+      label: employee.name,
+      meta: `${employee.role || "Operario"} · ${employee.user_id ? "portal vinculado" : "sin portal"} · ${employee.email || employee.phone || employee.id}`,
+      reasons,
+      tone: "red"
+    });
+  }
+  return sortDuplicateMatches(matches);
+}
+
 function duplicateAction(match) {
   const label = match.type === "client" ? "Ver cliente" : match.type === "employee" ? "Ver operario" : "Ver usuario";
   return `<button class="btn compact" type="button" data-open-duplicate="${esc(match.type)}:${esc(match.id)}">${icon("search")} ${label}</button>`;
@@ -401,11 +438,16 @@ function duplicateGuardContent(kind, matches = []) {
     `;
   }
   const redMatches = matches.filter((match) => match.tone === "red").length;
+  const detail = kind === "employee"
+    ? "Evita crear otro portal o reutilizar contactos de administracion."
+    : kind === "user"
+      ? "Evita duplicar accesos o mezclar el portal de un operario con administracion."
+      : "Evita crear otra ficha para la misma empresa o contacto.";
   return `
     <div>
       <span class="tag ${redMatches ? "red" : "amber"}">Revisar antes de guardar</span>
       <strong>${matches.length} posible${matches.length === 1 ? "" : "s"} duplicado${matches.length === 1 ? "" : "s"}</strong>
-      <small>${kind === "employee" ? "Evita crear otro portal o reutilizar contactos de administracion." : "Evita crear otra ficha para la misma empresa o contacto."}</small>
+      <small>${detail}</small>
     </div>
     ${duplicateMatchRows(matches)}
   `;
@@ -419,7 +461,13 @@ function updateDuplicateGuard(form) {
   const panel = form?.querySelector?.("[data-duplicate-panel]");
   if (!panel) return;
   const kind = form.dataset.duplicateKind;
-  const matches = kind === "employee" ? employeeDuplicateMatches(form) : kind === "client" ? clientDuplicateMatches(form) : [];
+  const matches = kind === "employee"
+    ? employeeDuplicateMatches(form)
+    : kind === "client"
+      ? clientDuplicateMatches(form)
+      : kind === "user"
+        ? userDuplicateMatches(form)
+        : [];
   panel.className = `duplicate-guard ${matches.length ? "warn" : "ok"} ${matches.some((match) => match.tone === "red") ? "danger" : ""}`;
   panel.innerHTML = duplicateGuardContent(kind, matches);
 }
@@ -516,6 +564,12 @@ async function openDuplicateFromError(payload) {
     state.view = "employees";
     state.selectedEmployeeId = duplicate.id;
     state.editEmployeeId = null;
+    await renderAdmin(true);
+    return true;
+  }
+  if (duplicate.type === "user") {
+    state.view = "users";
+    state.userFilters = { search: duplicate.id, role: "all", security: "all" };
     await renderAdmin(true);
     return true;
   }
@@ -1375,15 +1429,16 @@ function activePermissionCount(user) {
   return adminPermissionDefs.filter(([key]) => permissionEnabled(user.permissions, key)).length;
 }
 
-function userQualityFlags(user) {
+function userQualityFlags(user, duplicateContactUserIds = null) {
   const flags = [];
+  const hasDuplicateContact = duplicateContactUserIds ? duplicateContactUserIds.has(user.id) : userHasDuplicateContactRisk(user);
   if (!user.email && !user.phone) flags.push({ label: "Sin contacto", tone: "red" });
   if (user.role === "employee" && !user.employeeId) flags.push({ label: "Empleado sin ficha", tone: "amber" });
   if (user.mustChangePassword) flags.push({ label: "Clave temporal", tone: "amber" });
   if (userAccessReviewStale(user)) flags.push({ label: "Revision pendiente", tone: "amber" });
   if (userInactiveRisk(user)) flags.push({ label: "Sin uso +60d", tone: "red" });
   if (userDeniedPermissionRisk(user)) flags.push({ label: `Permisos denegados x${Number(user.deniedPermissionCount || 0)}`, tone: "red" });
-  if (userHasDuplicateContactRisk(user)) flags.push({ label: "Contacto duplicado", tone: "red" });
+  if (hasDuplicateContact) flags.push({ label: "Contacto duplicado", tone: "red" });
   if (user.role === "admin" && activePermissionCount(user) >= adminPermissionDefs.length - 2) {
     flags.push({ label: "Permisos amplios", tone: "amber" });
   }
@@ -1392,12 +1447,56 @@ function userQualityFlags(user) {
   return flags;
 }
 
-function userHasQualityIssues(user) {
-  return userQualityFlags(user).length > 0;
+function userHasQualityIssues(user, duplicateContactUserIds = null) {
+  return userQualityFlags(user, duplicateContactUserIds).length > 0;
 }
 
-function userNeedsAttention(user) {
-  return !user.active || userIsLocked(user) || user.recoveryPending || userPasswordStale(user) || userAccessReviewStale(user) || userInactiveRisk(user) || userDeniedPermissionRisk(user) || userHasQualityIssues(user);
+function userNeedsAttention(user, duplicateContactUserIds = null) {
+  return !user.active || userIsLocked(user) || user.recoveryPending || userPasswordStale(user) || userAccessReviewStale(user) || userInactiveRisk(user) || userDeniedPermissionRisk(user) || userHasQualityIssues(user, duplicateContactUserIds);
+}
+
+function userRiskScore(user, duplicateContactUserIds = null) {
+  const hasDuplicateContact = duplicateContactUserIds ? duplicateContactUserIds.has(user.id) : userHasDuplicateContactRisk(user);
+  let score = 0;
+  if (!user.active) score += 5;
+  if (userIsLocked(user)) score += 5;
+  if (userDeniedPermissionRisk(user)) score += Math.min(5, Number(user.deniedPermissionCount || 0) + 1);
+  if (hasDuplicateContact) score += 4;
+  if (userInactiveRisk(user)) score += 4;
+  if (!user.email && !user.phone) score += 3;
+  if (user.role === "employee" && !user.employeeId) score += 3;
+  if (user.recoveryPending) score += 2;
+  if (user.mustChangePassword) score += 2;
+  if (userPasswordStale(user)) score += 2;
+  if (userAccessReviewStale(user)) score += 2;
+  if (user.role === "admin" && activePermissionCount(user) >= adminPermissionDefs.length - 2) score += 1;
+  if (userHasCustomPermissions(user)) score += 1;
+  if (user.role !== "employee" && !user.lastLoginAt) score += 1;
+  return score;
+}
+
+function userRiskLevel(user, duplicateContactUserIds = null) {
+  const score = userRiskScore(user, duplicateContactUserIds);
+  if (score >= 6) return { label: "Alto", tone: "red", score };
+  if (score >= 3) return { label: "Medio", tone: "amber", score };
+  return { label: "OK", tone: "green", score };
+}
+
+function usersPriorityMode(filters = state.userFilters || {}) {
+  const security = filters.security || "all";
+  const role = filters.role || "all";
+  return security !== "all" || role === "inactive";
+}
+
+function sortUsersByOperationalPriority(users, filters = state.userFilters || {}, duplicateContactUserIds = null) {
+  if (!usersPriorityMode(filters)) return users;
+  const riskDuplicateContactUserIds = duplicateContactUserIds || userDuplicateContactUserIds();
+  const scoreByUserId = new Map(users.map((user) => [user.id, userRiskScore(user, riskDuplicateContactUserIds)]));
+  return [...users].sort((a, b) =>
+    (scoreByUserId.get(b.id) || 0) - (scoreByUserId.get(a.id) || 0) ||
+    Number(b.active) - Number(a.active) ||
+    String(a.name || "").localeCompare(String(b.name || ""))
+  );
 }
 
 function employeePortalHealth(users = [], employees = []) {
@@ -1682,13 +1781,18 @@ function userActionQueue(users, isSuper) {
   `;
 }
 
-function userSecuritySummary(user) {
+function userSecuritySummary(user, duplicateContactUserIds = null) {
   const locked = userIsLocked(user);
   const sessions = Number(user.activeSessionCount || 0);
-  const qualityFlags = userQualityFlags(user);
+  const qualityFlags = userQualityFlags(user, duplicateContactUserIds);
+  const risk = userRiskLevel(user, duplicateContactUserIds);
   const deniedPermissionCount = Number(user.deniedPermissionCount || 0);
   return `
     <div class="security-stack">
+      <div class="risk-meter ${risk.tone}">
+        <span>Riesgo ${esc(risk.label)}</span>
+        <strong>${esc(risk.score)}</strong>
+      </div>
       ${locked ? `<span class="tag red">Bloqueado hasta ${esc(shortDateTime(user.lockedUntil))}</span>` : `<span class="tag ${sessions ? "green" : "blue"}">${sessions} sesion${sessions === 1 ? "" : "es"} activa${sessions === 1 ? "" : "s"}</span>`}
       ${userPasswordStale(user) ? `<span class="tag amber">Clave antigua</span>` : ""}
       ${qualityFlags.map((flag) => `<span class="tag ${flag.tone}">${esc(flag.label)}</span>`).join("")}
@@ -1756,17 +1860,17 @@ function filteredUsers(users) {
 
 function userCommandCenter(users, isSuper) {
   const filters = state.userFilters || { search: "", role: "all", security: "all" };
-  const attention = users.filter(userNeedsAttention);
+  const duplicateContactGroups = userContactDuplicateGroups(users, state.data.employees || []);
+  const duplicateContactUsers = userDuplicateContactUserIds(users, state.data.employees || []);
+  const attention = users.filter((user) => userNeedsAttention(user, duplicateContactUsers));
   const locked = users.filter(userIsLocked);
   const recovery = users.filter((user) => user.recoveryPending);
   const temporary = users.filter((user) => user.mustChangePassword);
   const review = users.filter(userAccessReviewStale);
   const inactiveRisk = users.filter(userInactiveRisk);
   const denied = users.filter(userDeniedPermissionRisk);
-  const duplicateContactGroups = userContactDuplicateGroups(users, state.data.employees || []);
-  const duplicateContactUsers = userDuplicateContactUserIds(users, state.data.employees || []);
   const stale = users.filter(userPasswordStale);
-  const quality = users.filter(userHasQualityIssues);
+  const quality = users.filter((user) => userHasQualityIssues(user, duplicateContactUsers));
   return `
     <section class="panel user-command-center">
       <div class="user-filter-grid">
@@ -1871,6 +1975,65 @@ function userBulkBar(users, visibleUsers, isSuper) {
         <button class="btn compact ghost" type="button" data-user-select-clear ${disabled}>Limpiar</button>
       </div>
     </section>
+	  `;
+}
+
+function userBulkActionLabel(action, profile = "") {
+  const labels = {
+    activate: "Activar usuarios",
+    deactivate: "Bloquear acceso",
+    unlock: "Desbloquear login",
+    revoke_sessions: "Cerrar sesiones",
+    permission_profile: `Aplicar perfil ${permissionProfiles[profile]?.label || profile || ""}`.trim(),
+    suggested_profile: "Aplicar perfil sugerido",
+    mark_reviewed: "Marcar accesos revisados",
+    deactivate_inactive: "Bloquear inactivos",
+    force_password_change: "Forzar cambio de clave"
+  };
+  return labels[action] || "Accion masiva";
+}
+
+function userBulkResultPanel(users, isSuper) {
+  if (!isSuper || !state.userBulkResult) return "";
+  const result = state.userBulkResult;
+  const usersById = new Map((users || []).map((user) => [user.id, user]));
+  const rows = result.results || [];
+  const applied = rows.filter((item) => item.ok);
+  const failed = rows.filter((item) => !item.ok);
+  const tone = failed.length ? "amber" : "green";
+  return `
+    <section class="panel user-bulk-result">
+      <div class="panel-head">
+        <div>
+          <h2>Resultado de accion masiva</h2>
+          <p class="muted">${esc(userBulkActionLabel(result.action, result.profile))} · ${esc(shortDateTime(result.createdAt))}</p>
+        </div>
+        <div class="filters-row">
+          <span class="tag ${tone}">${esc(result.updated || 0)} aplicados</span>
+          <span class="tag ${failed.length ? "amber" : "green"}">${esc(result.skipped || 0)} omitidos</span>
+          <button class="btn compact" type="button" data-user-bulk-result-select="ok" ${applied.length ? "" : "disabled"}>Seleccionar aplicados</button>
+          <button class="btn compact" type="button" data-user-bulk-result-select="fail" ${failed.length ? "" : "disabled"}>Seleccionar omitidos</button>
+          <button class="btn compact ghost" type="button" data-close-user-bulk-result>${icon("close")} Cerrar</button>
+        </div>
+      </div>
+      <div class="bulk-result-grid">
+        ${rows.slice(0, 24).map((item) => {
+          const user = usersById.get(item.id);
+          return `
+            <div class="bulk-result-row ${item.ok ? "ok" : "fail"}">
+              <span class="tag ${item.ok ? "green" : "amber"}">${item.ok ? "Aplicado" : "Omitido"}</span>
+              <div>
+                <strong>${esc(user?.name || item.id)}</strong>
+                <small>${esc(user?.email || user?.phone || item.id)}</small>
+                ${item.ok ? `<small>${esc(userBulkActionLabel(result.action, result.profile))}</small>` : `<small>${esc(item.error || "No se pudo aplicar la accion")}</small>`}
+              </div>
+              <button class="btn compact" type="button" data-open-duplicate="user:${esc(item.id)}">Ver</button>
+            </div>
+          `;
+        }).join("")}
+      </div>
+      ${rows.length > 24 ? `<small class="muted">Mostrando 24 de ${esc(rows.length)} resultados.</small>` : ""}
+    </section>
   `;
 }
 
@@ -1949,9 +2112,76 @@ function userActivityPanel() {
   `;
 }
 
+function userForm() {
+  const isSuper = state.user?.role === "super_admin";
+  return `
+    <form class="panel inspector event-builder user-builder" data-form="user" data-duplicate-kind="user">
+      <div class="event-builder-head">
+        <div>
+          <span class="tag ${isSuper ? "red" : "blue"}">${isSuper ? "Super Admin" : "Admin"}</span>
+          <h2>Crear usuario</h2>
+          <p class="muted">Alta de acceso con control de contacto, clave temporal y permisos revisables.</p>
+        </div>
+        <button class="btn compact primary" type="submit">${icon("save")} Guardar usuario</button>
+      </div>
+      ${duplicateGuardPanel("user")}
+      <section class="event-step">
+        <div class="event-step-head"><span>1</span><strong>Acceso</strong><small>Rol, contacto y clave inicial</small></div>
+        ${isSuper ? `<div class="field"><label>Rol de acceso</label><select name="role"><option value="admin">Administrador</option><option value="employee">Empleado / operario</option><option value="super_admin">Super admin</option></select></div>` : `<input type="hidden" name="role" value="admin" />`}
+        <div class="form-grid compact">
+          <div class="field"><label>Nombre</label><input name="name" required /></div>
+          <div class="field"><label>Email</label><input name="email" type="email" /></div>
+          <div class="field"><label>Telefono</label><input name="phone" /></div>
+        </div>
+        <div class="field password-field">
+          <label>Contrasena temporal</label>
+          <div class="password-control">
+            <input name="password" type="password" minlength="8" autocomplete="new-password" placeholder="Genera una clave segura" required />
+            <div class="password-actions">
+              <button class="btn compact" type="button" data-generate-password>${icon("key")} Generar</button>
+              <button class="btn compact" type="button" data-toggle-password>${icon("eye")} Ver</button>
+              <button class="btn compact" type="button" data-copy-password>${icon("copy")} Copiar</button>
+            </div>
+          </div>
+          <small class="muted">Usa una clave temporal y comparte el acceso por canal seguro.</small>
+          <label class="toggle-row security-toggle"><input name="mustChangePassword" type="checkbox" checked /> Obligar cambio en el primer acceso</label>
+        </div>
+      </section>
+      ${isSuper ? `<section class="event-step">
+        <div class="event-step-head"><span>2</span><strong>Permisos</strong><small>Perfil operativo y modulos permitidos</small></div>
+        ${permissionPresetButtons()}
+        ${permissionChecklist()}
+      </section>` : ""}
+      ${isSuper ? `<section class="event-step">
+        <div class="event-step-head"><span>3</span><strong>Operario</strong><small>Solo si el rol es empleado / operario</small></div>
+        <div class="form-grid compact">
+          <div class="field"><label>Rol operativo</label><select name="employeeRole"><option>Montaje</option><option>Carga y descarga</option><option>Tecnico</option><option>Runner</option><option>Jefe de equipo</option><option>Carretillero</option><option>Limpieza</option><option>Auxiliar produccion</option></select></div>
+          <div class="field"><label>Ciudad</label><input name="city" value="Madrid" /></div>
+          <div class="field"><label>Tarifa hora</label><input name="hourlyRate" type="number" value="16" /></div>
+        </div>
+        <div class="field"><label>Skills</label><input name="skills" placeholder="montaje, runner, prl" /></div>
+      </section>` : ""}
+      <div class="event-form-actions">
+        <button class="btn primary full" type="submit">${icon("save")} Guardar usuario</button>
+        <small class="muted">El sistema bloqueara contactos repetidos y dejara trazabilidad en auditoria.</small>
+      </div>
+    </form>
+  `;
+}
+
 function usersView() {
+  if (state.createScreen === "user") {
+    return creationWorkspace({
+      kind: "user",
+      title: "Crear usuario",
+      subtitle: "Alta segura de administradores y portales",
+      formHtml: userForm()
+    });
+  }
   const users = state.data.users || [];
-  const visibleUsers = filteredUsers(users);
+  const duplicateContactUserIds = userDuplicateContactUserIds(users, state.data.employees || []);
+  const priorityMode = usersPriorityMode(state.userFilters || { search: "", role: "all", security: "all" });
+  const visibleUsers = sortUsersByOperationalPriority(filteredUsers(users), state.userFilters, duplicateContactUserIds);
   const isSuper = state.user?.role === "super_admin";
   const activeUsers = users.filter((user) => user.active).length;
   const admins = users.filter((user) => user.role !== "employee" && user.active).length;
@@ -1959,9 +2189,9 @@ function usersView() {
   const recoveries = users.filter((user) => user.recoveryPending).length;
   const activeSessions = users.reduce((sum, user) => sum + Number(user.activeSessionCount || 0), 0);
   const lockedUsers = users.filter(userIsLocked).length;
-  const qualityUsers = users.filter(userHasQualityIssues).length;
+  const qualityUsers = users.filter((user) => userHasQualityIssues(user, duplicateContactUserIds)).length;
   const inactiveRiskUsers = users.filter(userInactiveRisk).length;
-  const attentionUsers = users.filter(userNeedsAttention).length;
+  const attentionUsers = users.filter((user) => userNeedsAttention(user, duplicateContactUserIds)).length;
   return `
     <div class="page-head">
       <div>
@@ -1970,6 +2200,7 @@ function usersView() {
       </div>
       <div class="filters-row">
         ${isSuper ? `<button class="btn" type="button" data-users-security-report>${icon("download")} Informe seguridad</button>` : ""}
+        <button class="btn primary" type="button" data-new-user>${icon("plus")} Crear usuario</button>
         <span class="tag ${isSuper ? "red" : "blue"}">${isSuper ? "Super Admin" : "Admin"}</span>
         <span class="muted">${activeUsers} usuarios activos</span>
       </div>
@@ -1984,11 +2215,18 @@ function usersView() {
     </section>
     ${userCommandCenter(users, isSuper)}
     ${userBulkBar(users, visibleUsers, isSuper)}
+    ${userBulkResultPanel(users, isSuper)}
     ${userSessionsPanel()}
     ${userActivityPanel()}
     <section class="split-grid users-view" style="margin-top:16px">
       <div class="panel">
-        <div class="panel-head"><h2>${isSuper ? "Usuarios del sistema" : "Administradores internos"}</h2><span class="muted">${visibleUsers.length}/${users.length}</span></div>
+        <div class="panel-head">
+          <h2>${isSuper ? "Usuarios del sistema" : "Administradores internos"}</h2>
+          <div class="filters-row">
+            ${priorityMode ? `<span class="tag amber">Prioridad seguridad</span>` : ""}
+            <span class="muted">${visibleUsers.length}/${users.length}</span>
+          </div>
+        </div>
         <div class="table-wrap">
           <table class="data-table users-table">
             <thead><tr>${isSuper ? `<th class="select-col"><span class="sr-only">Seleccion</span></th>` : ""}<th>Usuario</th><th>Rol</th><th>Contacto</th><th>Ficha operario</th><th>Permisos</th><th>Seguridad</th><th>Estado</th><th>Acciones</th></tr></thead>
@@ -2016,7 +2254,7 @@ function usersView() {
                         </form>
                       ` : permissionSummary(user)}
                     </td>
-                    <td>${userSecuritySummary(user)}</td>
+                    <td>${userSecuritySummary(user, duplicateContactUserIds)}</td>
                     <td>${user.active ? statusTag("confirmado") : `<span class="tag red">Bloqueado</span>`}${userRecoveryStatus(user)}</td>
                     <td>
                       <div class="table-actions">
@@ -2039,39 +2277,7 @@ function usersView() {
           </table>
         </div>
       </div>
-      <form class="panel inspector" data-form="user">
-        <h2>Crear administrador</h2>
-        ${isSuper ? `<div class="field"><label>Rol de acceso</label><select name="role"><option value="admin">Administrador</option><option value="employee">Empleado / operario</option><option value="super_admin">Super admin</option></select></div>` : `<input type="hidden" name="role" value="admin" />`}
-        <div class="field"><label>Nombre</label><input name="name" required /></div>
-        <div class="field"><label>Email</label><input name="email" type="email" /></div>
-        <div class="field"><label>Telefono</label><input name="phone" /></div>
-        <div class="field password-field">
-          <label>Contrasena temporal</label>
-          <div class="password-control">
-            <input name="password" type="password" minlength="8" autocomplete="new-password" placeholder="Genera una clave segura" required />
-            <div class="password-actions">
-              <button class="btn compact" type="button" data-generate-password>${icon("key")} Generar</button>
-              <button class="btn compact" type="button" data-toggle-password>${icon("eye")} Ver</button>
-              <button class="btn compact" type="button" data-copy-password>${icon("copy")} Copiar</button>
-            </div>
-          </div>
-          <small class="muted">Recomendada: clave temporal generada y enviada por canal seguro.</small>
-          <label class="toggle-row security-toggle"><input name="mustChangePassword" type="checkbox" checked /> Obligar cambio en el primer acceso</label>
-        </div>
-        ${isSuper ? `<div class="inspector-section">
-          <h3>Permisos del administrador</h3>
-          ${permissionPresetButtons()}
-          ${permissionChecklist()}
-        </div>` : ""}
-        ${isSuper ? `<div class="inspector-section">
-          <h3>Ficha operario si es empleado</h3>
-          <div class="field"><label>Rol operativo</label><select name="employeeRole"><option>Montaje</option><option>Carga y descarga</option><option>Tecnico</option><option>Runner</option><option>Jefe de equipo</option><option>Carretillero</option><option>Limpieza</option><option>Auxiliar produccion</option></select></div>
-          <div class="field"><label>Ciudad</label><input name="city" value="Madrid" /></div>
-          <div class="field"><label>Tarifa hora</label><input name="hourlyRate" type="number" value="16" /></div>
-          <div class="field"><label>Skills</label><input name="skills" placeholder="montaje, runner, prl" /></div>
-        </div>` : ""}
-        <button class="btn primary full" type="submit">${icon("plus")} Crear administrador</button>
-      </form>
+      ${emptySelectionPanel("Alta de usuarios", "Usa Crear usuario para abrir una pantalla limpia con control de duplicados, permisos y clave temporal.")}
     </section>
   `;
 }
@@ -5615,6 +5821,7 @@ async function handleSubmit(event) {
       body.permissions = permissionsFromForm(form);
       body.mustChangePassword = Boolean(form.querySelector("[name=mustChangePassword]")?.checked);
       await api("/api/users", { method: "POST", body });
+      state.createScreen = null;
       toast("Usuario creado");
       await renderAdmin(true);
     }
@@ -5834,6 +6041,21 @@ async function handleClick(event) {
     return renderAdmin();
   }
 
+  if (target.dataset.closeUserBulkResult !== undefined) {
+    state.userBulkResult = null;
+    return renderAdmin();
+  }
+
+  if (target.dataset.userBulkResultSelect) {
+    const wantOk = target.dataset.userBulkResultSelect === "ok";
+    const ids = (state.userBulkResult?.results || [])
+      .filter((item) => Boolean(item.ok) === wantOk)
+      .map((item) => item.id);
+    state.selectedUserIds = ids;
+    toast(`${ids.length} usuario${ids.length === 1 ? "" : "s"} seleccionado${ids.length === 1 ? "" : "s"}`);
+    return renderAdmin();
+  }
+
   if (target.dataset.userSelectAttention !== undefined) {
     state.selectedUserIds = filteredUsers(state.data.users || [])
       .filter(userNeedsAttention)
@@ -5936,12 +6158,21 @@ async function handleClick(event) {
       const ok = window.confirm(`Confirmas ${labels[target.dataset.userBulkAction]}?`);
       if (!ok) return toast("Operacion cancelada");
     }
-    const result = await api("/api/users/bulk", {
-      method: "PATCH",
-      body: { action: target.dataset.userBulkAction, userIds: selected, profile }
-    });
-    state.selectedUserIds = [];
-    toast(`${result.updated || 0} actualizados${result.skipped ? `, ${result.skipped} omitidos` : ""}`);
+	    const result = await api("/api/users/bulk", {
+	      method: "PATCH",
+	      body: { action: target.dataset.userBulkAction, userIds: selected, profile }
+	    });
+	    state.userBulkResult = {
+	      action: result.action,
+	      profile: result.profile,
+	      total: result.total,
+	      updated: result.updated,
+	      skipped: result.skipped,
+	      results: result.results || [],
+	      createdAt: new Date().toISOString()
+	    };
+	    state.selectedUserIds = [];
+	    toast(`${result.updated || 0} actualizados${result.skipped ? `, ${result.skipped} omitidos` : ""}`);
     return renderAdmin(true);
   }
 
@@ -6160,6 +6391,11 @@ async function handleClick(event) {
 
   if (target.dataset.cancelCreate !== undefined) {
     state.createScreen = null;
+    return renderAdmin();
+  }
+
+  if (target.dataset.newUser !== undefined) {
+    state.createScreen = "user";
     return renderAdmin();
   }
 

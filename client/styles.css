@@ -1450,6 +1450,51 @@ button:disabled {
   font-weight: 750;
 }
 
+.user-bulk-result {
+  margin-top: 12px;
+  padding: 14px;
+}
+
+.bulk-result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px;
+}
+
+.bulk-result-row {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+  padding: 9px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.bulk-result-row.fail {
+  background: #fffdf8;
+  border-left: 4px solid var(--amber);
+}
+
+.bulk-result-row.ok {
+  background: #fbfffd;
+  border-left: 4px solid var(--green);
+}
+
+.bulk-result-row strong,
+.bulk-result-row small {
+  display: block;
+  min-width: 0;
+}
+
+.bulk-result-row small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 730;
+  overflow-wrap: anywhere;
+}
+
 .user-session-panel {
   margin-top: 12px;
   padding: 14px;
@@ -1638,6 +1683,58 @@ button:disabled {
   display: grid;
   gap: 4px;
   min-width: 150px;
+}
+
+.risk-meter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-soft);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.risk-meter span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.risk-meter strong {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.risk-meter.green {
+  border-left-color: var(--green);
+  background: #fbfffd;
+}
+
+.risk-meter.green strong {
+  color: var(--green);
+}
+
+.risk-meter.amber {
+  border-left-color: var(--amber);
+  background: #fffdf8;
+}
+
+.risk-meter.amber strong {
+  color: var(--amber);
+}
+
+.risk-meter.red {
+  border-left-color: var(--red);
+  background: #fffafa;
+}
+
+.risk-meter.red strong {
+  color: var(--red);
 }
 
 .security-stack small {
@@ -2031,6 +2128,7 @@ button:disabled {
 }
 
 .creation-body .event-draft-summary,
+.creation-body .event-builder > .duplicate-guard,
 .creation-body .event-step,
 .creation-body .event-form-actions {
   margin-left: 22px;
@@ -3528,12 +3626,14 @@ button:disabled {
 	  .queue-head,
 	  .collision-head,
 	  .collision-row,
+	  .bulk-result-row,
 	  .queue-row {
 	    display: grid;
 	    grid-template-columns: 1fr;
 	  }
 
 	  .collision-row,
+	  .bulk-result-row,
 	  .queue-row {
 	    align-items: stretch;
 	  }

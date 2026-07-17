@@ -1481,21 +1481,32 @@ function findDuplicateEmployeeContact({ email, phone, excludeEmployeeId = "" }) 
   ).find((employee) => phonesMatchForLogin(employee.phone, phone)) || null;
 }
 
+function duplicateContactField(record, email, phone) {
+  if (email && cleanContactEmail(record?.email) === cleanContactEmail(email)) return "email";
+  if (phone && phonesMatchForLogin(record?.phone, phone)) return "telefono";
+  return "contacto";
+}
+
+function duplicateContactError(message, type, record, email, phone) {
+  const error = new Error(message);
+  error.status = 409;
+  error.payload = duplicateConflictPayload(type, record, duplicateContactField(record, email, phone));
+  return error;
+}
+
 function validateUserContact({ userId = "", employeeId = "", email, phone }) {
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     const error = new Error("Email no valido");
     error.status = 400;
     throw error;
   }
-  if (findDuplicateUserContact({ email, phone, excludeUserId: userId })) {
-    const error = new Error("Ese email o telefono ya pertenece a otro usuario");
-    error.status = 409;
-    throw error;
+  const duplicateUser = findDuplicateUserContact({ email, phone, excludeUserId: userId });
+  if (duplicateUser) {
+    throw duplicateContactError("Ese email o telefono ya pertenece a otro usuario", "user", duplicateUser, email, phone);
   }
-  if (findDuplicateEmployeeContact({ email, phone, excludeEmployeeId: employeeId })) {
-    const error = new Error("Ese email o telefono ya pertenece a otro operario");
-    error.status = 409;
-    throw error;
+  const duplicateEmployee = findDuplicateEmployeeContact({ email, phone, excludeEmployeeId: employeeId });
+  if (duplicateEmployee) {
+    throw duplicateContactError("Ese email o telefono ya pertenece a otro operario", "employee", duplicateEmployee, email, phone);
   }
 }
 
@@ -1515,18 +1526,16 @@ function validateEmployeeProfileContact({ employeeId, userId, email, phone }) {
     : null;
   const duplicateUserByPhone = findDuplicateUserContact({ phone, excludeUserId: userId });
   if (duplicateUserByEmail || duplicateUserByPhone) {
-    const error = new Error("Ese email o telefono ya pertenece a otro usuario");
-    error.status = 409;
-    throw error;
+    const duplicateUser = duplicateUserByPhone || get("SELECT * FROM users WHERE id = ?", [duplicateUserByEmail.id]);
+    throw duplicateContactError("Ese email o telefono ya pertenece a otro usuario", "user", duplicateUser, email, phone);
   }
   const duplicateEmployeeByEmail = email
     ? get("SELECT id FROM employees WHERE lower(email) = ? AND id != ? LIMIT 1", [email, employeeId])
     : null;
   const duplicateEmployeeByPhone = findDuplicateEmployeeContact({ phone, excludeEmployeeId: employeeId });
   if (duplicateEmployeeByEmail || duplicateEmployeeByPhone) {
-    const error = new Error("Ese email o telefono ya pertenece a otro operario");
-    error.status = 409;
-    throw error;
+    const duplicateEmployee = duplicateEmployeeByPhone || get("SELECT * FROM employees WHERE id = ?", [duplicateEmployeeByEmail.id]);
+    throw duplicateContactError("Ese email o telefono ya pertenece a otro operario", "employee", duplicateEmployee, email, phone);
   }
 }
 
@@ -1541,16 +1550,13 @@ function validateAdminEmployeeContact({ employeeId = "", userId = "", email, pho
     error.status = 400;
     throw error;
   }
-  if (findDuplicateEmployeeContact({ email, phone, excludeEmployeeId: employeeId })) {
-    const error = new Error("Ese email o telefono ya pertenece a otro operario");
-    error.status = 409;
-    throw error;
+  const duplicateEmployee = findDuplicateEmployeeContact({ email, phone, excludeEmployeeId: employeeId });
+  if (duplicateEmployee) {
+    throw duplicateContactError("Ese email o telefono ya pertenece a otro operario", "employee", duplicateEmployee, email, phone);
   }
   const duplicateUser = findDuplicateUserContact({ email, phone, excludeUserId: userId });
   if (duplicateUser && (duplicateUser.role !== "employee" || duplicateUser.employee_id)) {
-    const error = new Error("Ese email o telefono ya pertenece a otro usuario");
-    error.status = 409;
-    throw error;
+    throw duplicateContactError("Ese email o telefono ya pertenece a otro usuario", "user", duplicateUser, email, phone);
   }
 }
 
@@ -1607,7 +1613,7 @@ function identityKey(value) {
 }
 
 function duplicateConflictPayload(type, record, field) {
-  const label = type === "client" ? "cliente" : "operario";
+  const label = type === "client" ? "cliente" : type === "user" ? "usuario" : "operario";
   return {
     error: `Posible duplicado: ya existe un ${label} con ese ${field}`,
     duplicate: {
@@ -10015,15 +10021,16 @@ const server = http.createServer(async (req, res) => {
     } else {
       serveStatic(req, res, url);
     }
-  } catch (error) {
-    const status = error.status || 500;
-    const headers = error.retryAfterSeconds
-      ? { ...JSON_HEADERS, "retry-after": String(error.retryAfterSeconds) }
-      : JSON_HEADERS;
-    send(res, status, {
-      error: status === 500 ? "Error interno" : error.message,
-      detail: process.env.NODE_ENV === "production" ? undefined : error.message
-    }, headers);
+	  } catch (error) {
+	    const status = error.status || 500;
+	    const headers = error.retryAfterSeconds
+	      ? { ...JSON_HEADERS, "retry-after": String(error.retryAfterSeconds) }
+	      : JSON_HEADERS;
+	    send(res, status, {
+	      error: status === 500 ? "Error interno" : error.message,
+	      detail: process.env.NODE_ENV === "production" ? undefined : error.message,
+	      ...(status === 500 ? {} : error.payload || {})
+	    }, headers);
     if (status === 500) console.error(error);
   }
 });

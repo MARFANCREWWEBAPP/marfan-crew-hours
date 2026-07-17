@@ -314,11 +314,25 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 	        phone: "+34 600 111 902",
 	        portalAccess: false
 	      }
-	    });
-	    assert.equal(conversionEmployeeProfile.status, 201);
-	    const adminToConvert = await jsonRequest(baseUrl, "/api/users", {
-	      method: "POST",
-	      token: superToken,
+		    });
+		    assert.equal(conversionEmployeeProfile.status, 201);
+		    const duplicateEmployeeContactAdmin = await jsonRequest(baseUrl, "/api/users", {
+		      method: "POST",
+		      token: superToken,
+		      body: {
+		        role: "admin",
+		        name: "Admin Contacto Operario",
+		        email: "conversion.existente@marfancrew.test",
+		        password: "Contacto2026"
+		      }
+		    });
+		    assert.equal(duplicateEmployeeContactAdmin.status, 409);
+		    assert.equal(duplicateEmployeeContactAdmin.json.duplicate.type, "employee");
+		    assert.equal(duplicateEmployeeContactAdmin.json.duplicate.id, conversionEmployeeProfile.json.employee.id);
+		    assert.match(duplicateEmployeeContactAdmin.json.error, /email/i);
+		    const adminToConvert = await jsonRequest(baseUrl, "/api/users", {
+		      method: "POST",
+		      token: superToken,
 	      body: {
 	        role: "admin",
 	        name: "Admin A Convertir",
@@ -1248,10 +1262,12 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
         role: "Montaje",
         portalAccess: true
       }
-    });
-    assert.equal(duplicateLeaderPhone.status, 409);
-    assert.match(duplicateLeaderPhone.json.error, /telefono/i);
-    const employeeDniBase = await jsonRequest(baseUrl, "/api/employees", {
+	    });
+	    assert.equal(duplicateLeaderPhone.status, 409);
+	    assert.match(duplicateLeaderPhone.json.error, /telefono/i);
+	    assert.equal(duplicateLeaderPhone.json.duplicate.type, "employee");
+	    assert.equal(duplicateLeaderPhone.json.duplicate.id, leader.json.employee.id);
+	    const employeeDniBase = await jsonRequest(baseUrl, "/api/employees", {
       method: "POST",
       token,
       body: {
