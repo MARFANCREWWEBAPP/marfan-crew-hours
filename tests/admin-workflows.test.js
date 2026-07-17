@@ -494,6 +494,21 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 	      body: { identifier: "bulk.operaciones.dos@marfancrew.test", password: "Bulk2026B", mode: "admin" }
 	    });
 	    assert.equal(bulkTwoLogin.status, 200);
+	    const bulkRevokePreview = await jsonRequest(baseUrl, "/api/users/bulk/preview", {
+	      method: "POST",
+	      token: superToken,
+	      body: {
+	        action: "revoke_sessions",
+	        userIds: [bulkOne.json.user.id, bulkTwo.json.user.id]
+	      }
+	    });
+	    assert.equal(bulkRevokePreview.status, 200);
+	    assert.equal(bulkRevokePreview.json.preview, true);
+	    assert.equal(bulkRevokePreview.json.updated, 2);
+	    assert.equal(bulkRevokePreview.json.skipped, 0);
+	    assert.equal(bulkRevokePreview.json.results.every((item) => item.revoked >= 1), true);
+	    assert.equal((await jsonRequest(baseUrl, "/api/auth/me", { token: bulkOneLogin.json.token })).status, 200);
+	    assert.equal((await jsonRequest(baseUrl, "/api/auth/me", { token: bulkTwoLogin.json.token })).status, 200);
 	    const bulkRevoke = await jsonRequest(baseUrl, "/api/users/bulk", {
 	      method: "PATCH",
 	      token: superToken,
@@ -534,6 +549,23 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 	    assert.equal(bulkActivate.json.updated, 1);
 	    const afterBulkActivate = await jsonRequest(baseUrl, "/api/users", { token: superToken });
 	    assert.equal(afterBulkActivate.json.users.find((item) => item.id === bulkOne.json.user.id).active, true);
+	    const bulkPermissionProfilePreview = await jsonRequest(baseUrl, "/api/users/bulk/preview", {
+	      method: "POST",
+	      token: superToken,
+	      body: {
+	        action: "permission_profile",
+	        profile: "people",
+	        userIds: [bulkOne.json.user.id, bulkTwo.json.user.id, superLogin.json.user.id]
+	      }
+	    });
+	    assert.equal(bulkPermissionProfilePreview.status, 200);
+	    assert.equal(bulkPermissionProfilePreview.json.preview, true);
+	    assert.equal(bulkPermissionProfilePreview.json.updated, 2);
+	    assert.equal(bulkPermissionProfilePreview.json.skipped, 1);
+	    assert.match(
+	      bulkPermissionProfilePreview.json.results.find((item) => item.id === superLogin.json.user.id).error,
+	      /administradores operativos/i
+	    );
 	    const bulkPermissionProfile = await jsonRequest(baseUrl, "/api/users/bulk", {
 	      method: "PATCH",
 	      token: superToken,

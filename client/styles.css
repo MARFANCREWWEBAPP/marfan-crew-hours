@@ -920,6 +920,29 @@ button:disabled {
   white-space: nowrap;
 }
 
+.user-contact-cell {
+  min-width: 250px;
+  display: grid;
+  gap: 5px;
+}
+
+.user-contact-cell strong,
+.user-contact-cell small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.user-contact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.user-contact-actions .contact-actions {
+  display: inline-flex;
+}
+
 .inline-edit-form {
   display: grid;
   grid-template-columns: minmax(120px, 1fr) minmax(108px, 0.8fr) auto;
@@ -1483,6 +1506,41 @@ button:disabled {
   border-left: 4px solid var(--blue);
   border-radius: 8px;
   background: #fff;
+}
+
+.bulk-suggestion {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--blue-soft);
+  border-left: 4px solid var(--blue);
+  border-radius: 8px;
+  background: #f7fbff;
+}
+
+.bulk-suggestion strong,
+.bulk-suggestion small {
+  display: block;
+}
+
+.bulk-suggestion strong {
+  margin-top: 4px;
+}
+
+.bulk-suggestion small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 730;
+}
+
+.bulk-suggestion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
 }
 
 .bulk-impact.red {
@@ -3767,6 +3825,14 @@ button:disabled {
 
   .bulk-impact {
     grid-template-columns: 1fr;
+  }
+
+  .bulk-suggestion {
+    grid-template-columns: 1fr;
+  }
+
+  .bulk-suggestion-actions {
+    justify-content: flex-start;
   }
 
   .agenda-row {

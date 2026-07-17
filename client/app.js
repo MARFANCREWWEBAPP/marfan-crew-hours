@@ -28,6 +28,7 @@ const state = {
   reportFilters: { from: "", to: "", clientId: "", employeeId: "", status: "", search: "" },
   userFilters: { search: "", role: "all", security: "all" },
   selectedUserIds: [],
+  suggestedUserBulkAction: null,
   userBulkResult: null,
   userSessions: null,
   userActivity: null,
@@ -1566,7 +1567,8 @@ function userOperationsHealthPanel(users, isSuper) {
       count: users.filter((user) => user.active && userPasswordStale(user)).length,
       label: "Rotacion pendiente",
       filter: "stale",
-      select: "userSelectStalePasswords"
+      select: "userSelectStalePasswords",
+      action: "force_password_change"
     },
     {
       tone: "amber",
@@ -1574,7 +1576,8 @@ function userOperationsHealthPanel(users, isSuper) {
       count: users.filter((user) => user.active && userAccessReviewStale(user)).length,
       label: "Accesos sin validar",
       filter: "review",
-      select: "userSelectReviewPending"
+      select: "userSelectReviewPending",
+      action: "mark_reviewed"
     },
     {
       tone: "red",
@@ -1582,7 +1585,8 @@ function userOperationsHealthPanel(users, isSuper) {
       count: users.filter(userInactiveRisk).length,
       label: "Administradores sin uso",
       filter: "inactive_risk",
-      select: "userSelectInactiveRisk"
+      select: "userSelectInactiveRisk",
+      action: "deactivate_inactive"
     },
     {
       tone: "red",
@@ -1598,7 +1602,8 @@ function userOperationsHealthPanel(users, isSuper) {
       count: users.filter(userHasCustomPermissions).length,
       label: "Permisos a medida",
       filter: "permission_custom",
-      select: "userSelectCustomPermissions"
+      select: "userSelectCustomPermissions",
+      action: "suggested_profile"
     },
     {
       tone: "blue",
@@ -1606,7 +1611,8 @@ function userOperationsHealthPanel(users, isSuper) {
       count: users.filter((user) => Number(user.activeSessionCount || 0) > 0).length,
       label: "Sesiones abiertas",
       filter: "sessions",
-      select: "userSelectActiveSessions"
+      select: "userSelectActiveSessions",
+      action: "revoke_sessions"
     },
     {
       tone: "red",
@@ -1643,7 +1649,7 @@ function userOperationsHealthPanel(users, isSuper) {
             <small>${esc(item.label)}</small>
             <div class="ops-actions">
               <button class="btn compact" type="button" data-user-security-filter="${esc(item.filter)}" ${item.count ? "" : "disabled"}>Ver</button>
-              <button class="btn compact ghost" type="button" data-${item.select.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)} ${item.count ? "" : "disabled"}>Seleccionar</button>
+              <button class="btn compact ghost" type="button" data-${item.select.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}${item.action ? ` data-suggested-bulk-action="${esc(item.action)}"` : ""} ${item.count ? "" : "disabled"}>${item.action ? "Preparar" : "Seleccionar"}</button>
             </div>
           </div>
         `).join("")}
@@ -1827,6 +1833,21 @@ function userIdentityCell(user, isSuper) {
   `;
 }
 
+function userContactCell(user) {
+  const identifier = user.email || user.phone || user.id;
+  const copyLabel = user.email || user.phone ? "Acceso copiado" : "ID de usuario copiado";
+  return `
+    <div class="user-contact-cell contact-cell">
+      <strong>${esc(user.email || user.phone || "Sin contacto")}</strong>
+      <small class="muted">${esc(user.email && user.phone ? user.phone : user.email ? "Sin telefono" : user.phone ? "Sin email" : "Completar email o telefono")}</small>
+      <div class="user-contact-actions">
+        ${contactActions({ phone: user.phone, email: user.email, name: user.name, compact: true })}
+        <button class="btn compact ghost" type="button" data-copy-text="${esc(identifier)}" data-copy-label="${esc(copyLabel)}" title="Copiar usuario de acceso">${icon("copy")} Copiar</button>
+      </div>
+    </div>
+  `;
+}
+
 function filteredUsers(users) {
   const filters = state.userFilters || { search: "", role: "all", security: "all" };
   const query = searchableText(filters.search || "").trim();
@@ -1937,7 +1958,29 @@ function cleanSelectedUserIds(users) {
   const known = new Set(users.map((user) => user.id));
   const selected = (state.selectedUserIds || []).filter((id) => known.has(id));
   if (selected.length !== (state.selectedUserIds || []).length) state.selectedUserIds = selected;
+  if (!selected.length) state.suggestedUserBulkAction = null;
   return selected;
+}
+
+function setSuggestedUserBulkAction(action = "", profile = "") {
+  const cleanAction = String(action || "");
+  if (!cleanAction) {
+    state.suggestedUserBulkAction = null;
+    return;
+  }
+  state.suggestedUserBulkAction = {
+    action: cleanAction,
+    profile: String(profile || ""),
+    createdAt: new Date().toISOString()
+  };
+}
+
+function setSuggestedBulkActionFromTarget(target, fallbackAction = "", fallbackProfile = "") {
+  setSuggestedUserBulkAction(target?.dataset?.suggestedBulkAction || fallbackAction, target?.dataset?.suggestedBulkProfile || fallbackProfile);
+}
+
+function clearSuggestedUserBulkAction() {
+  state.suggestedUserBulkAction = null;
 }
 
 function selectedUsersForBulk(users, selectedIds) {
@@ -2006,6 +2049,24 @@ function userBulkImpactPanel(users, selectedIds, duplicateContactUserIds = null)
   `;
 }
 
+function userBulkSuggestedActionPanel(selectedIds) {
+  const suggested = state.suggestedUserBulkAction;
+  if (!selectedIds.length || !suggested?.action) return "";
+  return `
+    <div class="bulk-suggestion">
+      <div>
+        <span class="tag blue">Accion sugerida</span>
+        <strong>${esc(userBulkActionLabel(suggested.action, suggested.profile))}</strong>
+        <small>Preparada desde Salud usuarios. Se previsualizara con reglas reales antes de ejecutar.</small>
+      </div>
+      <div class="bulk-suggestion-actions">
+        <button class="btn compact primary" type="button" data-user-bulk-action="${esc(suggested.action)}" ${suggested.profile ? `data-user-bulk-profile="${esc(suggested.profile)}"` : ""}>Ejecutar sugerida</button>
+        <button class="btn compact ghost" type="button" data-clear-bulk-suggestion>Quitar</button>
+      </div>
+    </div>
+  `;
+}
+
 function userBulkBar(users, visibleUsers, isSuper) {
   if (!isSuper) return "";
   const selectedIds = cleanSelectedUserIds(users);
@@ -2032,7 +2093,7 @@ function userBulkBar(users, visibleUsers, isSuper) {
           <span>Seleccion inteligente</span>
           <button class="btn compact" type="button" data-user-select-high-risk ${hasHighRisk ? "" : "disabled"}>${icon("shield")} Riesgo alto</button>
           <button class="btn compact" type="button" data-user-select-attention ${hasAttention ? "" : "disabled"}>Alertas</button>
-          <button class="btn compact" type="button" data-user-select-stale-passwords ${visibleUsers.some((user) => user.active && userPasswordStale(user)) ? "" : "disabled"}>${icon("key")} Claves antiguas</button>
+          <button class="btn compact" type="button" data-user-select-stale-passwords data-suggested-bulk-action="force_password_change" ${visibleUsers.some((user) => user.active && userPasswordStale(user)) ? "" : "disabled"}>${icon("key")} Claves antiguas</button>
           <button class="btn compact" type="button" data-user-select-duplicate-contacts ${duplicateContactUserIds.size ? "" : "disabled"}>Duplicados</button>
         </div>
         <div class="bulk-action-group">
@@ -2060,6 +2121,7 @@ function userBulkBar(users, visibleUsers, isSuper) {
           <button class="btn compact ghost" type="button" data-user-select-clear ${disabled}>Limpiar</button>
         </div>
       </div>
+      ${userBulkSuggestedActionPanel(selectedIds)}
       ${userBulkImpactPanel(users, selectedIds, duplicateContactUserIds)}
     </section>
   `;
@@ -2080,17 +2142,48 @@ function userBulkActionLabel(action, profile = "") {
   return labels[action] || "Accion masiva";
 }
 
-function userBulkConfirmationMessage(action, users, selectedIds, profile = "") {
+function bulkPreviewEffectSummary(preview) {
+  const rows = preview?.results || [];
+  const applied = rows.filter((item) => item.ok);
+  return {
+    sessions: applied.reduce((sum, item) => sum + Number(item.revoked || item.sessionsRevoked || item.accessSessionsRevoked || 0), 0),
+    reviewsInvalidated: applied.filter((item) => item.accessReviewInvalidated).length,
+    reviewed: applied.filter((item) => item.reviewed).length,
+    forcedPasswords: applied.filter((item) => item.mustChangePassword).length,
+    inactiveBlocked: applied.filter((item) => item.inactive).length,
+    profileChanges: applied.filter((item) => item.profile).length,
+    omitted: rows.filter((item) => !item.ok)
+  };
+}
+
+function userBulkConfirmationMessage(action, users, selectedIds, profile = "", preview = null) {
   const duplicateContactUserIds = userDuplicateContactUserIds(users, state.data.employees || []);
   const impact = userBulkImpact(users, selectedIds, duplicateContactUserIds);
+  const previewEffects = preview?.preview ? bulkPreviewEffectSummary(preview) : null;
   const lines = [
     `${userBulkActionLabel(action, profile)}`,
     "",
-    `Seleccionados: ${impact.total}`,
+    `Seleccionados: ${impact.total}${preview?.preview ? ` · Aplicaria: ${preview.updated}/${preview.total} · Omitiria: ${preview.skipped}` : ""}`,
     `Administradores: ${impact.admins} · Operarios: ${impact.employees}`,
     `Riesgo alto: ${impact.highRisk} · Sesiones abiertas: ${impact.activeSessions}`,
     `Revision pendiente: ${impact.reviewPending} · Clave antigua: ${impact.stalePasswords}`
   ];
+  if (previewEffects) {
+    lines.push(
+      "",
+      `Segun servidor: sesiones que se cerrarian ${previewEffects.sessions} · revisiones invalidadas ${previewEffects.reviewsInvalidated} · perfiles a cambiar ${previewEffects.profileChanges}`
+    );
+    if (previewEffects.forcedPasswords) lines.push(`Cambios de clave forzados: ${previewEffects.forcedPasswords}`);
+    if (previewEffects.inactiveBlocked) lines.push(`Inactivos que se bloquearian: ${previewEffects.inactiveBlocked}`);
+    if (previewEffects.reviewed) lines.push(`Accesos que quedarian revisados: ${previewEffects.reviewed}`);
+    if (previewEffects.omitted.length) {
+      lines.push("", "Omisiones previstas:");
+      previewEffects.omitted.slice(0, 5).forEach((item) => {
+        lines.push(`- ${item.id}: ${item.error || "No aplicable"}`);
+      });
+      if (previewEffects.omitted.length > 5) lines.push(`- ${previewEffects.omitted.length - 5} omisiones mas`);
+    }
+  }
   const warnings = [];
   if (impact.selfIncluded) warnings.push("Incluye tu usuario; las operaciones no permitidas sobre tu propia cuenta se omitiran.");
   if (impact.duplicateContacts) warnings.push(`${impact.duplicateContacts} usuario(s) tienen contacto duplicado.`);
@@ -2112,15 +2205,16 @@ function userBulkResultPanel(users, isSuper) {
   const applied = rows.filter((item) => item.ok);
   const failed = rows.filter((item) => !item.ok);
   const tone = failed.length ? "amber" : "green";
+  const previewOnly = Boolean(result.preview);
   return `
     <section class="panel user-bulk-result">
       <div class="panel-head">
         <div>
-          <h2>Resultado de accion masiva</h2>
+          <h2>${previewOnly ? "Previsualizacion de accion masiva" : "Resultado de accion masiva"}</h2>
           <p class="muted">${esc(userBulkActionLabel(result.action, result.profile))} · ${esc(shortDateTime(result.createdAt))}</p>
         </div>
         <div class="filters-row">
-          <span class="tag ${tone}">${esc(result.updated || 0)} aplicados</span>
+          <span class="tag ${tone}">${esc(result.updated || 0)} ${previewOnly ? "aplicables" : "aplicados"}</span>
           <span class="tag ${failed.length ? "amber" : "green"}">${esc(result.skipped || 0)} omitidos</span>
           <button class="btn compact" type="button" data-user-bulk-result-select="ok" ${applied.length ? "" : "disabled"}>Seleccionar aplicados</button>
           <button class="btn compact" type="button" data-user-bulk-result-select="fail" ${failed.length ? "" : "disabled"}>Seleccionar omitidos</button>
@@ -2132,7 +2226,7 @@ function userBulkResultPanel(users, isSuper) {
           const user = usersById.get(item.id);
           return `
             <div class="bulk-result-row ${item.ok ? "ok" : "fail"}">
-              <span class="tag ${item.ok ? "green" : "amber"}">${item.ok ? "Aplicado" : "Omitido"}</span>
+              <span class="tag ${item.ok ? "green" : "amber"}">${item.ok ? (previewOnly ? "Aplicable" : "Aplicado") : "Omitido"}</span>
               <div>
                 <strong>${esc(user?.name || item.id)}</strong>
                 <small>${esc(user?.email || user?.phone || item.id)}</small>
@@ -2350,7 +2444,7 @@ function usersView() {
                     ${isSuper ? `<td class="select-col"><input type="checkbox" data-user-select="${esc(user.id)}" ${selected ? "checked" : ""} aria-label="Seleccionar ${esc(user.name)}" /></td>` : ""}
                     <td>${userIdentityCell(user, isSuper)}</td>
                     <td>${roleTag(user.role)}</td>
-                    <td>${esc(user.email || "")}<br /><small class="muted">${esc(user.phone || "")}</small></td>
+                    <td>${userContactCell(user)}</td>
                     <td>${user.employeeId ? `<strong>${esc(user.employeeRole)}</strong><br /><small class="muted">${esc(user.employeeStatus)}</small>` : `<span class="muted">No vinculada</span>`}</td>
                     <td>
                       ${isSuper && user.role === "admin" ? `
@@ -6116,6 +6210,13 @@ async function handleClick(event) {
     return toast(copied ? "Contrasena copiada" : "No se pudo copiar automaticamente", copied ? "info" : "error");
   }
 
+  if (target.dataset.copyText !== undefined) {
+    const value = String(target.dataset.copyText || "");
+    if (!value) return toast("No hay dato para copiar", "error");
+    const copied = await copyText(value).catch(() => false);
+    return toast(copied ? target.dataset.copyLabel || "Copiado" : "No se pudo copiar automaticamente", copied ? "info" : "error");
+  }
+
   if (target.dataset.togglePassword !== undefined) {
     const input = target.closest("form")?.querySelector("[name=password]");
     if (!input) return;
@@ -6149,6 +6250,7 @@ async function handleClick(event) {
 
   if (target.dataset.userSelectClear !== undefined) {
     state.selectedUserIds = [];
+    clearSuggestedUserBulkAction();
     return renderAdmin();
   }
 
@@ -6163,6 +6265,7 @@ async function handleClick(event) {
       .filter((item) => Boolean(item.ok) === wantOk)
       .map((item) => item.id);
     state.selectedUserIds = ids;
+    clearSuggestedUserBulkAction();
     toast(`${ids.length} usuario${ids.length === 1 ? "" : "s"} seleccionado${ids.length === 1 ? "" : "s"}`);
     return renderAdmin();
   }
@@ -6172,6 +6275,7 @@ async function handleClick(event) {
     state.selectedUserIds = filteredUsers(state.data.users || [])
       .filter((user) => userNeedsAttention(user, duplicateContactUserIds))
       .map((user) => user.id);
+    setSuggestedBulkActionFromTarget(target);
     return renderAdmin();
   }
 
@@ -6182,6 +6286,7 @@ async function handleClick(event) {
       .map((user) => user.id);
     state.userFilters = state.userFilters || { search: "", role: "all", security: "all" };
     state.userFilters.security = "high_risk";
+    setSuggestedBulkActionFromTarget(target);
     return renderAdmin();
   }
 
@@ -6189,6 +6294,7 @@ async function handleClick(event) {
     state.selectedUserIds = filteredUsers(state.data.users || [])
       .filter((user) => user.active && userPasswordStale(user))
       .map((user) => user.id);
+    setSuggestedBulkActionFromTarget(target, "force_password_change");
     return renderAdmin();
   }
 
@@ -6196,6 +6302,7 @@ async function handleClick(event) {
     state.userFilters = state.userFilters || { search: "", role: "all", security: "all" };
     state.selectedUserIds = Array.from(userDuplicateContactUserIds(state.data.users || [], state.data.employees || []));
     state.userFilters.security = "duplicate_contact";
+    clearSuggestedUserBulkAction();
     return renderAdmin();
   }
 
@@ -6205,6 +6312,7 @@ async function handleClick(event) {
       .find((item) => item.key === target.dataset.userSelectDuplicateGroup);
     state.selectedUserIds = group?.userIds || [];
     state.userFilters.security = "duplicate_contact";
+    clearSuggestedUserBulkAction();
     return renderAdmin();
   }
 
@@ -6212,6 +6320,7 @@ async function handleClick(event) {
     state.selectedUserIds = filteredUsers(state.data.users || [])
       .filter((user) => user.active && userAccessReviewStale(user))
       .map((user) => user.id);
+    setSuggestedBulkActionFromTarget(target, "mark_reviewed");
     return renderAdmin();
   }
 
@@ -6219,6 +6328,7 @@ async function handleClick(event) {
     state.selectedUserIds = filteredUsers(state.data.users || [])
       .filter(userInactiveRisk)
       .map((user) => user.id);
+    setSuggestedBulkActionFromTarget(target, "deactivate_inactive");
     return renderAdmin();
   }
 
@@ -6226,6 +6336,7 @@ async function handleClick(event) {
     state.selectedUserIds = filteredUsers(state.data.users || [])
       .filter(userDeniedPermissionRisk)
       .map((user) => user.id);
+    clearSuggestedUserBulkAction();
     return renderAdmin();
   }
 
@@ -6233,6 +6344,7 @@ async function handleClick(event) {
     state.selectedUserIds = filteredUsers(state.data.users || [])
       .filter(userHasCustomPermissions)
       .map((user) => user.id);
+    setSuggestedBulkActionFromTarget(target, "suggested_profile");
     return renderAdmin();
   }
 
@@ -6240,6 +6352,7 @@ async function handleClick(event) {
     state.selectedUserIds = filteredUsers(state.data.users || [])
       .filter((user) => Number(user.activeSessionCount || 0) > 0)
       .map((user) => user.id);
+    setSuggestedBulkActionFromTarget(target, "revoke_sessions");
     return renderAdmin();
   }
 
@@ -6247,16 +6360,41 @@ async function handleClick(event) {
     state.selectedUserIds = filteredUsers(state.data.users || [])
       .filter((user) => !user.email && !user.phone)
       .map((user) => user.id);
+    clearSuggestedUserBulkAction();
+    return renderAdmin();
+  }
+
+  if (target.dataset.clearBulkSuggestion !== undefined) {
+    clearSuggestedUserBulkAction();
     return renderAdmin();
   }
 
   if (target.dataset.userBulkAction) {
     const selected = cleanSelectedUserIds(state.data.users || []);
     if (!selected.length) return toast("Selecciona usuarios primero", "error");
-    const profile = target.dataset.userBulkAction === "permission_profile"
+    const profile = target.dataset.userBulkProfile || (target.dataset.userBulkAction === "permission_profile"
       ? target.closest(".user-bulk-bar")?.querySelector("[data-user-bulk-profile]")?.value || "operations"
-      : "";
-    const ok = window.confirm(userBulkConfirmationMessage(target.dataset.userBulkAction, state.data.users || [], selected, profile));
+      : "");
+    const preview = await api("/api/users/bulk/preview", {
+      method: "POST",
+      body: { action: target.dataset.userBulkAction, userIds: selected, profile }
+    });
+    if (!preview.updated) {
+      state.userBulkResult = {
+        action: preview.action,
+        profile: preview.profile,
+        total: preview.total,
+        updated: preview.updated,
+        skipped: preview.skipped,
+        results: preview.results || [],
+        createdAt: new Date().toISOString(),
+      preview: true
+      };
+      clearSuggestedUserBulkAction();
+      toast("No hay usuarios aplicables para esta accion", "error");
+      return renderAdmin();
+    }
+    const ok = window.confirm(userBulkConfirmationMessage(target.dataset.userBulkAction, state.data.users || [], selected, profile, preview));
     if (!ok) return toast("Operacion cancelada");
     const result = await api("/api/users/bulk", {
       method: "PATCH",
@@ -6272,6 +6410,7 @@ async function handleClick(event) {
       createdAt: new Date().toISOString()
     };
     state.selectedUserIds = [];
+    clearSuggestedUserBulkAction();
     toast(`${result.updated || 0} actualizados${result.skipped ? `, ${result.skipped} omitidos` : ""}`);
     return renderAdmin(true);
   }
@@ -7187,6 +7326,7 @@ async function handleChange(event) {
     if (event.target.checked) selected.add(event.target.dataset.userSelect);
     else selected.delete(event.target.dataset.userSelect);
     state.selectedUserIds = Array.from(selected);
+    clearSuggestedUserBulkAction();
     await renderAdmin();
     return;
   }
@@ -7198,6 +7338,7 @@ async function handleChange(event) {
       else selected.delete(id);
     }
     state.selectedUserIds = Array.from(selected);
+    clearSuggestedUserBulkAction();
     await renderAdmin();
     return;
   }

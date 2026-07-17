@@ -6066,6 +6066,27 @@ function revokeUserSessions(actor, targetId, requestToken) {
   };
 }
 
+function countRevokableUserSessions(actor, targetId, requestToken) {
+  const currentTokens = targetId === actor.id && requestToken ? sessionTokenCandidates(requestToken) : [];
+  const row = currentTokens.length
+    ? get(
+        `SELECT COUNT(*) AS count
+         FROM sessions
+         WHERE user_id = ?
+           AND token NOT IN (${currentTokens.map(() => "?").join(",")})`,
+        [targetId, ...currentTokens]
+      )
+    : get("SELECT COUNT(*) AS count FROM sessions WHERE user_id = ?", [targetId]);
+  return {
+    revoked: Number(row?.count || 0),
+    currentSessionPreserved: Boolean(currentTokens.length)
+  };
+}
+
+function countUserSessions(targetId) {
+  return Number(get("SELECT COUNT(*) AS count FROM sessions WHERE user_id = ?", [targetId])?.count || 0);
+}
+
 function listUserSessions(targetId, requestToken = "") {
   const currentTokens = requestToken ? new Set(sessionTokenCandidates(requestToken)) : new Set();
   return all(
@@ -6242,6 +6263,108 @@ function forceUserPasswordChange(actor, targetId) {
   return { mustChangePassword: true, revoked: revoked.changes || 0 };
 }
 
+function previewBulkUserAction(actor, targetId, action, requestToken, options = {}) {
+  if (action === "activate" || action === "deactivate") {
+    const nextActive = action === "activate";
+    const target = ensureCanChangeUser(actor, targetId, undefined, nextActive);
+    return {
+      active: nextActive,
+      currentActive: Boolean(target.active),
+      sessionsRevoked: nextActive ? 0 : countUserSessions(targetId)
+    };
+  }
+
+  const target = get("SELECT id, role, active, permissions_json, access_reviewed_at FROM users WHERE id = ?", [targetId]);
+  if (!target) {
+    const error = new Error("Usuario no encontrado");
+    error.status = 404;
+    throw error;
+  }
+
+  if (action === "unlock") {
+    return { unlocked: true };
+  }
+
+  if (action === "revoke_sessions") {
+    return countRevokableUserSessions(actor, targetId, requestToken);
+  }
+
+  if (action === "deactivate_inactive") {
+    if (!userInactiveForAccess(target)) {
+      const error = new Error(`Solo se bloquean administradores activos sin uso en ${ADMIN_INACTIVITY_LIMIT_DAYS} dias`);
+      error.status = 409;
+      throw error;
+    }
+    ensureCanChangeUser(actor, targetId, undefined, false);
+    return { active: false, inactive: true, sessionsRevoked: countUserSessions(targetId) };
+  }
+
+  if (action === "force_password_change") {
+    if (actor.id === targetId) {
+      const error = new Error("No puedes forzar el cambio de clave sobre tu propio usuario desde lote");
+      error.status = 409;
+      throw error;
+    }
+    if (!target.active) {
+      const error = new Error("Solo se aplica a usuarios activos");
+      error.status = 409;
+      throw error;
+    }
+    return { mustChangePassword: true, revoked: countUserSessions(targetId) };
+  }
+
+  if (action === "permission_profile") {
+    if (target.role !== "admin") {
+      const error = new Error("Solo se aplica a administradores operativos");
+      error.status = 409;
+      throw error;
+    }
+    const permissions = permissionsForProfile(options.profile);
+    return {
+      profile: options.profile,
+      permissions,
+      accessReviewInvalidated: Boolean(target.access_reviewed_at),
+      accessSessionsRevoked: countUserSessions(targetId)
+    };
+  }
+
+  if (action === "suggested_profile") {
+    if (target.role !== "admin" || !target.active) {
+      const error = new Error("Solo se aplica a administradores activos");
+      error.status = 409;
+      throw error;
+    }
+    const suggested = suggestedPermissionProfileForUser(target);
+    if (!suggested) {
+      const error = new Error("El usuario ya tiene un perfil estandar");
+      error.status = 409;
+      throw error;
+    }
+    return {
+      profile: suggested.id,
+      profileLabel: suggested.label,
+      added: suggested.added,
+      removed: suggested.removed,
+      permissions: permissionsForProfile(suggested.id),
+      accessReviewInvalidated: Boolean(target.access_reviewed_at),
+      accessSessionsRevoked: countUserSessions(targetId)
+    };
+  }
+
+  if (action === "mark_reviewed") {
+    if (target.role === "employee") {
+      const error = new Error("La revision de acceso aplica a administradores");
+      error.status = 409;
+      throw error;
+    }
+    return { reviewed: true };
+  }
+
+  const error = new Error("Accion masiva no valida");
+  error.status = 400;
+  throw error;
+}
+
 function applyBulkUserAction(actor, targetId, action, requestToken, options = {}) {
   if (action === "activate" || action === "deactivate") {
     const nextActive = action === "activate";
@@ -6355,6 +6478,59 @@ function applyBulkUserAction(actor, targetId, action, requestToken, options = {}
   const error = new Error("Accion masiva no valida");
   error.status = 400;
   throw error;
+}
+
+const BULK_USER_ACTIONS = new Set([
+  "activate",
+  "deactivate",
+  "unlock",
+  "revoke_sessions",
+  "permission_profile",
+  "suggested_profile",
+  "mark_reviewed",
+  "deactivate_inactive",
+  "force_password_change"
+]);
+
+function parseBulkUserActionRequest(body) {
+  const action = String(body.action || "").replace("-", "_");
+  if (!BULK_USER_ACTIONS.has(action)) {
+    const error = new Error("Accion masiva no valida");
+    error.status = 400;
+    throw error;
+  }
+  const profile = action === "permission_profile" ? String(body.profile || "") : "";
+  if (action === "permission_profile") permissionsForProfile(profile);
+  const userIds = Array.from(new Set((Array.isArray(body.userIds) ? body.userIds : [])
+    .map((id) => String(id || "").trim())
+    .filter(Boolean)))
+    .slice(0, 200);
+  if (!userIds.length) {
+    const error = new Error("Selecciona al menos un usuario");
+    error.status = 400;
+    throw error;
+  }
+  return { action, profile, userIds };
+}
+
+function bulkUserActionResults(actor, userIds, action, requestToken, options = {}, previewOnly = false) {
+  return userIds.map((targetId) => {
+    try {
+      return {
+        id: targetId,
+        ok: true,
+        ...(previewOnly
+          ? previewBulkUserAction(actor, targetId, action, requestToken, options)
+          : applyBulkUserAction(actor, targetId, action, requestToken, options))
+      };
+    } catch (error) {
+      return {
+        id: targetId,
+        ok: false,
+        error: error.message || "No se pudo aplicar la accion"
+      };
+    }
+  });
 }
 
 function deliveryNoteRows(event) {
@@ -7317,48 +7493,31 @@ async function handleApi(req, res, url) {
     return sendJson(res, 201, { user: listUsers().find((item) => item.id === id) });
   }
 
+  if (pathname === "/api/users/bulk/preview" && method === "POST") {
+    requireSuperAdmin(user);
+    const body = await readBody(req);
+    const { action, profile, userIds } = parseBulkUserActionRequest(body);
+    const results = bulkUserActionResults(user, userIds, action, tokenFromRequest(req), { profile }, true);
+    const updated = results.filter((item) => item.ok).length;
+    return sendJson(res, 200, {
+      ok: true,
+      preview: true,
+      action,
+      profile,
+      total: userIds.length,
+      updated,
+      skipped: userIds.length - updated,
+      results
+    });
+  }
+
   if (pathname === "/api/users/bulk" && method === "PATCH") {
     requireSuperAdmin(user);
     const body = await readBody(req);
-    const action = String(body.action || "").replace("-", "_");
-    const allowedActions = new Set([
-      "activate",
-      "deactivate",
-      "unlock",
-      "revoke_sessions",
-      "permission_profile",
-      "suggested_profile",
-      "mark_reviewed",
-      "deactivate_inactive",
-      "force_password_change"
-    ]);
-    if (!allowedActions.has(action)) {
-      return sendJson(res, 400, { error: "Accion masiva no valida" });
-    }
-    const profile = action === "permission_profile" ? String(body.profile || "") : "";
-    if (action === "permission_profile") permissionsForProfile(profile);
-    const userIds = Array.from(new Set((Array.isArray(body.userIds) ? body.userIds : [])
-      .map((id) => String(id || "").trim())
-      .filter(Boolean)))
-      .slice(0, 200);
-    if (!userIds.length) return sendJson(res, 400, { error: "Selecciona al menos un usuario" });
+    const { action, profile, userIds } = parseBulkUserActionRequest(body);
 
     const requestToken = tokenFromRequest(req);
-    const results = userIds.map((targetId) => {
-      try {
-        return {
-          id: targetId,
-          ok: true,
-          ...applyBulkUserAction(user, targetId, action, requestToken, { profile })
-        };
-      } catch (error) {
-        return {
-          id: targetId,
-          ok: false,
-          error: error.message || "No se pudo aplicar la accion"
-        };
-      }
-    });
+    const results = bulkUserActionResults(user, userIds, action, requestToken, { profile });
     const updated = results.filter((item) => item.ok).length;
     audit(user, "users_bulk_action", "user", "bulk", {
       action,
