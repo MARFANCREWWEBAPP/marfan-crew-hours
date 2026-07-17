@@ -1040,6 +1040,10 @@ function userInactiveRisk(user) {
   return user.active && user.role !== "employee" && olderThanDays(user.lastLoginAt || user.createdAt, 60);
 }
 
+function userDeniedPermissionRisk(user) {
+  return Number(user.deniedPermissionCount || 0) > 0;
+}
+
 function activePermissionCount(user) {
   return adminPermissionDefs.filter(([key]) => permissionEnabled(user.permissions, key)).length;
 }
@@ -1051,6 +1055,7 @@ function userQualityFlags(user) {
   if (user.mustChangePassword) flags.push({ label: "Clave temporal", tone: "amber" });
   if (userAccessReviewStale(user)) flags.push({ label: "Revision pendiente", tone: "amber" });
   if (userInactiveRisk(user)) flags.push({ label: "Sin uso +60d", tone: "red" });
+  if (userDeniedPermissionRisk(user)) flags.push({ label: `Permisos denegados x${Number(user.deniedPermissionCount || 0)}`, tone: "red" });
   if (user.role === "admin" && activePermissionCount(user) >= adminPermissionDefs.length - 2) {
     flags.push({ label: "Permisos amplios", tone: "amber" });
   }
@@ -1064,7 +1069,7 @@ function userHasQualityIssues(user) {
 }
 
 function userNeedsAttention(user) {
-  return !user.active || userIsLocked(user) || user.recoveryPending || userPasswordStale(user) || userAccessReviewStale(user) || userInactiveRisk(user) || userHasQualityIssues(user);
+  return !user.active || userIsLocked(user) || user.recoveryPending || userPasswordStale(user) || userAccessReviewStale(user) || userInactiveRisk(user) || userDeniedPermissionRisk(user) || userHasQualityIssues(user);
 }
 
 function employeePortalHealth(users = [], employees = []) {
@@ -1152,6 +1157,14 @@ function userOperationsHealthPanel(users, isSuper) {
       select: "userSelectInactiveRisk"
     },
     {
+      tone: "red",
+      tag: "Denegados",
+      count: users.filter(userDeniedPermissionRisk).length,
+      label: "Intentos fuera de perfil",
+      filter: "denied",
+      select: "userSelectDeniedPermissions"
+    },
+    {
       tone: "amber",
       tag: "Perfil",
       count: users.filter(userHasCustomPermissions).length,
@@ -1207,6 +1220,7 @@ function userSecuritySummary(user) {
   const locked = userIsLocked(user);
   const sessions = Number(user.activeSessionCount || 0);
   const qualityFlags = userQualityFlags(user);
+  const deniedPermissionCount = Number(user.deniedPermissionCount || 0);
   return `
     <div class="security-stack">
       ${locked ? `<span class="tag red">Bloqueado hasta ${esc(shortDateTime(user.lockedUntil))}</span>` : `<span class="tag ${sessions ? "green" : "blue"}">${sessions} sesion${sessions === 1 ? "" : "es"} activa${sessions === 1 ? "" : "s"}</span>`}
@@ -1215,6 +1229,7 @@ function userSecuritySummary(user) {
       <small>Ultimo acceso: ${esc(shortDateTime(user.lastLoginAt))}</small>
       <small>Clave: ${esc(shortDateTime(user.passwordChangedAt))}</small>
       <small>Revision: ${esc(shortDateTime(user.accessReviewedAt))}${user.accessReviewerName ? ` · ${esc(user.accessReviewerName)}` : ""}</small>
+      ${deniedPermissionCount ? `<small>Denegados 7d: ${esc(deniedPermissionCount)}${user.deniedPermissionLastAt ? ` · ${esc(shortDateTime(user.deniedPermissionLastAt))}` : ""}</small>` : ""}
       ${Number(user.failedLoginCount || 0) ? `<small>Fallos recientes: ${esc(user.failedLoginCount)}</small>` : ""}
     </div>
   `;
@@ -1261,6 +1276,7 @@ function filteredUsers(users) {
       (filters.security === "temporary" && user.mustChangePassword) ||
       (filters.security === "review" && userAccessReviewStale(user)) ||
       (filters.security === "inactive_risk" && userInactiveRisk(user)) ||
+      (filters.security === "denied" && userDeniedPermissionRisk(user)) ||
       (filters.security === "permission_custom" && userHasCustomPermissions(user)) ||
       (filters.security === "sessions" && Number(user.activeSessionCount || 0) > 0) ||
       (filters.security === "stale" && userPasswordStale(user)) ||
@@ -1279,6 +1295,7 @@ function userCommandCenter(users, isSuper) {
   const temporary = users.filter((user) => user.mustChangePassword);
   const review = users.filter(userAccessReviewStale);
   const inactiveRisk = users.filter(userInactiveRisk);
+  const denied = users.filter(userDeniedPermissionRisk);
   const stale = users.filter(userPasswordStale);
   const quality = users.filter(userHasQualityIssues);
   return `
@@ -1308,6 +1325,7 @@ function userCommandCenter(users, isSuper) {
             <option value="temporary" ${filters.security === "temporary" ? "selected" : ""}>Clave temporal</option>
             <option value="review" ${filters.security === "review" ? "selected" : ""}>Revision pendiente</option>
             <option value="inactive_risk" ${filters.security === "inactive_risk" ? "selected" : ""}>Inactividad</option>
+            <option value="denied" ${filters.security === "denied" ? "selected" : ""}>Permisos denegados</option>
             <option value="permission_custom" ${filters.security === "permission_custom" ? "selected" : ""}>Permisos a medida</option>
             <option value="sessions" ${filters.security === "sessions" ? "selected" : ""}>Sesiones activas</option>
             <option value="stale" ${filters.security === "stale" ? "selected" : ""}>Clave antigua</option>
@@ -1323,6 +1341,7 @@ function userCommandCenter(users, isSuper) {
         <button class="attention-tile ${temporary.length ? "hot" : ""} ${filters.security === "temporary" ? "active" : ""}" type="button" data-user-security-filter="temporary" aria-pressed="${filters.security === "temporary"}"><span>${temporary.length}</span><strong>Clave temporal</strong></button>
         <button class="attention-tile ${review.length ? "hot" : ""} ${filters.security === "review" ? "active" : ""}" type="button" data-user-security-filter="review" aria-pressed="${filters.security === "review"}"><span>${review.length}</span><strong>Revision</strong></button>
         <button class="attention-tile ${inactiveRisk.length ? "hot" : ""} ${filters.security === "inactive_risk" ? "active" : ""}" type="button" data-user-security-filter="inactive_risk" aria-pressed="${filters.security === "inactive_risk"}"><span>${inactiveRisk.length}</span><strong>Inactividad</strong></button>
+        <button class="attention-tile ${denied.length ? "hot" : ""} ${filters.security === "denied" ? "active" : ""}" type="button" data-user-security-filter="denied" aria-pressed="${filters.security === "denied"}"><span>${denied.length}</span><strong>Denegados</strong></button>
         <button class="attention-tile ${stale.length ? "hot" : ""} ${filters.security === "stale" ? "active" : ""}" type="button" data-user-security-filter="stale" aria-pressed="${filters.security === "stale"}"><span>${stale.length}</span><strong>Clave antigua</strong></button>
         <button class="attention-tile ${quality.length ? "hot" : ""} ${filters.security === "quality" ? "active" : ""}" type="button" data-user-security-filter="quality" aria-pressed="${filters.security === "quality"}"><span>${quality.length}</span><strong>Calidad ficha</strong></button>
       </div>
@@ -4035,8 +4054,8 @@ function employeeHomeView(data) {
       <div style="margin-top:12px"><small class="muted">COMPANEROS (${data.coworkers.length})</small><br />${data.coworkers.slice(0, 4).map((worker) => `<span class="tag blue">${esc(worker.name.split(" ")[0])}</span>`).join(" ")}</div>
     </article>
     <div class="quick-actions">
-      ${employeeClockActionButton(service, "entrada", true)}
-      ${employeeClockActionButton(service, "salida")}
+      ${employeeClockActionButton(service, "entrada", true, service.id)}
+      ${employeeClockActionButton(service, "salida", false, service.id)}
       <button data-call-office="${esc(data.office?.phone || "")}">${icon("phone")} Llamar oficina</button>
       <button data-whatsapp="${esc(data.office?.whatsapp || data.office?.phone || "")}">${icon("message")} WhatsApp</button>
     </div>
@@ -4047,7 +4066,7 @@ function employeeHomeView(data) {
         <div class="geo-state"><div class="geo-badge">${icon(clockMeta.icon)}</div><div><strong>${esc(clockMeta.label)}</strong><br /><span class="muted">${esc(clockMeta.detail)}</span></div></div>
         <strong>${clockMeta.last}</strong>
       </div>
-      <button class="clock-button ${clockMeta.className}" data-clock="${esc(clockMeta.nextType || "entrada")}" ${clockMeta.nextType ? "" : "disabled"}>${icon(clockMeta.nextType === "salida" ? "logout" : "check")} ${esc(clockMeta.action)}</button>
+      <button class="clock-button ${clockMeta.className}" type="button" data-clock="${esc(clockMeta.nextType || "entrada")}" data-clock-event="${esc(service.id)}" ${clockMeta.nextType ? "" : "disabled"}>${icon(clockMeta.nextType === "salida" ? "logout" : "check")} ${esc(clockMeta.action)}</button>
     </article>
 	    <div class="mobile-grid">
 	      <article class="mobile-card"><h3>Alertas de documentos</h3><p><strong>${docAlerts.length}</strong> documentos pendientes</p><button class="btn" data-employee-tab="documentos">${icon("file")} Ver documentos</button></article>
@@ -4186,11 +4205,12 @@ function employeeClockMeta(service) {
   return { label, detail, action, nextType, className, icon: iconName, last };
 }
 
-function employeeClockActionButton(service, type, primary = false) {
+function employeeClockActionButton(service, type, primary = false, eventId = "") {
   const enabled = type === "entrada" ? Boolean(Number(service.can_clock_in || 0)) : Boolean(Number(service.can_clock_out || 0));
   const label = type === "entrada" ? "Fichar entrada" : "Fichar salida";
   const className = primary && enabled ? "green-action" : "";
-  return `<button class="${className}" data-clock="${type}" ${enabled ? "" : "disabled"}>${icon(type === "entrada" ? "check" : "logout")} ${label}</button>`;
+  const eventAttr = eventId ? ` data-clock-event="${esc(eventId)}"` : "";
+  return `<button class="${className}" type="button" data-clock="${type}"${eventAttr} ${enabled ? "" : "disabled"}>${icon(type === "entrada" ? "check" : "logout")} ${label}</button>`;
 }
 
 function teamLeaderSignaturePanel(service, coworkers = []) {
@@ -4518,10 +4538,31 @@ function employeeServiceItem(service) {
       <div class="doc-actions">
         ${employeeServiceStatusTag(service)}
         ${mapsUrl ? `<button class="btn compact green" type="button" data-open-url="${esc(mapsUrl)}">${icon("map")} Maps</button>` : `<button class="btn compact" type="button" disabled>${icon("map")} Maps</button>`}
+        ${employeeServiceClockControl(service)}
         ${employeeConfirmButton(service, true)}
       </div>
     </div>
   `;
+}
+
+function employeeServiceClockControl(service) {
+  if (Boolean(Number(service.can_clock_in || 0))) {
+    return `<button class="btn compact green" type="button" data-clock="entrada" data-clock-event="${esc(service.id)}">${icon("check")} Entrada</button>`;
+  }
+  if (Boolean(Number(service.can_clock_out || 0))) {
+    return `<button class="btn compact green" type="button" data-clock="salida" data-clock-event="${esc(service.id)}">${icon("logout")} Salida</button>`;
+  }
+  if (service.clock_state === "finalizado") return `<span class="tag green">Fichado</span>`;
+  const reason = employeeClockUnavailableMessage(service, service.next_clock_type || "entrada");
+  return `<button class="btn compact" type="button" data-clock-unavailable="${esc(reason)}">${icon("clock")} Fichaje</button>`;
+}
+
+function employeeClockUnavailableMessage(service, type = "entrada") {
+  if (!service) return "Servicio no disponible";
+  if (service.clock_block_reason) return service.clock_block_reason;
+  if (service.status === "finalizado" || service.clock_state === "finalizado") return "Servicio ya finalizado";
+  if (service.assignment_status === "bloqueado") return "Asignacion bloqueada por oficina";
+  return type === "salida" ? "La salida no esta disponible ahora" : "La entrada no esta disponible ahora";
 }
 
 function employeeIncidentItem(incident) {
@@ -5189,6 +5230,13 @@ async function handleClick(event) {
   if (target.dataset.userSelectInactiveRisk !== undefined) {
     state.selectedUserIds = filteredUsers(state.data.users || [])
       .filter(userInactiveRisk)
+      .map((user) => user.id);
+    return renderAdmin();
+  }
+
+  if (target.dataset.userSelectDeniedPermissions !== undefined) {
+    state.selectedUserIds = filteredUsers(state.data.users || [])
+      .filter(userDeniedPermissionRisk)
       .map((user) => user.id);
     return renderAdmin();
   }
@@ -6007,7 +6055,11 @@ async function handleClick(event) {
   }
 
   if (target.dataset.clock) {
-    return clock(target.dataset.clock);
+    return clock(target.dataset.clock, target.dataset.clockEvent || "");
+  }
+
+  if (target.dataset.clockUnavailable !== undefined) {
+    return toast(target.dataset.clockUnavailable || "Fichaje no disponible", "error");
   }
 
   if (target.dataset.clearSignature !== undefined) {
@@ -6200,12 +6252,15 @@ function handleDragEnd() {
   document.querySelectorAll(".drag-over").forEach((item) => item.classList.remove("drag-over"));
 }
 
-async function clock(type) {
+async function clock(type, eventId = "") {
   try {
-    const service = state.employeeHome?.nextService;
+    const services = employeeCalendarServices(state.employeeHome || {});
+    const service = eventId
+      ? services.find((item) => item.id === eventId)
+      : state.employeeHome?.nextService;
     if (!service) return;
     const allowed = type === "entrada" ? Boolean(Number(service.can_clock_in || 0)) : Boolean(Number(service.can_clock_out || 0));
-    if (!allowed) return toast(type === "entrada" ? "La entrada no esta disponible ahora" : "La salida no esta disponible ahora", "error");
+    if (!allowed) return toast(employeeClockUnavailableMessage(service, type), "error");
     const coords = await getPosition();
     const signature = type === "salida" && service.is_team_leader ? signaturePayload() : {};
     if (type === "salida" && service.is_team_leader && (!signature.signatureName.trim() || !signature.signatureDni.trim())) {

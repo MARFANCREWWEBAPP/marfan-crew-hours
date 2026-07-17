@@ -701,6 +701,7 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 	    const securityReportCsvText = await securityReportCsv.text();
 	    assert.match(securityReportCsvText, /riesgo;puntuacion;accion_recomendada/);
 	    assert.match(securityReportCsvText, /perfil_permisos;permisos_personalizados/);
+	    assert.match(securityReportCsvText, /permisos_denegados_7d;ultimo_permiso_denegado/);
 	    assert.match(securityReportCsvText, /bulk\.operaciones\.uno@marfancrew\.test/);
 	    const securityReportAudit = await jsonRequest(baseUrl, "/api/audit-logs?action=users_security_report_exported&entity=user", { token: superToken });
 	    assert.equal(securityReportAudit.status, 200);
@@ -892,6 +893,18 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(restrictedActivity.status, 200);
     assert.equal(restrictedActivity.json.logs.some((item) => item.action === "admin_permission_denied"), true);
     assert.equal(restrictedActivity.json.summary.security >= 1, true);
+    const usersAfterDeniedPermission = await jsonRequest(baseUrl, "/api/users", { token: superToken });
+    assert.equal(usersAfterDeniedPermission.status, 200);
+    const restrictedAfterDenied = usersAfterDeniedPermission.json.users.find((item) => item.id === restrictedAdmin.json.user.id);
+    assert.equal(restrictedAfterDenied.deniedPermissionCount >= 1, true);
+    assert.ok(restrictedAfterDenied.deniedPermissionLastAt);
+    const deniedSecurityReport = await jsonRequest(baseUrl, "/api/users/security-report", { token: superToken });
+    assert.equal(deniedSecurityReport.status, 200);
+    const deniedReportRow = deniedSecurityReport.json.rows.find((item) => item.id_usuario === restrictedAdmin.json.user.id);
+    assert.equal(deniedReportRow.permisos_denegados_7d >= 1, true);
+    assert.ok(deniedReportRow.ultimo_permiso_denegado);
+    assert.match(deniedReportRow.senales, /permisos denegados/);
+    assert.match(deniedReportRow.accion_recomendada, /permisos denegados/i);
 
     const employeesNoImportsAdmin = await jsonRequest(baseUrl, "/api/users", {
       method: "POST",
@@ -2259,7 +2272,7 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
         clientId: "cli_tech",
         date: todayLocal(),
         startTime: "00:00",
-        endTime: "23:59",
+        endTime: "00:01",
         location: "Recinto autoconfirma",
         address: "Recinto autoconfirma",
         lat: 36.694,
@@ -2304,12 +2317,61 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(autoConfirmClock.status, 201);
     assert.equal(autoConfirmClock.json.entry.employee_id, autoConfirmEmployee.json.employee.id);
 
+    const nextEmployeeEvent = await jsonRequest(baseUrl, "/api/events", {
+      method: "POST",
+      token,
+      body: {
+        name: "Segundo servicio fichable",
+        clientId: "cli_tech",
+        date: todayLocal(),
+        startTime: "00:02",
+        endTime: "23:59",
+        location: "Recinto segundo fichaje",
+        address: "Recinto segundo fichaje",
+        lat: 36.694,
+        lng: -4.4605,
+        requiredTotal: 1,
+        requirements: [{ role: "Montaje", count: 1 }]
+      }
+    });
+    assert.equal(nextEmployeeEvent.status, 201);
+    const nextEmployeeAssignment = await jsonRequest(baseUrl, "/api/assignments", {
+      method: "POST",
+      token,
+      body: {
+        eventId: nextEmployeeEvent.json.event.id,
+        employeeId: autoConfirmEmployee.json.employee.id,
+        role: "Montaje",
+        status: "confirmado"
+      }
+    });
+    assert.equal(nextEmployeeAssignment.status, 201);
+    const autoConfirmClockOut = await jsonRequest(baseUrl, "/api/time-entries/clock", {
+      method: "POST",
+      token: autoConfirmLogin.json.token,
+      body: {
+        eventId: autoConfirmEvent.json.event.id,
+        type: "salida",
+        lat: 36.694,
+        lng: -4.4605,
+        accuracy: 6
+      }
+    });
+    assert.equal(autoConfirmClockOut.status, 201);
+    const employeeHomeAfterCompletedService = await jsonRequest(baseUrl, "/api/employee/home", { token: autoConfirmLogin.json.token });
+    assert.equal(employeeHomeAfterCompletedService.status, 200);
+    assert.equal(employeeHomeAfterCompletedService.json.nextService.id, nextEmployeeEvent.json.event.id);
+    assert.equal(employeeHomeAfterCompletedService.json.nextService.can_clock_in, 1);
+
     const autoConfirmedEvent = await jsonRequest(baseUrl, `/api/events/${autoConfirmEvent.json.event.id}`, { token });
     assert.equal(autoConfirmedEvent.status, 200);
     assert.equal(autoConfirmedEvent.json.event.assignments[0].status, "confirmado");
     const autoConfirmSnapshots = await jsonRequest(baseUrl, `/api/events/${autoConfirmEvent.json.event.id}/snapshots?limit=5`, { token });
-    const autoConfirmSnapshot = autoConfirmSnapshots.json.snapshots.find((snapshot) => snapshot.action === "time_entry_created");
-    assert.equal(autoConfirmSnapshot.metadata.autoConfirmedAssignment, true);
+    const autoConfirmSnapshot = autoConfirmSnapshots.json.snapshots.find((snapshot) =>
+      snapshot.action === "time_entry_created" &&
+      snapshot.metadata?.autoConfirmedAssignment === true
+    );
+    assert.ok(autoConfirmSnapshot);
     assert.equal(autoConfirmSnapshot.payload_hash_valid, true);
 
     const noGpsEmployee = await jsonRequest(baseUrl, "/api/employees", {

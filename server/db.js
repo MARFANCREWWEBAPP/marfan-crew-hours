@@ -303,6 +303,7 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
       CREATE INDEX IF NOT EXISTS idx_documents_employee ON documents(employee_id);
       CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id, used_at);
+      CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_action_created ON audit_logs(actor_user_id, action, created_at);
     `
   },
   {
@@ -623,6 +624,14 @@ const migrations = [
       ALTER TABLE users ADD COLUMN access_reviewed_by_user_id TEXT;
 
       CREATE INDEX IF NOT EXISTS idx_users_access_reviewed_at ON users(access_reviewed_at);
+    `
+  },
+  {
+    version: 22,
+    name: "audit-permission-denied-index",
+    sql: `
+      CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_action_created
+        ON audit_logs(actor_user_id, action, created_at);
     `
   }
 ];

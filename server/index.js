@@ -72,6 +72,7 @@ const ACCOUNT_LOCK_MS = 15 * 60 * 1000;
 const ADMIN_INACTIVITY_LIMIT_DAYS = 60;
 const ACCESS_REVIEW_LIMIT_DAYS = 90;
 const PASSWORD_ROTATION_LIMIT_DAYS = 180;
+const PERMISSION_DENIED_SIGNAL_DAYS = 7;
 let googleAccessTokenCache = null;
 const googleOauthStates = new Map();
 const authFailureBuckets = new Map();
@@ -5514,7 +5515,21 @@ function listUsers() {
               WHERE password_reset_tokens.user_id = users.id
                 AND password_reset_tokens.used_at IS NULL
                 AND datetime(password_reset_tokens.expires_at) > CURRENT_TIMESTAMP
-            ) AS recovery_expires_at
+            ) AS recovery_expires_at,
+            (
+              SELECT COUNT(*)
+              FROM audit_logs
+              WHERE audit_logs.actor_user_id = users.id
+                AND audit_logs.action = 'admin_permission_denied'
+                AND datetime(audit_logs.created_at) >= datetime('now', '-${PERMISSION_DENIED_SIGNAL_DAYS} days')
+            ) AS denied_permission_count,
+            (
+              SELECT MAX(created_at)
+              FROM audit_logs
+              WHERE audit_logs.actor_user_id = users.id
+                AND audit_logs.action = 'admin_permission_denied'
+                AND datetime(audit_logs.created_at) >= datetime('now', '-${PERMISSION_DENIED_SIGNAL_DAYS} days')
+            ) AS denied_permission_last_at
      FROM users
      LEFT JOIN employees ON employees.user_id = users.id
      LEFT JOIN users reviewers ON reviewers.id = users.access_reviewed_by_user_id
@@ -5547,7 +5562,9 @@ function listUsers() {
     recoveryPending: Number(row.pending_recovery_count || 0) > 0,
     recoveryPendingCount: Number(row.pending_recovery_count || 0),
     recoveryRequestedAt: row.recovery_requested_at,
-    recoveryExpiresAt: row.recovery_expires_at
+    recoveryExpiresAt: row.recovery_expires_at,
+    deniedPermissionCount: Number(row.denied_permission_count || 0),
+    deniedPermissionLastAt: row.denied_permission_last_at
   }));
 }
 
@@ -5565,6 +5582,7 @@ function securityReportRisk(user) {
   const activityDays = daysSinceTimestamp(user.lastLoginAt || user.createdAt);
   const locked = Boolean(user.lockedUntil);
   const permissionProfile = permissionProfileForUser(user);
+  const deniedPermissionCount = Number(user.deniedPermissionCount || 0);
 
   if (!user.active) {
     issues.push("bloqueado");
@@ -5609,10 +5627,15 @@ function securityReportRisk(user) {
     issues.push("recuperacion pendiente");
     score += 1;
   }
+  if (deniedPermissionCount > 0) {
+    issues.push(`permisos denegados x${deniedPermissionCount}`);
+    score += Math.min(3, deniedPermissionCount + 1);
+  }
 
   const level = score >= 5 ? "alto" : score >= 2 ? "medio" : "ok";
   const recommendedAction = (() => {
     if (locked) return "Desbloquear tras verificar identidad";
+    if (deniedPermissionCount > 0) return "Revisar permisos denegados";
     if (user.role !== "employee" && user.active && activityDays !== null && activityDays > ADMIN_INACTIVITY_LIMIT_DAYS) return "Revisar y bloquear si no procede";
     if (user.mustChangePassword || (user.role !== "employee" && passwordDays !== null && passwordDays > PASSWORD_ROTATION_LIMIT_DAYS)) return "Forzar cambio de clave";
     if (user.role !== "employee" && (reviewDays === null || reviewDays > ACCESS_REVIEW_LIMIT_DAYS)) return "Revisar permisos";
@@ -5654,6 +5677,8 @@ function userSecurityReportRows() {
       revisado_por: user.accessReviewerName || "",
       bloqueo_login_hasta: user.lockedUntil || "",
       recuperacion_pendiente: user.recoveryPending ? "si" : "no",
+      permisos_denegados_7d: user.deniedPermissionCount || 0,
+      ultimo_permiso_denegado: user.deniedPermissionLastAt || "",
       ficha_operario: user.employeeId || "",
       estado_operario: user.employeeStatus || "",
       id_usuario: user.id
@@ -9076,12 +9101,16 @@ async function handleApi(req, res, url) {
        WHERE assignments.employee_id = ? AND assignments.status != 'bloqueado'
     `;
     const upcomingServicesRaw = all(
-      `${serviceSql} AND events.date >= ?
+      `${serviceSql} AND events.date >= ? AND events.status != 'finalizado'
        ORDER BY events.date ASC, events.start_time ASC
        LIMIT 12`,
       [employee.id, today]
     ).map((service) => employeeServiceClockData(service, employee.id, policy));
-    const nextAssignmentRaw = upcomingServicesRaw[0] || null;
+    const nextAssignmentRaw =
+      upcomingServicesRaw.find((service) => Number(service.can_clock_in || 0) || Number(service.can_clock_out || 0)) ||
+      upcomingServicesRaw.find((service) => service.clock_state !== "finalizado") ||
+      upcomingServicesRaw[0] ||
+      null;
     const pastServicesRaw = all(
       `${serviceSql} AND (events.date < ? OR events.status = 'finalizado')
        ORDER BY events.date DESC, events.start_time DESC
@@ -9108,7 +9137,7 @@ async function handleApi(req, res, url) {
     });
     const upcomingServices = upcomingServicesRaw.map(addChecklist);
     const pastServices = pastServicesRaw.map(addChecklist);
-    const nextAssignment = upcomingServices[0] || null;
+    const nextAssignment = nextAssignmentRaw ? addChecklist(nextAssignmentRaw) : null;
     const pastServicesForStats = all(
       `${serviceSql} AND (events.date < ? OR events.status = 'finalizado')
        ORDER BY events.date DESC, events.start_time DESC`,
