@@ -318,7 +318,9 @@ function clientDuplicateMatches(form) {
   const taxKey = identityKey(formFieldValue(form, "taxId"));
   const emailKey = contactEmailKey(formFieldValue(form, "email"));
   const phoneKey = phoneLoginKey(formFieldValue(form, "phone"));
+  const excludeClientId = form?.dataset?.duplicateExclude || form?.dataset?.clientId || "";
   for (const client of state.data.clients || []) {
+    if (excludeClientId && client.id === excludeClientId) continue;
     const reasons = [];
     if (taxKey && taxKey.length >= 5 && identityKey(client.tax_id) === taxKey) reasons.push("CIF/NIF");
     if (emailKey && contactEmailKey(client.email) === emailKey) reasons.push("email");
@@ -347,7 +349,10 @@ function employeeDuplicateMatches(form) {
   const dniKey = identityKey(formFieldValue(form, "dni"));
   const emailKey = contactEmailKey(formFieldValue(form, "email"));
   const phoneKey = phoneLoginKey(formFieldValue(form, "phone"));
+  const excludeEmployeeId = form?.dataset?.duplicateExclude || form?.dataset?.employeeId || "";
+  const excludeUserId = form?.dataset?.duplicateUserExclude || "";
   for (const employee of state.data.employees || []) {
+    if (excludeEmployeeId && employee.id === excludeEmployeeId) continue;
     const reasons = [];
     if (dniKey && dniKey.length >= 5 && identityKey(employee.dni) === dniKey) reasons.push("DNI");
     if (emailKey && contactEmailKey(employee.email) === emailKey) reasons.push("email");
@@ -365,6 +370,9 @@ function employeeDuplicateMatches(form) {
     }
   }
   for (const user of state.data.users || []) {
+    const linkedEmployeeId = user.employeeId || user.employee_id || "";
+    if (excludeUserId && user.id === excludeUserId) continue;
+    if (excludeEmployeeId && linkedEmployeeId === excludeEmployeeId) continue;
     const reasons = [];
     if (emailKey && contactEmailKey(user.email) === emailKey) reasons.push("email de acceso");
     if (phoneKey && phoneLoginKey(user.phone) === phoneKey) reasons.push("telefono de acceso");
@@ -385,8 +393,11 @@ function userDuplicateMatches(form) {
   const matches = new Map();
   const emailKey = contactEmailKey(formFieldValue(form, "email"));
   const phoneKey = phoneLoginKey(formFieldValue(form, "phone"));
+  const excludeUserId = form?.dataset?.duplicateExclude || form?.dataset?.userId || "";
+  const excludeEmployeeId = form?.dataset?.duplicateEmployeeExclude || "";
   if (!emailKey && !phoneKey) return [];
   for (const user of state.data.users || []) {
+    if (excludeUserId && user.id === excludeUserId) continue;
     const reasons = [];
     if (emailKey && contactEmailKey(user.email) === emailKey) reasons.push("email de acceso");
     if (phoneKey && phoneLoginKey(user.phone) === phoneKey) reasons.push("telefono de acceso");
@@ -401,6 +412,8 @@ function userDuplicateMatches(form) {
     });
   }
   for (const employee of state.data.employees || []) {
+    if (excludeEmployeeId && employee.id === excludeEmployeeId) continue;
+    if (excludeUserId && employee.user_id === excludeUserId) continue;
     const reasons = [];
     if (emailKey && contactEmailKey(employee.email) === emailKey) reasons.push("email de operario");
     if (phoneKey && phoneLoginKey(employee.phone) === phoneKey) reasons.push("telefono de operario");
@@ -468,23 +481,39 @@ function duplicateGuardPanel(kind) {
   return `<div class="duplicate-guard ok" data-duplicate-panel>${duplicateGuardContent(kind, [])}</div>`;
 }
 
-function updateDuplicateGuard(form) {
-  const panel = form?.querySelector?.("[data-duplicate-panel]");
-  if (!panel) return;
-  const kind = form.dataset.duplicateKind;
-  const matches = kind === "employee"
+function duplicateMatchesForForm(form) {
+  const kind = form?.dataset?.duplicateKind;
+  return kind === "employee"
     ? employeeDuplicateMatches(form)
     : kind === "client"
       ? clientDuplicateMatches(form)
       : kind === "user"
         ? userDuplicateMatches(form)
         : [];
+}
+
+function updateDuplicateGuard(form, providedMatches) {
+  const panel = form?.querySelector?.("[data-duplicate-panel]");
+  if (!panel) return;
+  const kind = form.dataset.duplicateKind;
+  const matches = providedMatches || duplicateMatchesForForm(form);
   panel.className = `duplicate-guard ${matches.length ? "warn" : "ok"} ${matches.some((match) => match.tone === "red") ? "danger" : ""}`;
   panel.innerHTML = duplicateGuardContent(kind, matches);
 }
 
 function updateDuplicateGuards() {
   document.querySelectorAll("form[data-duplicate-kind]").forEach(updateDuplicateGuard);
+}
+
+function blocksCriticalDuplicateSubmit(form) {
+  if (!form?.dataset?.duplicateKind) return false;
+  const matches = duplicateMatchesForForm(form);
+  const criticalMatches = matches.filter((match) => match.tone === "red");
+  updateDuplicateGuard(form, matches);
+  if (!criticalMatches.length) return false;
+  form.querySelector("[data-duplicate-panel]")?.scrollIntoView({ block: "center", behavior: "smooth" });
+  toast("Revisa los duplicados criticos antes de guardar.", "error");
+  return true;
 }
 
 function duplicateGroups(items, specs) {
@@ -1885,6 +1914,121 @@ function userPortalHealthPanel(users, isSuper) {
   `;
 }
 
+function contactReadinessIssues(users = state.data.users || [], employees = state.data.employees || []) {
+  const duplicateGroups = userContactDuplicateGroups(users, employees);
+  const noContactUsers = (users || []).filter((user) => !user.email && !user.phone);
+  const missingEmailUsers = (users || []).filter((user) => !contactEmailKey(user.email));
+  const missingPhoneUsers = (users || []).filter((user) => !phoneLoginKey(user.phone));
+  const activeEmployees = (employees || []).filter((employee) => employee.status === "activo");
+  const employeesWithoutPhone = activeEmployees.filter((employee) => !phoneLoginKey(employee.phone));
+  const employeesWithoutEmail = activeEmployees.filter((employee) => !contactEmailKey(employee.email));
+  const portalHealth = employeePortalHealth(users, employees);
+  return {
+    duplicateGroups,
+    noContactUsers,
+    missingEmailUsers,
+    missingPhoneUsers,
+    employeesWithoutPhone,
+    employeesWithoutEmail,
+    portalHealth,
+    total:
+      noContactUsers.length +
+      duplicateGroups.length +
+      employeesWithoutPhone.length +
+      portalHealth.blockedByContact
+  };
+}
+
+function contactReadinessRow(item) {
+  if (item.type === "duplicate") {
+    const group = item.group;
+    return `
+      <div class="contact-readiness-row red">
+        <span class="tag red">Duplicado</span>
+        <div>
+          <strong>${esc(contactCollisionKindLabel(group.kind))}: ${esc(group.value)}</strong>
+          <small>${esc(group.members.map((member) => member.label).join(" · "))}</small>
+        </div>
+        <button class="btn compact primary" type="button" data-user-collision-focus="${esc(group.key)}">Resolver</button>
+      </div>
+    `;
+  }
+  if (item.type === "employee") {
+    const employee = item.employee;
+    return `
+      <div class="contact-readiness-row amber">
+        <span class="tag amber">Operario</span>
+        <div>
+          <strong>${esc(employee.name || "Operario")}</strong>
+          <small>${esc(item.detail)} · ${esc(employee.role || "Sin rol")}</small>
+        </div>
+        <button class="btn compact" type="button" data-open-duplicate="employee:${esc(employee.id)}">Abrir ficha</button>
+      </div>
+    `;
+  }
+  const user = item.user;
+  return `
+    <div class="contact-readiness-row ${item.tone || "amber"}">
+      <span class="tag ${item.tone || "amber"}">Usuario</span>
+      <div>
+        <strong>${esc(user.name || "Usuario")}</strong>
+        <small>${esc(item.detail)} · ${esc(user.email || user.phone || user.id)}</small>
+      </div>
+      <button class="btn compact" type="button" data-open-duplicate="user:${esc(user.id)}">Abrir ficha</button>
+    </div>
+  `;
+}
+
+function contactReadinessPanel(users, isSuper) {
+  if (!isSuper) return "";
+  const employees = state.data.employees || [];
+  const issues = contactReadinessIssues(users, employees);
+  const importantRows = [
+    ...issues.duplicateGroups.slice(0, 3).map((group) => ({ type: "duplicate", group })),
+    ...issues.noContactUsers.slice(0, 3).map((user) => ({ type: "user", user, tone: "red", detail: "Sin email ni telefono para acceso o recuperacion" })),
+    ...issues.employeesWithoutPhone.slice(0, 4).map((employee) => ({ type: "employee", employee, detail: "Sin telefono valido para WhatsApp o portal" })),
+    ...issues.missingEmailUsers
+      .filter((user) => user.email || user.phone)
+      .slice(0, 2)
+      .map((user) => ({ type: "user", user, tone: "amber", detail: "Sin email de respaldo" }))
+  ].slice(0, 10);
+  const tone = issues.noContactUsers.length || issues.duplicateGroups.length || issues.employeesWithoutPhone.length
+    ? "red"
+    : issues.missingEmailUsers.length || issues.missingPhoneUsers.length || issues.employeesWithoutEmail.length
+      ? "amber"
+      : "green";
+  return `
+    <div class="contact-readiness ${tone}">
+      <div class="contact-readiness-head">
+        <div>
+          <span class="tag ${tone}">Canales operativos</span>
+          <strong>${esc(issues.total)}</strong>
+          <small>${issues.total ? "fichas que pueden bloquear contacto, recuperacion o portal" : "contactos listos para operar"}</small>
+        </div>
+        <div class="contact-readiness-actions">
+          <button class="btn compact" type="button" data-user-select-missing-contact ${issues.noContactUsers.length ? "" : "disabled"}>Sin contacto</button>
+          <button class="btn compact" type="button" data-user-select-missing-phone ${issues.missingPhoneUsers.length ? "" : "disabled"}>Sin telefono</button>
+          <button class="btn compact" type="button" data-user-select-duplicate-contacts ${issues.duplicateGroups.length ? "" : "disabled"}>Duplicados</button>
+          <button class="btn compact primary" type="button" data-repair-employee-portals ${issues.portalHealth.ok ? "disabled" : ""}>Sanear portal</button>
+        </div>
+      </div>
+      <div class="contact-readiness-stats">
+        ${portalRepairStat("sin contacto", issues.noContactUsers.length, issues.noContactUsers.length ? "red" : "green")}
+        ${portalRepairStat("sin email", issues.missingEmailUsers.length, issues.missingEmailUsers.length ? "amber" : "green")}
+        ${portalRepairStat("sin telefono", issues.missingPhoneUsers.length, issues.missingPhoneUsers.length ? "amber" : "green")}
+        ${portalRepairStat("duplicados", issues.duplicateGroups.length, issues.duplicateGroups.length ? "red" : "green")}
+        ${portalRepairStat("operarios sin telefono", issues.employeesWithoutPhone.length, issues.employeesWithoutPhone.length ? "red" : "green")}
+        ${portalRepairStat("portal bloqueado", issues.portalHealth.blockedByContact, issues.portalHealth.blockedByContact ? "amber" : "green")}
+      </div>
+      ${importantRows.length ? `
+        <div class="contact-readiness-list">
+          ${importantRows.map(contactReadinessRow).join("")}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
 function employeePortalRepairPlan(users = state.data.users || [], employees = state.data.employees || []) {
   const usersById = new Map((users || []).map((user) => [user.id, user]));
   const employeesByUserId = new Map((employees || [])
@@ -2747,7 +2891,8 @@ function userDetailDrawer(user, duplicateContactUserIds, isSuper) {
         <div class="role-row"><span>ID usuario</span><strong>${esc(user.id)}</strong></div>
         ${contactActions({ phone: user.phone, email: user.email, name: user.name })}
         ${isSuper ? `
-          <form class="user-detail-contact-form" data-form="user-contact" data-user-id="${esc(user.id)}">
+          <form class="user-detail-contact-form" data-form="user-contact" data-duplicate-kind="user" data-duplicate-exclude="${esc(user.id)}" data-duplicate-employee-exclude="${esc(employee?.id || "")}" data-user-id="${esc(user.id)}">
+            ${duplicateGuardPanel("user")}
             <div class="form-grid compact">
               <div class="field"><label>Nombre</label><input name="name" value="${esc(user.name || "")}" required /></div>
               <div class="field"><label>Email</label><input name="email" type="email" value="${esc(user.email || "")}" /></div>
@@ -2919,6 +3064,7 @@ function userCommandCenter(users, isSuper) {
       ${userRunbookPanel(users, isSuper)}
       ${permissionGovernancePanel(users, isSuper)}
       ${userOperationsHealthPanel(users, isSuper)}
+      ${contactReadinessPanel(users, isSuper)}
       ${userContactDuplicatePanel(users, isSuper)}
       ${userActionQueue(users, isSuper)}
       ${userPortalHealthPanel(users, isSuper)}
@@ -3778,6 +3924,124 @@ function userSessionsPanel() {
   `;
 }
 
+function activitySeverity(log) {
+  const action = String(log?.action || "");
+  if (
+    action.includes("denied") ||
+    action.includes("blocked") ||
+    action.includes("locked") ||
+    action.includes("failed") ||
+    action.includes("deactivated") ||
+    action.includes("invalidated")
+  ) {
+    return { tone: "red", label: "Critico" };
+  }
+  if (
+    action.includes("password") ||
+    action.includes("recovery") ||
+    action.includes("sessions") ||
+    action.includes("session_revoked") ||
+    action.includes("permission") ||
+    action.includes("updated") ||
+    action.includes("role")
+  ) {
+    return { tone: "amber", label: "Revisar" };
+  }
+  if (action.includes("login_success") || action.includes("logout") || action.includes("reviewed")) {
+    return { tone: "green", label: "OK" };
+  }
+  return { tone: auditTone(action), label: "Info" };
+}
+
+function activityInsights(logs = []) {
+  const critical = logs.filter((log) => activitySeverity(log).tone === "red");
+  const accessChanges = logs.filter((log) =>
+    [
+      "user_updated",
+      "user_access_reviewed",
+      "user_access_review_invalidated",
+      "user_bulk_permission_profile_applied",
+      "user_bulk_suggested_permission_profile_applied",
+      "user_bulk_activated",
+      "user_bulk_deactivated",
+      "user_deactivated"
+    ].includes(log.action)
+  );
+  const sessionEvents = logs.filter((log) => String(log.action || "").includes("session"));
+  const passwordEvents = logs.filter((log) =>
+    String(log.action || "").includes("password") ||
+    String(log.action || "").includes("recovery")
+  );
+  const denied = logs.filter((log) => log.action === "admin_permission_denied");
+  const failedLogins = logs.filter((log) => ["login_failed", "login_blocked", "login_account_locked"].includes(log.action));
+  const actors = new Set(logs.map((log) => log.actor_user_id || log.actor_name).filter(Boolean));
+  const tone = critical.length ? "red" : accessChanges.length || passwordEvents.length || sessionEvents.length ? "amber" : "green";
+  return {
+    tone,
+    critical,
+    accessChanges,
+    sessionEvents,
+    passwordEvents,
+    denied,
+    failedLogins,
+    actorCount: actors.size
+  };
+}
+
+function activityInsightPanel(user, logs = [], summary = {}) {
+  const insights = activityInsights(logs);
+  const title = insights.tone === "red"
+    ? "Actividad con alertas"
+    : insights.tone === "amber"
+      ? "Actividad para revisar"
+      : "Actividad controlada";
+  const hotLogs = [
+    ...insights.critical,
+    ...insights.accessChanges.filter((log) => !insights.critical.includes(log)),
+    ...insights.passwordEvents.filter((log) => !insights.critical.includes(log))
+  ].slice(0, 5);
+  return `
+    <div class="activity-intel ${insights.tone}">
+      <div class="activity-intel-head">
+        <div>
+          <span class="tag ${insights.tone}">Auditoria usuario</span>
+          <strong>${esc(title)}</strong>
+          <small>${logs.length ? "Lectura rapida de seguridad, accesos y cambios de cuenta." : "Sin actividad reciente registrada."}</small>
+        </div>
+        <div class="activity-intel-actions">
+          ${Number(user.activeSessionCount || 0) ? `<button class="btn compact" type="button" data-user-sessions="${esc(user.id)}">Sesiones</button>` : ""}
+          ${user.role !== "employee" ? `<button class="btn compact" type="button" data-review-user="${esc(user.id)}">Marcar revisado</button>` : ""}
+          ${user.active ? `<button class="btn compact" type="button" data-access-code-user="${esc(user.id)}">Codigo seguro</button>` : ""}
+        </div>
+      </div>
+      <div class="activity-intel-stats">
+        ${portalRepairStat("eventos", summary.total || logs.length, "blue")}
+        ${portalRepairStat("criticos", insights.critical.length, insights.critical.length ? "red" : "green")}
+        ${portalRepairStat("denegados", insights.denied.length, insights.denied.length ? "red" : "green")}
+        ${portalRepairStat("login fallido", insights.failedLogins.length, insights.failedLogins.length ? "red" : "green")}
+        ${portalRepairStat("sesiones", insights.sessionEvents.length, insights.sessionEvents.length ? "amber" : "green")}
+        ${portalRepairStat("actores", insights.actorCount, insights.actorCount > 1 ? "amber" : "green")}
+      </div>
+      ${hotLogs.length ? `
+        <div class="activity-hot-list">
+          ${hotLogs.map((log) => {
+            const severity = activitySeverity(log);
+            return `
+              <div class="activity-hot-row ${severity.tone}">
+                <span class="tag ${severity.tone}">${esc(severity.label)}</span>
+                <div>
+                  <strong>${esc(auditActionLabel(log.action))}</strong>
+                  <small>${esc(shortDateTime(log.created_at))} · ${esc(log.actor_name || "Sistema")}</small>
+                </div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
 function userActivityPanel() {
   const panel = state.userActivity;
   if (!panel?.userId) return "";
@@ -3796,6 +4060,7 @@ function userActivityPanel() {
           <button class="btn compact ghost" type="button" data-close-user-activity>${icon("close")} Cerrar</button>
         </div>
       </div>
+      ${activityInsightPanel(user, logs, summary)}
       <div class="activity-summary">
         <span><strong>${esc(summary.total || 0)}</strong> eventos</span>
         <span><strong>${esc(summary.security || 0)}</strong> seguridad</span>
@@ -3803,16 +4068,18 @@ function userActivityPanel() {
         <span><strong>${esc(summary.accountEvents || 0)}</strong> cambios de cuenta</span>
       </div>
       <div class="activity-list">
-        ${logs.map((log) => `
-          <div class="activity-row">
-            <span class="tag ${auditTone(log.action)}">${esc(auditActionLabel(log.action))}</span>
+        ${logs.map((log) => {
+          const severity = activitySeverity(log);
+          return `
+          <div class="activity-row ${severity.tone}">
+            <span class="tag ${severity.tone}">${esc(auditActionLabel(log.action))}</span>
             <div>
               <strong>${esc(shortDateTime(log.created_at))}</strong>
-              <small class="muted">${esc(log.actor_name || "Sistema")} · ${esc(log.entity)}:${esc(log.entity_id)}</small>
+              <small class="muted">${esc(log.origin === "actor" ? "Accion propia" : "Cambio de cuenta")} · ${esc(log.actor_name || "Sistema")} · ${esc(log.entity)}:${esc(log.entity_id)}</small>
               <small>${esc(auditMetadata(log.metadata))}</small>
             </div>
           </div>
-        `).join("") || `<div class="empty">Sin actividad registrada.</div>`}
+        `; }).join("") || `<div class="empty">Sin actividad registrada.</div>`}
       </div>
     </section>
   `;
@@ -5055,7 +5322,7 @@ function clientDetail(client) {
 
 function clientEditForm(client) {
   return `
-    <form class="panel inspector detail-drawer" data-form="client-edit" data-client-id="${client.id}">
+    <form class="panel inspector detail-drawer client-edit-form" data-form="client-edit" data-duplicate-kind="client" data-duplicate-exclude="${esc(client.id)}" data-client-id="${esc(client.id)}">
       <div class="row-between drawer-top">
         <h2>Editar cliente</h2>
         <div class="filters-row">
@@ -5063,6 +5330,7 @@ function clientEditForm(client) {
           ${detailDrawerCloseButton()}
         </div>
       </div>
+      ${duplicateGuardPanel("client")}
       <div class="field"><label>Cliente</label><input name="name" required value="${esc(client.name)}" /></div>
       <div class="field"><label>Razon social</label><input name="legalName" value="${esc(client.legal_name || "")}" /></div>
       <div class="field"><label>CIF/NIF</label><input name="taxId" value="${esc(client.tax_id || "")}" /></div>
@@ -5301,7 +5569,7 @@ function employeeDetail(employee) {
 function employeeEditForm(employee) {
   const photoInputValue = /^https?:\/\//i.test(String(employee.photo_url || "")) ? employee.photo_url : "";
   return `
-    <form class="panel inspector detail-drawer" data-form="employee-edit" data-employee-id="${employee.id}">
+    <form class="panel inspector detail-drawer employee-edit-form" data-form="employee-edit" data-duplicate-kind="employee" data-duplicate-exclude="${esc(employee.id)}" data-duplicate-user-exclude="${esc(employee.user_id || "")}" data-employee-id="${esc(employee.id)}">
       <div class="row-between drawer-top">
         <h2>Editar operario</h2>
         <div class="filters-row">
@@ -5309,6 +5577,7 @@ function employeeEditForm(employee) {
           ${detailDrawerCloseButton()}
         </div>
       </div>
+      ${duplicateGuardPanel("employee")}
       <div class="field"><label>Nombre</label><input name="name" required value="${esc(employee.name)}" /></div>
       <div class="field"><label>Rol</label><select name="role">${["Montaje", "Carga y descarga", "Tecnico", "Runner", "Jefe de equipo", "Carretillero", "Limpieza", "Auxiliar produccion", "Operario"].map((role) => `<option ${employee.role === role ? "selected" : ""}>${role}</option>`).join("")}</select></div>
       <div class="leader-toggle">
@@ -7503,6 +7772,7 @@ async function handleSubmit(event) {
     toast("Operacion en curso. Espera a que termine.", "error");
     return;
   }
+  if (blocksCriticalDuplicateSubmit(form)) return;
   setFormSubmitting(form, true, type);
   try {
     if (type === "login") {
@@ -8125,8 +8395,30 @@ async function handleClick(event) {
   }
 
   if (target.dataset.userSelectMissingContact !== undefined) {
-    state.selectedUserIds = filteredUsers(state.data.users || [])
+    state.userFilters = state.userFilters || { search: "", role: "all", security: "all" };
+    state.userFilters.security = "quality";
+    state.selectedUserIds = (state.data.users || [])
       .filter((user) => !user.email && !user.phone)
+      .map((user) => user.id);
+    clearSuggestedUserBulkAction();
+    return renderAdmin();
+  }
+
+  if (target.dataset.userSelectMissingEmail !== undefined) {
+    state.userFilters = state.userFilters || { search: "", role: "all", security: "all" };
+    state.userFilters.security = "quality";
+    state.selectedUserIds = (state.data.users || [])
+      .filter((user) => !contactEmailKey(user.email))
+      .map((user) => user.id);
+    clearSuggestedUserBulkAction();
+    return renderAdmin();
+  }
+
+  if (target.dataset.userSelectMissingPhone !== undefined) {
+    state.userFilters = state.userFilters || { search: "", role: "all", security: "all" };
+    state.userFilters.security = "quality";
+    state.selectedUserIds = (state.data.users || [])
+      .filter((user) => !phoneLoginKey(user.phone))
       .map((user) => user.id);
     clearSuggestedUserBulkAction();
     return renderAdmin();

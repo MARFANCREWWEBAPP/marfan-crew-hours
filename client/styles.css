@@ -1742,6 +1742,119 @@ button:disabled {
   font-weight: 730;
 }
 
+.contact-readiness {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-left: 4px solid var(--green);
+  border-radius: 8px;
+  background: #fbfffd;
+}
+
+.contact-readiness.red {
+  border-left-color: var(--red);
+  background: #fffafa;
+}
+
+.contact-readiness.amber {
+  border-left-color: var(--amber);
+  background: #fffdf8;
+}
+
+.contact-readiness-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.contact-readiness-head strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.contact-readiness-head small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 730;
+}
+
+.contact-readiness-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.contact-readiness-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+}
+
+.contact-readiness-stats > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.contact-readiness-stats small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.contact-readiness-list {
+  display: grid;
+  gap: 7px;
+}
+
+.contact-readiness-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  padding: 9px;
+  border: 1px solid var(--line-soft);
+  border-left: 4px solid var(--amber);
+  border-radius: 8px;
+  background: #fffdf8;
+}
+
+.contact-readiness-row.red {
+  border-left-color: var(--red);
+  background: #fffafa;
+}
+
+.contact-readiness-row.green {
+  border-left-color: var(--green);
+  background: #fbfffd;
+}
+
+.contact-readiness-row strong,
+.contact-readiness-row small {
+  display: block;
+  min-width: 0;
+}
+
+.contact-readiness-row small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 730;
+  overflow-wrap: anywhere;
+}
+
 .user-bulk-bar {
   margin-top: 12px;
   padding: 12px 14px;
@@ -2492,6 +2605,126 @@ button:disabled {
   color: var(--ink);
 }
 
+.activity-intel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line-soft);
+  border-left: 4px solid var(--green);
+  border-radius: 8px;
+  background: #fbfffd;
+}
+
+.activity-intel.red {
+  border-left-color: var(--red);
+  background: #fffafa;
+}
+
+.activity-intel.amber {
+  border-left-color: var(--amber);
+  background: #fffdf8;
+}
+
+.activity-intel-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.activity-intel-head strong,
+.activity-intel-head small {
+  display: block;
+}
+
+.activity-intel-head strong {
+  margin-top: 5px;
+  font-size: 17px;
+}
+
+.activity-intel-head small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 730;
+}
+
+.activity-intel-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.activity-intel-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(115px, 1fr));
+  gap: 8px;
+}
+
+.activity-intel-stats > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.activity-intel-stats small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.activity-hot-list {
+  display: grid;
+  gap: 6px;
+}
+
+.activity-hot-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--line-soft);
+  border-left: 4px solid var(--blue);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.activity-hot-row.red {
+  border-left-color: var(--red);
+  background: #fffafa;
+}
+
+.activity-hot-row.amber {
+  border-left-color: var(--amber);
+  background: #fffdf8;
+}
+
+.activity-hot-row.green {
+  border-left-color: var(--green);
+  background: #fbfffd;
+}
+
+.activity-hot-row strong,
+.activity-hot-row small {
+  display: block;
+  min-width: 0;
+}
+
+.activity-hot-row small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 730;
+}
+
 .activity-list {
   display: grid;
   gap: 8px;
@@ -2499,6 +2732,7 @@ button:disabled {
 
 .activity-row {
   border: 1px solid var(--line-soft);
+  border-left: 4px solid var(--blue);
   border-radius: 8px;
   background: #fff;
   padding: 10px 12px;
@@ -2506,6 +2740,21 @@ button:disabled {
   grid-template-columns: minmax(128px, auto) minmax(0, 1fr);
   gap: 12px;
   align-items: start;
+}
+
+.activity-row.red {
+  border-left-color: var(--red);
+  background: #fffafa;
+}
+
+.activity-row.amber {
+  border-left-color: var(--amber);
+  background: #fffdf8;
+}
+
+.activity-row.green {
+  border-left-color: var(--green);
+  background: #fbfffd;
 }
 
 .activity-row strong,
@@ -3633,6 +3882,32 @@ button:disabled {
 .duplicate-guard.danger {
   background: #fff7f7;
   border-color: #f6b4ae;
+}
+
+.client-edit-form .duplicate-guard,
+.user-detail-contact-form .duplicate-guard,
+.employee-edit-form .duplicate-guard {
+  margin: 0 0 10px;
+  padding: 9px;
+  gap: 8px;
+}
+
+.client-edit-form .duplicate-guard strong,
+.user-detail-contact-form .duplicate-guard strong,
+.employee-edit-form .duplicate-guard strong {
+  font-size: 13px;
+}
+
+.client-edit-form .duplicate-match-list,
+.user-detail-contact-form .duplicate-match-list,
+.employee-edit-form .duplicate-match-list {
+  gap: 6px;
+}
+
+.client-edit-form .duplicate-match-row,
+.user-detail-contact-form .duplicate-match-row,
+.employee-edit-form .duplicate-match-row {
+  padding: 7px;
 }
 
 .duplicate-match-list {
@@ -5180,7 +5455,11 @@ button:disabled {
   }
 
   .permission-governance-head,
-  .permission-suggestion-strip {
+  .permission-suggestion-strip,
+  .contact-readiness-head,
+  .contact-readiness-row,
+  .activity-intel-head,
+  .activity-hot-row {
     grid-template-columns: 1fr;
   }
 
@@ -5201,6 +5480,8 @@ button:disabled {
   .bulk-preview-actions,
   .permission-governance-actions,
   .permission-suggestion-actions,
+  .contact-readiness-actions,
+  .activity-intel-actions,
   .security-action-actions {
     justify-content: flex-start;
   }
