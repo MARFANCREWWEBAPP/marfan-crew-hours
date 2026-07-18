@@ -9219,9 +9219,11 @@ async function handleApi(req, res, url) {
         ? "Operario no asignado"
         : locationBlockReason
           ? locationBlockReason
-          : !windowState.allowed
-          ? windowState.reason
-          : "Fuera del radio GPS";
+          : !geo.inside
+            ? "Fuera del radio GPS"
+            : !windowState.allowed
+              ? windowState.reason
+              : "Intento de fichaje bloqueado";
       const incidentId = randomId("inc");
       run(
         `INSERT INTO incidents (id, event_id, employee_id, type, priority, title, description)

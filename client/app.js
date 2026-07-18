@@ -32,6 +32,7 @@ const state = {
   recommendations: null,
   reportFilters: { from: "", to: "", clientId: "", employeeId: "", status: "", search: "" },
   userFilters: { search: "", role: "all", security: "all" },
+  userAdminPanel: null,
   selectedUserDetailId: null,
   selectedUserCollisionKey: null,
   selectedUserIds: [],
@@ -660,6 +661,100 @@ function secureTemporaryPassword(length = 14) {
   return chars.join("");
 }
 
+function passwordSecurityAssessment(password) {
+  const value = String(password || "");
+  const blockers = [];
+  if (!value) blockers.push("Genera o escribe una clave temporal");
+  if (value && value.length < 8) blockers.push("Minimo 8 caracteres");
+  if (value && !/[A-Za-z]/.test(value)) blockers.push("Incluye letras");
+  if (value && !/\d/.test(value)) blockers.push("Incluye numeros");
+  const hasLower = /[a-z]/.test(value);
+  const hasUpper = /[A-Z]/.test(value);
+  const hasDigit = /\d/.test(value);
+  const hasSymbol = /[^A-Za-z0-9]/.test(value);
+  let score = 0;
+  if (value.length >= 8) score += 1;
+  if (value.length >= 12) score += 1;
+  if (value.length >= 16) score += 1;
+  if (hasLower && hasUpper) score += 1;
+  if (hasDigit) score += 1;
+  if (hasSymbol) score += 1;
+  const lowerValue = value.toLowerCase();
+  const weakHints = ["admin", "password", "contrasena", "temporal", "123456", "qwerty", "marfan"]
+    .filter((word) => lowerValue.includes(word));
+  if (blockers.length) {
+    return {
+      valid: false,
+      tone: "red",
+      label: "Clave incompleta",
+      detail: blockers.join(" · "),
+      percent: Math.max(12, Math.min(48, score * 12))
+    };
+  }
+  if (score >= 4 && !weakHints.length) {
+    return {
+      valid: true,
+      tone: "green",
+      label: "Clave fuerte",
+      detail: "Lista para entregar como clave temporal.",
+      percent: Math.min(100, 72 + score * 6)
+    };
+  }
+  return {
+    valid: true,
+    tone: "amber",
+    label: score >= 4 ? "Clave aceptable" : "Clave basica",
+    detail: weakHints.length
+      ? "Valida, pero evita palabras previsibles o de la empresa."
+      : "Valida, aunque conviene generar una clave mas robusta.",
+    percent: Math.min(76, 48 + score * 7)
+  };
+}
+
+function passwordStrengthContent(assessment = passwordSecurityAssessment("")) {
+  return `
+    <div class="password-strength-copy">
+      <span class="tag ${assessment.tone}">Seguridad clave</span>
+      <strong>${esc(assessment.label)}</strong>
+      <small>${esc(assessment.detail)}</small>
+    </div>
+    <div class="password-strength-bar" aria-hidden="true"><span style="width: ${assessment.percent}%"></span></div>
+  `;
+}
+
+function passwordStrengthPanel() {
+  const assessment = passwordSecurityAssessment("");
+  return `<div class="password-strength ${assessment.tone}" data-password-strength>${passwordStrengthContent(assessment)}</div>`;
+}
+
+function updatePasswordStrength(form) {
+  const panels = Array.from(form?.querySelectorAll?.("[data-password-strength]") || []);
+  for (const panel of panels) {
+    const input = panel.closest(".password-field")?.querySelector('[name="password"]');
+    const assessment = passwordSecurityAssessment(input?.value || "");
+    panel.className = `password-strength ${assessment.tone}`;
+    panel.innerHTML = passwordStrengthContent(assessment);
+    if (input) input.setAttribute("aria-invalid", assessment.valid ? "false" : "true");
+  }
+}
+
+function updatePasswordStrengthPanels() {
+  document.querySelectorAll("form").forEach(updatePasswordStrength);
+}
+
+function blocksUnsafePasswordSubmit(form) {
+  if (!form?.querySelector?.("[data-password-strength]")) return false;
+  updatePasswordStrength(form);
+  const invalidInput = Array.from(form.querySelectorAll("[data-password-strength]"))
+    .map((panel) => panel.closest(".password-field")?.querySelector('[name="password"]'))
+    .find((input) => input && !passwordSecurityAssessment(input.value).valid);
+  if (!invalidInput) return false;
+  invalidInput.focus();
+  form.querySelector("[data-password-strength]")?.scrollIntoView({ block: "center", behavior: "smooth" });
+  toast("La contrasena temporal no cumple la seguridad minima.", "error");
+  return true;
+}
+
 async function copyText(value) {
   const text = String(value || "");
   if (!text) return false;
@@ -1020,6 +1115,7 @@ async function renderAdmin(force = false) {
     setupSignaturePads();
     updateEventDraftSummaries();
     updateDuplicateGuards();
+    updatePasswordStrengthPanels();
     window.scrollTo(0, 0);
   });
 }
@@ -2612,6 +2708,11 @@ function userContactCell(user) {
 
 function userAccessCell(user) {
   const profile = permissionProfileForUser(user);
+  const permissionLine = user.role === "super_admin"
+    ? "Acceso total"
+    : user.role === "employee"
+      ? "Portal operario"
+      : `${activePermissionCount(user)}/${adminPermissionDefs.length} modulos`;
   const employeeLine = user.employeeId
     ? `<small class="muted">Ficha: ${esc(user.employeeRole || "operario")} · ${esc(user.employeeStatus || "vinculada")}</small>`
     : user.role === "employee"
@@ -2620,7 +2721,7 @@ function userAccessCell(user) {
   return `
     <div class="user-access-cell">
       <div class="filters-row">${roleTag(user.role)}<span class="tag ${profile.tone}">${esc(profile.label)}</span></div>
-      ${permissionSummary(user, false)}
+      <small class="muted">${esc(permissionLine)}</small>
       ${employeeLine}
     </div>
   `;
@@ -2641,9 +2742,8 @@ function userSecuritySnapshot(user, duplicateContactUserIds = null) {
         <span class="tag ${user.active ? "green" : "red"}">${user.active ? "Activo" : "Bloqueado"}</span>
         ${locked ? `<span class="tag red">Login bloqueado</span>` : `<span class="tag ${sessions ? "blue" : "muted-tag"}">${sessions} sesion${sessions === 1 ? "" : "es"}</span>`}
         ${user.recoveryPending ? `<span class="tag amber">Recuperacion</span>` : ""}
-        ${flags.map((flag) => `<span class="tag ${flag.tone}">${esc(flag.label)}</span>`).join("")}
       </div>
-      <small class="muted">Ultimo acceso: ${esc(shortDateTime(user.lastLoginAt))}</small>
+      <small class="muted">${flags.length ? esc(flags.map((flag) => flag.label).join(" · ")) : `Ultimo acceso: ${esc(shortDateTime(user.lastLoginAt))}`}</small>
     </div>
   `;
 }
@@ -2674,8 +2774,7 @@ function userTableActions(user, isSuper) {
   return `
     <div class="table-actions user-table-actions">
       <button class="btn compact primary" type="button" data-select-user-detail="${esc(user.id)}">Ficha</button>
-      <button class="btn compact" type="button" data-user-activity="${esc(user.id)}">Actividad</button>
-      ${sessions > 0 ? `<button class="btn compact" type="button" data-user-sessions="${esc(user.id)}">Sesiones</button>` : ""}
+      ${sessions > 1 ? `<button class="btn compact" type="button" data-user-sessions="${esc(user.id)}">Sesiones</button>` : ""}
       ${userIsLocked(user) ? `<button class="btn compact" type="button" data-unlock-user="${esc(user.id)}">Desbloq.</button>` : ""}
       ${!isSelf ? `<button class="btn compact ${user.active ? "red" : ""}" type="button" data-user-active="${esc(user.id)}" data-next-active="${user.active ? "false" : "true"}">${user.active ? "Bloq." : "Act."}</button>` : `<span class="muted">Tu usuario</span>`}
     </div>
@@ -2992,6 +3091,58 @@ function filteredUsers(users) {
   });
 }
 
+function userAdminPanelButton({ id, label, count, detail, tone = "blue" }) {
+  const active = state.userAdminPanel === id;
+  return `
+    <button class="user-admin-panel-button ${tone} ${active ? "active" : ""}" type="button" data-user-admin-panel="${esc(id)}" aria-pressed="${active}">
+      <span class="tag ${tone}">${esc(count)}</span>
+      <strong>${esc(label)}</strong>
+      <small>${esc(detail)}</small>
+    </button>
+  `;
+}
+
+function userAdminSubwindow(users, isSuper) {
+  if (!isSuper || !state.userAdminPanel) return "";
+  const panels = {
+    security: {
+      title: "Centro de seguridad",
+      detail: "Planes, rutinas y acciones priorizadas sin ensuciar la lista principal.",
+      tone: "amber",
+      body: `${userDailyPlanPanel(users, isSuper)}${userRunbookPanel(users, isSuper)}${userOperationsHealthPanel(users, isSuper)}${userActionQueue(users, isSuper)}`
+    },
+    permissions: {
+      title: "Matriz de permisos",
+      detail: "Perfiles administrativos, accesos amplios y excepciones.",
+      tone: "blue",
+      body: permissionGovernancePanel(users, isSuper)
+    },
+    contacts: {
+      title: "Contactos y portal",
+      detail: "Canales operativos, duplicados y saneado de portal de operarios.",
+      tone: "green",
+      body: `${contactReadinessPanel(users, isSuper)}${userContactDuplicatePanel(users, isSuper)}${userPortalHealthPanel(users, isSuper)}`
+    }
+  };
+  const panel = panels[state.userAdminPanel];
+  if (!panel) return "";
+  return `
+    <section class="panel user-admin-subwindow ${panel.tone}">
+      <div class="drawer-top row-between">
+        <div>
+          <span class="tag ${panel.tone}">Subventana</span>
+          <h2>${esc(panel.title)}</h2>
+          <p class="muted">${esc(panel.detail)}</p>
+        </div>
+        <button class="btn compact ghost" type="button" data-close-user-admin-panel>${icon("close")} Cerrar</button>
+      </div>
+      <div class="user-admin-subwindow-body">
+        ${panel.body}
+      </div>
+    </section>
+  `;
+}
+
 function userCommandCenter(users, isSuper) {
   const filters = state.userFilters || { search: "", role: "all", security: "all" };
   const duplicateContactGroups = userContactDuplicateGroups(users, state.data.employees || []);
@@ -2999,16 +3150,12 @@ function userCommandCenter(users, isSuper) {
   const attention = users.filter((user) => userNeedsAttention(user, duplicateContactUsers));
   const highRisk = users.filter((user) => userRiskScore(user, duplicateContactUsers) >= 6);
   const locked = users.filter(userIsLocked);
-  const recovery = users.filter((user) => user.recoveryPending);
-  const temporary = users.filter((user) => user.mustChangePassword);
-  const dueSoon = users.filter(userSecurityDueSoon);
   const review = users.filter(userAccessReviewStale);
-  const inactiveRisk = users.filter(userInactiveRisk);
-  const denied = users.filter(userDeniedPermissionRisk);
-  const stale = users.filter(userPasswordStale);
+  const activeSessions = users.reduce((sum, user) => sum + Number(user.activeSessionCount || 0), 0);
   const quality = users.filter((user) => userHasQualityIssues(user, duplicateContactUsers));
+  const portalHealth = employeePortalHealth(users, state.data.employees || []);
   return `
-    <section class="panel user-command-center">
+    <section class="panel user-command-center compact">
       <div class="user-filter-grid">
         <div class="field">
           <label>Buscar usuario</label>
@@ -3046,28 +3193,22 @@ function userCommandCenter(users, isSuper) {
         </div>
         <button class="btn" type="button" data-user-filter-reset>${icon("refresh")} Limpiar</button>
       </div>
-      <div class="user-attention-strip">
-        <button class="attention-tile ${attention.length ? "hot" : ""} ${filters.security === "attention" ? "active" : ""}" type="button" data-user-security-filter="attention" aria-pressed="${filters.security === "attention"}"><span>${attention.length}</span><strong>Atencion</strong></button>
-        <button class="attention-tile ${highRisk.length ? "hot" : ""} ${filters.security === "high_risk" ? "active" : ""}" type="button" data-user-security-filter="high_risk" aria-pressed="${filters.security === "high_risk"}"><span>${highRisk.length}</span><strong>Riesgo alto</strong></button>
-        <button class="attention-tile ${locked.length ? "hot" : ""} ${filters.security === "locked" ? "active" : ""}" type="button" data-user-security-filter="locked" aria-pressed="${filters.security === "locked"}"><span>${locked.length}</span><strong>Bloqueos</strong></button>
-        <button class="attention-tile ${recovery.length ? "hot" : ""} ${filters.security === "recovery" ? "active" : ""}" type="button" data-user-security-filter="recovery" aria-pressed="${filters.security === "recovery"}"><span>${recovery.length}</span><strong>Recuperacion</strong></button>
-        <button class="attention-tile ${temporary.length ? "hot" : ""} ${filters.security === "temporary" ? "active" : ""}" type="button" data-user-security-filter="temporary" aria-pressed="${filters.security === "temporary"}"><span>${temporary.length}</span><strong>Clave temporal</strong></button>
-        <button class="attention-tile ${dueSoon.length ? "hot" : ""} ${filters.security === "due_soon" ? "active" : ""}" type="button" data-user-security-filter="due_soon" aria-pressed="${filters.security === "due_soon"}"><span>${dueSoon.length}</span><strong>Vence pronto</strong></button>
-        <button class="attention-tile ${review.length ? "hot" : ""} ${filters.security === "review" ? "active" : ""}" type="button" data-user-security-filter="review" aria-pressed="${filters.security === "review"}"><span>${review.length}</span><strong>Revision</strong></button>
-        <button class="attention-tile ${inactiveRisk.length ? "hot" : ""} ${filters.security === "inactive_risk" ? "active" : ""}" type="button" data-user-security-filter="inactive_risk" aria-pressed="${filters.security === "inactive_risk"}"><span>${inactiveRisk.length}</span><strong>Inactividad</strong></button>
-        <button class="attention-tile ${denied.length ? "hot" : ""} ${filters.security === "denied" ? "active" : ""}" type="button" data-user-security-filter="denied" aria-pressed="${filters.security === "denied"}"><span>${denied.length}</span><strong>Denegados</strong></button>
-        <button class="attention-tile ${duplicateContactGroups.length ? "hot" : ""} ${filters.security === "duplicate_contact" ? "active" : ""}" type="button" data-user-security-filter="duplicate_contact" aria-pressed="${filters.security === "duplicate_contact"}"><span>${duplicateContactUsers.size}</span><strong>Duplicados</strong></button>
-        <button class="attention-tile ${stale.length ? "hot" : ""} ${filters.security === "stale" ? "active" : ""}" type="button" data-user-security-filter="stale" aria-pressed="${filters.security === "stale"}"><span>${stale.length}</span><strong>Clave antigua</strong></button>
-        <button class="attention-tile ${quality.length ? "hot" : ""} ${filters.security === "quality" ? "active" : ""}" type="button" data-user-security-filter="quality" aria-pressed="${filters.security === "quality"}"><span>${quality.length}</span><strong>Calidad ficha</strong></button>
+      <div class="user-signal-strip">
+        <button class="user-signal-pill ${attention.length ? "hot" : ""} ${filters.security === "attention" ? "active" : ""}" type="button" data-user-security-filter="attention"><strong>${attention.length}</strong><span>Atencion</span></button>
+        <button class="user-signal-pill ${highRisk.length ? "hot red" : ""} ${filters.security === "high_risk" ? "active" : ""}" type="button" data-user-security-filter="high_risk"><strong>${highRisk.length}</strong><span>Riesgo alto</span></button>
+        <button class="user-signal-pill ${activeSessions ? "hot blue" : ""} ${filters.security === "sessions" ? "active" : ""}" type="button" data-user-security-filter="sessions"><strong>${activeSessions}</strong><span>Sesiones</span></button>
+        <button class="user-signal-pill ${quality.length ? "hot" : ""} ${filters.security === "quality" ? "active" : ""}" type="button" data-user-security-filter="quality"><strong>${quality.length}</strong><span>Calidad ficha</span></button>
+        <button class="user-signal-pill ${locked.length ? "hot red" : ""} ${filters.role === "inactive" ? "active" : ""}" type="button" data-user-security-filter="locked"><strong>${locked.length}</strong><span>Bloqueos</span></button>
       </div>
-      ${userDailyPlanPanel(users, isSuper)}
-      ${userRunbookPanel(users, isSuper)}
-      ${permissionGovernancePanel(users, isSuper)}
-      ${userOperationsHealthPanel(users, isSuper)}
-      ${contactReadinessPanel(users, isSuper)}
-      ${userContactDuplicatePanel(users, isSuper)}
-      ${userActionQueue(users, isSuper)}
-      ${userPortalHealthPanel(users, isSuper)}
+      ${isSuper ? `
+        <div class="user-admin-panel-strip">
+          ${userAdminPanelButton({ id: "security", label: "Seguridad", count: attention.length, detail: `${review.length} revisiones · ${activeSessions} sesiones`, tone: attention.length ? "amber" : "green" })}
+          ${userAdminPanelButton({ id: "permissions", label: "Permisos", count: users.filter(userHasCustomPermissions).length, detail: "Perfiles y accesos amplios", tone: "blue" })}
+          ${userAdminPanelButton({ id: "contacts", label: "Contactos / portal", count: duplicateContactGroups.length + portalHealth.actionable, detail: `${duplicateContactUsers.size} duplicados · ${portalHealth.actionable} portal`, tone: duplicateContactGroups.length ? "red" : portalHealth.actionable ? "amber" : "green" })}
+          <button class="btn compact" type="button" data-users-security-report>${icon("download")} Informe</button>
+        </div>
+      ` : ""}
+      ${userAdminSubwindow(users, isSuper)}
     </section>
   `;
 }
@@ -3498,7 +3639,7 @@ function userBulkBar(users, visibleUsers, isSuper) {
   const hasHighRisk = visibleUsers.some((user) => userRiskScore(user, duplicateContactUserIds) >= 6);
   const hasDueSoon = visibleUsers.some(userSecurityDueSoon);
   return `
-    <section class="panel user-bulk-bar">
+    <section class="panel user-bulk-bar compact">
       <label class="bulk-select">
         <input type="checkbox" data-user-select-all ${allVisibleSelected ? "checked" : ""} ${visibleIds.length ? "" : "disabled"} />
         <span>Seleccionar visibles</span>
@@ -3507,43 +3648,14 @@ function userBulkBar(users, visibleUsers, isSuper) {
         <strong>${selectedIds.length}</strong>
         <span>${selectedIds.length === 1 ? "usuario seleccionado" : "usuarios seleccionados"}</span>
       </div>
-      <div class="bulk-actions">
-        <div class="bulk-action-group">
-          <span>Seleccion inteligente</span>
-          <button class="btn compact" type="button" data-user-select-high-risk ${hasHighRisk ? "" : "disabled"}>${icon("shield")} Riesgo alto</button>
-          <button class="btn compact" type="button" data-user-select-attention ${hasAttention ? "" : "disabled"}>Alertas</button>
-          <button class="btn compact" type="button" data-user-select-due-soon ${hasDueSoon ? "" : "disabled"}>Vence pronto</button>
-          <button class="btn compact" type="button" data-user-select-stale-passwords data-suggested-bulk-action="force_password_change" ${visibleUsers.some((user) => user.active && userPasswordStale(user)) ? "" : "disabled"}>${icon("key")} Claves antiguas</button>
-          <button class="btn compact" type="button" data-user-select-duplicate-contacts ${duplicateContactUserIds.size ? "" : "disabled"}>Duplicados</button>
-        </div>
-        <div class="bulk-action-group">
-          <span>Permisos</span>
-          <div class="bulk-profile-action">
-            <select data-user-bulk-profile ${disabled}>
-              ${Object.entries(permissionProfiles).map(([id, profile]) => `<option value="${esc(id)}">${esc(profile.label)}</option>`).join("")}
-            </select>
-            <button class="btn compact" type="button" data-user-bulk-action="permission_profile" ${disabled}>Aplicar perfil</button>
-          </div>
-          <button class="btn compact" type="button" data-user-bulk-action="suggested_profile" ${disabled}>Aplicar sugerido</button>
-          <button class="btn compact" type="button" data-user-bulk-action="mark_reviewed" ${disabled}>Marcar revisado</button>
-        </div>
-        <div class="bulk-action-group">
-          <span>Seguridad</span>
-          <button class="btn compact" type="button" data-user-bulk-action="unlock" ${disabled}>Desbloquear</button>
-          <button class="btn compact" type="button" data-user-bulk-action="force_password_change" ${disabled}>Forzar cambio clave</button>
-          <button class="btn compact" type="button" data-user-bulk-action="revoke_sessions" ${disabled}>Cerrar sesiones</button>
-        </div>
-        <div class="bulk-action-group">
-          <span>Estado</span>
-          <button class="btn compact" type="button" data-user-bulk-action="activate" ${disabled}>Activar</button>
-          <button class="btn compact red" type="button" data-user-bulk-action="deactivate" ${disabled}>Bloquear acceso</button>
-          <button class="btn compact red" type="button" data-user-bulk-action="deactivate_inactive" ${disabled}>Bloquear inactivos</button>
-          <button class="btn compact ghost" type="button" data-user-select-clear ${disabled}>Limpiar</button>
-        </div>
+      <div class="bulk-quick-actions">
+        <button class="btn compact" type="button" data-user-select-high-risk ${hasHighRisk ? "" : "disabled"}>${icon("shield")} Riesgo alto</button>
+        <button class="btn compact" type="button" data-user-select-attention ${hasAttention ? "" : "disabled"}>Alertas</button>
+        <button class="btn compact" type="button" data-user-select-due-soon ${hasDueSoon ? "" : "disabled"}>Vence pronto</button>
+        <button class="btn compact" type="button" data-user-select-duplicate-contacts ${duplicateContactUserIds.size ? "" : "disabled"}>Duplicados</button>
+        <button class="btn compact ghost" type="button" data-user-select-clear ${disabled}>Limpiar</button>
       </div>
-      ${userBulkSuggestedActionPanel(selectedIds)}
-      ${userBulkNextStepPanel(users, selectedIds, duplicateContactUserIds)}
-      ${userBulkImpactPanel(users, selectedIds, duplicateContactUserIds)}
+      ${state.suggestedUserBulkAction?.action ? userBulkSuggestedActionPanel(selectedIds) : userBulkNextStepPanel(users, selectedIds, duplicateContactUserIds)}
     </section>
   `;
 }
@@ -3810,6 +3922,7 @@ function userSecurityActionPanel(users, isSuper) {
                 <button class="btn compact" type="button" data-toggle-password>${icon("eye")} Ver</button>
                 <button class="btn compact" type="button" data-copy-password>${icon("copy")} Copiar</button>
               </div>
+              ${passwordStrengthPanel()}
             </div>
             <small class="muted">Minimo 8 caracteres con letras y numeros. Se marcara cambio obligatorio.</small>
           </div>
@@ -4115,6 +4228,7 @@ function userForm() {
               <button class="btn compact" type="button" data-toggle-password>${icon("eye")} Ver</button>
               <button class="btn compact" type="button" data-copy-password>${icon("copy")} Copiar</button>
             </div>
+            ${passwordStrengthPanel()}
           </div>
           <small class="muted">Usa una clave temporal y comparte el acceso por canal seguro.</small>
           <label class="toggle-row security-toggle"><input name="mustChangePassword" type="checkbox" checked /> Obligar cambio en el primer acceso</label>
@@ -4158,14 +4272,6 @@ function usersView() {
   const selectedUserDetail = users.find((user) => user.id === state.selectedUserDetailId);
   const isSuper = state.user?.role === "super_admin";
   const activeUsers = users.filter((user) => user.active).length;
-  const admins = users.filter((user) => user.role !== "employee" && user.active).length;
-  const employees = users.filter((user) => user.role === "employee" && user.active).length;
-  const recoveries = users.filter((user) => user.recoveryPending).length;
-  const activeSessions = users.reduce((sum, user) => sum + Number(user.activeSessionCount || 0), 0);
-  const lockedUsers = users.filter(userIsLocked).length;
-  const qualityUsers = users.filter((user) => userHasQualityIssues(user, duplicateContactUserIds)).length;
-  const inactiveRiskUsers = users.filter(userInactiveRisk).length;
-  const attentionUsers = users.filter((user) => userNeedsAttention(user, duplicateContactUserIds)).length;
   return `
     <div class="page-head">
       <div>
@@ -4179,14 +4285,6 @@ function usersView() {
         <span class="muted">${activeUsers} usuarios activos</span>
       </div>
     </div>
-    <section class="cards-grid">
-      ${cardTemplate({ label: "Usuarios activos", value: activeUsers, hint: "Con acceso habilitado", tone: "green" })}
-      ${cardTemplate({ label: "Administradores", value: admins, hint: "Gestionan la empresa", tone: "blue" })}
-      ${isSuper ? cardTemplate({ label: "Empleados", value: employees, hint: "Portal operario", tone: "ink" }) : ""}
-      ${isSuper ? cardTemplate({ label: "Sesiones", value: activeSessions, hint: "Abiertas ahora", tone: activeSessions ? "blue" : "green" }) : ""}
-      ${isSuper ? cardTemplate({ label: "Atencion usuarios", value: attentionUsers, hint: `${lockedUsers} bloqueos · ${recoveries} recuperaciones · ${inactiveRiskUsers} inactivos · ${qualityUsers} calidad`, tone: attentionUsers ? "amber" : "green" }) : ""}
-      ${cardTemplate({ label: "Bloqueados", value: users.length - activeUsers, hint: "Sin acceso", tone: "red" })}
-    </section>
     ${userCommandCenter(users, isSuper)}
     ${userBulkBar(users, visibleUsers, isSuper)}
     ${userBulkPendingPanel(users, isSuper)}
@@ -4195,7 +4293,7 @@ function usersView() {
     ${userSecurityActionPanel(users, isSuper)}
     ${userSessionsPanel()}
     ${userActivityPanel()}
-    <section class="split-grid users-view" style="margin-top:16px">
+    <section class="users-view users-list-section">
       <div class="panel">
         <div class="panel-head">
           <h2>${isSuper ? "Usuarios del sistema" : "Administradores internos"}</h2>
@@ -4227,7 +4325,7 @@ function usersView() {
           </table>
         </div>
       </div>
-      ${selectedUserDetail ? userDetailDrawer(selectedUserDetail, duplicateContactUserIds, isSuper) : emptySelectionPanel("Alta de usuarios", "Usa Crear usuario para abrir una pantalla limpia con control de duplicados, permisos y clave temporal.")}
+      ${selectedUserDetail ? userDetailDrawer(selectedUserDetail, duplicateContactUserIds, isSuper) : ""}
     </section>
   `;
 }
@@ -7773,6 +7871,7 @@ async function handleSubmit(event) {
     return;
   }
   if (blocksCriticalDuplicateSubmit(form)) return;
+  if (blocksUnsafePasswordSubmit(form)) return;
   setFormSubmitting(form, true, type);
   try {
     if (type === "login") {
@@ -8089,10 +8188,12 @@ async function handleClick(event) {
   }
 
   if (target.dataset.generatePassword !== undefined) {
-    const input = target.closest("form")?.querySelector("[name=password]");
+    const form = target.closest("form");
+    const input = form?.querySelector("[name=password]");
     if (!input) return;
     input.value = secureTemporaryPassword();
     input.type = "text";
+    updatePasswordStrength(form);
     const copied = await copyText(input.value).catch(() => false);
     return toast(copied ? "Clave segura generada y copiada" : "Clave segura generada. Copiala manualmente", copied ? "info" : "error");
   }
@@ -8127,10 +8228,22 @@ async function handleClick(event) {
     if (state.selectedEventId === "__closed__" && state.view !== "events") state.selectedEventId = null;
     if (state.view !== "users") {
       state.selectedUserDetailId = null;
+      state.userAdminPanel = null;
       state.userSecurityAction = null;
       state.selectedUserCollisionKey = null;
       state.employeePortalRepair = null;
     }
+    return renderAdmin();
+  }
+
+  if (target.dataset.userAdminPanel) {
+    state.userAdminPanel = state.userAdminPanel === target.dataset.userAdminPanel ? null : target.dataset.userAdminPanel;
+    state.selectedUserDetailId = null;
+    return renderAdmin();
+  }
+
+  if (target.dataset.closeUserAdminPanel !== undefined) {
+    state.userAdminPanel = null;
     return renderAdmin();
   }
 
@@ -8190,6 +8303,7 @@ async function handleClick(event) {
     const user = (state.data.users || []).find((item) => item.id === target.dataset.selectUserDetail);
     if (!user) return toast("Usuario no encontrado", "error");
     state.selectedUserDetailId = user.id;
+    state.userAdminPanel = null;
     state.createScreen = null;
     return renderAdmin();
   }
@@ -8746,6 +8860,8 @@ async function handleClick(event) {
 
   if (target.dataset.newUser !== undefined) {
     state.createScreen = "user";
+    state.userAdminPanel = null;
+    state.selectedUserDetailId = null;
     return renderAdmin();
   }
 
@@ -8763,6 +8879,7 @@ async function handleClick(event) {
     } else if (type === "user") {
       state.view = "users";
       state.userFilters = { search: id, role: "all", security: "all" };
+      state.userAdminPanel = null;
       state.selectedUserDetailId = id;
     }
     return renderAdmin();
@@ -9400,6 +9517,8 @@ function handleInput(event) {
   }
   const duplicateForm = target?.closest?.("form[data-duplicate-kind]");
   if (duplicateForm) updateDuplicateGuard(duplicateForm);
+  const passwordForm = target?.closest?.("form");
+  if (passwordForm && target?.matches?.('[name="password"]')) updatePasswordStrength(passwordForm);
   if (target?.dataset?.userFilter === "search") {
     state.userFilters.search = target.value;
     renderAdmin();
