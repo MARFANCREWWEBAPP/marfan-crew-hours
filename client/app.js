@@ -7055,7 +7055,15 @@ function employeeClockMeta(service) {
       last
     };
   }
-  return { label, detail, action, nextType, className, icon: iconName, last };
+  return {
+    label,
+    detail: service.clock_location_warning || detail,
+    action,
+    nextType,
+    className: service.clock_location_warning ? "warning" : className,
+    icon: service.clock_location_warning ? "alert" : iconName,
+    last
+  };
 }
 
 function employeeClockActionButton(service, type, primary = false, eventId = "") {
@@ -9693,7 +9701,10 @@ async function clock(type, eventId = "") {
       method: "POST",
       body: { eventId: service.id, type, lat: coords.lat, lng: coords.lng, accuracy: coords.accuracy, ...signature }
     });
-    toast(result.deliveryNote ? "Salida registrada y albaran firmado" : `${type === "salida" ? "Salida" : "Entrada"} registrada · ${result.distance} m`);
+    const clockLabel = type === "salida" ? "Salida" : "Entrada";
+    const distanceLabel = Number.isFinite(Number(result.distance)) ? ` · ${result.distance} m` : "";
+    const reviewLabel = result.locationReviewRequired ? " · ubicacion pendiente de revisar por oficina" : "";
+    toast(result.deliveryNote ? "Salida registrada y albaran firmado" : `${clockLabel} registrada${distanceLabel}${reviewLabel}`);
     await renderEmployee(true);
   } catch (error) {
     toast(error.message, "error");

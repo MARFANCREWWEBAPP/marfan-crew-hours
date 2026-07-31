@@ -2531,8 +2531,41 @@ function hasUsableEventCoordinates(event) {
   return true;
 }
 
-function eventClockLocationBlockReason(event) {
-  return hasUsableEventCoordinates(event) ? "" : "Completa la ubicacion GPS real del evento antes de fichar";
+function eventClockLocationReviewReason(event) {
+  return hasUsableEventCoordinates(event)
+    ? ""
+    : "Evento sin coordenada GPS real: fichaje aceptado con GPS del movil y pendiente de revision por oficina";
+}
+
+function ensureClockLocationReviewIncident(event, employee, type, geo, actor) {
+  const existing = get(
+    `SELECT * FROM incidents
+     WHERE event_id = ? AND employee_id = ? AND type = 'fichaje'
+       AND status = 'abierta' AND title = 'Fichaje aceptado sin GPS de recinto'`,
+    [event.id, employee.id]
+  );
+  if (existing) return existing;
+  const id = randomId("inc");
+  run(
+    `INSERT INTO incidents (id, event_id, employee_id, type, priority, title, description)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      event.id,
+      employee.id,
+      "fichaje",
+      "media",
+      "Fichaje aceptado sin GPS de recinto",
+      `${employee.name} ha fichado ${type} con GPS del movil, pero el evento no tiene coordenada GPS real guardada. Oficina debe revisar la ubicacion del servicio. Distancia: ${geo.distance ?? "pendiente"} m.`
+    ]
+  );
+  audit(actor, "time_entry_location_review_incident", "incident", id, {
+    eventId: event.id,
+    employeeId: employee.id,
+    type,
+    distance: geo.distance ?? null
+  });
+  return get("SELECT * FROM incidents WHERE id = ?", [id]);
 }
 
 function normalizeRequirements(input, fallbackTotal = 1) {
@@ -3519,13 +3552,12 @@ function clockProgress(event, assignment, entries, policy = clockPolicy()) {
   const lastEntry = accepted[0] || null;
   const entryWindow = clockWindowState(event, "entrada", policy);
   const exitWindow = clockWindowState(event, "salida", policy);
-  const locationBlockReason = ["sin_fichar", "pendiente", "tarde", "en_curso"].includes(state)
-    ? eventClockLocationBlockReason(event)
+  const locationReviewReason = ["sin_fichar", "pendiente", "tarde", "en_curso"].includes(state)
+    ? eventClockLocationReviewReason(event)
     : "";
-  const canClockIn = ["sin_fichar", "pendiente", "tarde"].includes(state) && entryWindow.allowed && !locationBlockReason;
-  const canClockOut = state === "en_curso" && exitWindow.allowed && !locationBlockReason;
+  const canClockIn = ["sin_fichar", "pendiente", "tarde"].includes(state) && entryWindow.allowed;
+  const canClockOut = state === "en_curso" && exitWindow.allowed;
   const blockReason =
-    locationBlockReason ||
     (["sin_fichar", "pendiente", "tarde"].includes(state) && !entryWindow.allowed ? entryWindow.reason :
       state === "en_curso" && !exitWindow.allowed ? exitWindow.reason :
       "");
@@ -3536,6 +3568,7 @@ function clockProgress(event, assignment, entries, policy = clockPolicy()) {
     canClockIn,
     canClockOut,
     blockReason,
+    locationReviewReason,
     entryOpenAt: entryWindow.openAt?.toISOString?.() || "",
     exitCloseAt: exitWindow.closeAt?.toISOString?.() || ""
   };
@@ -3558,6 +3591,7 @@ function employeeServiceClockData(service, employeeId, policy = clockPolicy()) {
     can_clock_in: progress.canClockIn ? 1 : 0,
     can_clock_out: progress.canClockOut ? 1 : 0,
     clock_block_reason: progress.blockReason,
+    clock_location_warning: progress.locationReviewReason,
     clock_entry_open_at: progress.entryOpenAt,
     clock_exit_close_at: progress.exitCloseAt
   };
@@ -3589,8 +3623,8 @@ function employeeServiceChecklist(service, documents = []) {
     {
       key: "location",
       label: locationReady ? "Ubicacion del recinto lista" : "Ubicacion pendiente",
-      status: locationReady ? "done" : "pending",
-      detail: locationReady ? service.location : "Falta ubicacion GPS real del evento"
+      status: locationReady ? "done" : "warning",
+      detail: locationReady ? service.location : "Puedes fichar con GPS del movil; oficina revisara la ubicacion del evento"
     },
     {
       key: "clock_in",
@@ -9138,11 +9172,11 @@ async function handleApi(req, res, url) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return sendJson(res, 400, { error: "Ubicacion GPS obligatoria" });
     }
-    const locationBlockReason = eventClockLocationBlockReason(event);
-    const geo = locationBlockReason
-      ? { distance: 0, inside: false }
+    const locationReviewReason = eventClockLocationReviewReason(event);
+    const geo = locationReviewReason
+      ? { distance: null, inside: false, reviewRequired: true }
       : isInsideRadius(lat, lng, event.lat, event.lng, policy.radiusM);
-    const accepted = Boolean(assignment && windowState.allowed && geo.inside && !locationBlockReason);
+    const accepted = Boolean(assignment && windowState.allowed && (geo.inside || locationReviewReason));
     const sequenceError = accepted ? clockSequenceError(event, assignment, employee.id, type, policy) : null;
     if (sequenceError) {
       return sendJson(res, 409, {
@@ -9175,7 +9209,9 @@ async function handleApi(req, res, url) {
           geo.distance,
           geo.inside ? 1 : 0,
           accepted ? 1 : 0,
-          accepted ? "" : locationBlockReason || windowState.reason || "Intento de fichaje bloqueado",
+          accepted
+            ? locationReviewReason || ""
+            : windowState.reason || "Intento de fichaje bloqueado",
           Number.isFinite(accuracy) ? accuracy : null,
           ipAddress,
           userAgent
@@ -9201,34 +9237,37 @@ async function handleApi(req, res, url) {
         });
       }
       if (accepted) {
+        const locationReviewIncident = locationReviewReason
+          ? ensureClockLocationReviewIncident(event, employee, type, geo, user)
+          : null;
         createEventSnapshot(event.id, leaderClockOut ? "delivery_note_signed" : "time_entry_created", user, {
           timeEntryId: id,
           employeeId: employee.id,
           type,
           accepted,
-          distance: geo.distance,
+          distance: geo.distance ?? null,
           accuracy: Number.isFinite(accuracy) ? accuracy : null,
           ipAddress,
           deliveryNoteId: deliveryNote?.id || null,
-          autoConfirmedAssignment
+          autoConfirmedAssignment,
+          locationReviewRequired: Boolean(locationReviewReason),
+          locationReviewIncidentId: locationReviewIncident?.id || null
         });
       }
     });
     if (!accepted) {
       const reason = !assignment
         ? "Operario no asignado"
-        : locationBlockReason
-          ? locationBlockReason
+        : !windowState.allowed
+          ? windowState.reason
           : !geo.inside
             ? "Fuera del radio GPS"
-            : !windowState.allowed
-              ? windowState.reason
-              : "Intento de fichaje bloqueado";
+            : "Intento de fichaje bloqueado";
       const incidentId = randomId("inc");
       run(
         `INSERT INTO incidents (id, event_id, employee_id, type, priority, title, description)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [incidentId, event.id, employee.id, "fichaje", "alta", "Fichaje bloqueado", `${reason}. Distancia: ${geo.distance} m.`]
+        [incidentId, event.id, employee.id, "fichaje", "alta", "Fichaje bloqueado", `${reason}. Distancia: ${geo.distance ?? "pendiente"} m.`]
       );
       createEventSnapshot(event.id, "time_entry_blocked", user, {
         timeEntryId: id,
@@ -9236,13 +9275,13 @@ async function handleApi(req, res, url) {
         employeeId: employee.id,
         type,
         reason,
-        distance: geo.distance,
+        distance: geo.distance ?? null,
         accuracy: Number.isFinite(accuracy) ? accuracy : null,
         ipAddress
       });
       return sendJson(res, 409, {
         error: reason,
-        distance: locationBlockReason ? null : geo.distance,
+        distance: geo.distance ?? null,
         radius: policy.radiusM,
         windowOpenAt: windowState.openAt?.toISOString?.() || "",
         windowCloseAt: windowState.closeAt?.toISOString?.() || "",
@@ -9260,8 +9299,10 @@ async function handleApi(req, res, url) {
         : deliveryNote;
     return sendJson(res, 201, {
       ok: true,
-      distance: geo.distance,
+      distance: geo.distance ?? null,
       radius: policy.radiusM,
+      locationReviewRequired: Boolean(locationReviewReason),
+      locationReviewReason,
       entry: get("SELECT * FROM time_entries WHERE id = ?", [id]),
       deliveryNote: deliveryNoteResponse
     });

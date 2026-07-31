@@ -1580,6 +1580,8 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(documentSync.status, 200);
     assert.ok(Number.isInteger(documentSync.json.updated));
     assert.ok(documentSync.json.compliance.totals.total >= documents.json.compliance.totals.total);
+    const forkliftDate = addDaysLocal(20);
+    const forkliftPatchDate = addDaysLocal(21);
 
     const forkliftEvent = await jsonRequest(baseUrl, "/api/events", {
       method: "POST",
@@ -1587,7 +1589,7 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
       body: {
         name: "Servicio carretillero certificado",
         clientId: "cli_tech",
-        date: "2026-08-01",
+        date: forkliftDate,
         startTime: "09:00",
         endTime: "12:00",
         location: "Recinto carretillero",
@@ -1627,7 +1629,7 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
       body: {
         name: "Servicio carretillero por edicion",
         clientId: "cli_tech",
-        date: "2026-08-02",
+        date: forkliftPatchDate,
         startTime: "09:00",
         endTime: "12:00",
         location: "Recinto carretillero edicion",
@@ -2143,6 +2145,10 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
     assert.equal(employeeDeleteAudit.status, 200);
     assert.equal(employeeDeleteAudit.json.logs.some((log) => log.entity_id === historyEmployee.json.employee.id), true);
 
+    const alejandroDocsDb = new DatabaseSync(path.join(tmp, "marfan.sqlite"));
+    alejandroDocsDb.prepare("UPDATE documents SET status = 'vigente', expires_at = ? WHERE id = 'doc_ale_epi'").run(addDaysLocal(90));
+    alejandroDocsDb.close();
+
     const eventRecommendations = await jsonRequest(
       baseUrl,
       `/api/planner/recommendations?eventId=${encodeURIComponent(createdEvent.json.event.id)}`,
@@ -2159,7 +2165,7 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
       token,
       body: { eventId: createdEvent.json.event.id, employeeId: "emp_alejandro", role: alejandroRecommendation.suggestedRole }
     });
-    assert.equal(clockAssignment.status, 201);
+    assert.equal(clockAssignment.status, 201, JSON.stringify(clockAssignment.json));
     assert.equal(clockAssignment.json.assignment.role, "Montaje");
 
     const createdAllowance = await jsonRequest(baseUrl, "/api/allowances", {
@@ -2597,12 +2603,12 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
 
     const noGpsHome = await jsonRequest(baseUrl, "/api/employee/home", { token: noGpsLogin.json.token });
     assert.equal(noGpsHome.status, 200);
-    assert.equal(noGpsHome.json.nextService.can_clock_in, 0);
-    assert.match(noGpsHome.json.nextService.clock_block_reason, /ubicacion GPS real/i);
+    assert.equal(noGpsHome.json.nextService.can_clock_in, 1);
+    assert.match(noGpsHome.json.nextService.clock_location_warning, /GPS del movil/i);
     assert.equal(noGpsHome.json.nextService.checklist.items.some((item) =>
       item.key === "location" &&
-      item.status === "pending" &&
-      /GPS real/.test(item.detail)
+      item.status === "warning" &&
+      /oficina revisara/.test(item.detail)
     ), true);
 
     const noGpsClock = await jsonRequest(baseUrl, "/api/time-entries/clock", {
@@ -2616,11 +2622,21 @@ test("admin users, team leaders and performed-event assignment locks work", asyn
         accuracy: 5
       }
     });
-    assert.equal(noGpsClock.status, 409);
-    assert.match(noGpsClock.json.error, /ubicacion GPS real/i);
+    assert.equal(noGpsClock.status, 201);
+    assert.equal(noGpsClock.json.locationReviewRequired, true);
+    assert.match(noGpsClock.json.locationReviewReason, /GPS del movil/i);
     assert.equal(noGpsClock.json.distance, null);
-    assert.equal(noGpsClock.json.entry.type, "entrada_bloqueada");
-    assert.match(noGpsClock.json.entry.notes, /ubicacion GPS real/i);
+    assert.equal(noGpsClock.json.entry.type, "entrada");
+    assert.equal(noGpsClock.json.entry.accepted, 1);
+    assert.equal(noGpsClock.json.entry.within_radius, 0);
+    assert.match(noGpsClock.json.entry.notes, /GPS del movil/i);
+    const noGpsEventDetail = await jsonRequest(baseUrl, `/api/events/${noGpsEvent.json.event.id}`, { token });
+    assert.equal(noGpsEventDetail.status, 200);
+    assert.equal(noGpsEventDetail.json.event.incidents.some((incident) =>
+      incident.title === "Fichaje aceptado sin GPS de recinto" &&
+      incident.employee_id === noGpsEmployee.json.employee.id &&
+      incident.status === "abierta"
+    ), true);
 
     const missingGpsClock = await jsonRequest(baseUrl, "/api/time-entries/clock", {
       method: "POST",
